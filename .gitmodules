@@ -1,0 +1,4 @@
+[submodule "docs"]
+	path = docs
+	url = https://knowledge.hrustalq.dev/git/2bb01967-86b3-4f09-9348-d67bd8b0304a/ab95b26a-3490-4149-81a8-541f6ec403fa.git
+	branch = main
