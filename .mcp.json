@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "knowledge": {
+      "type": "http",
+      "url": "https://knowledge.hrustalq.dev/api/v1/mcp",
+      "env": {
+        "WATCHDOG_KNOWLEDGE_API_KEY": "${WATCHDOG_KNOWLEDGE_API_KEY}"
+      },
+      "headers": {
+        "Authorization": "Bearer ${WATCHDOG_KNOWLEDGE_API_KEY}"
+      }
+    }
+  }
+}

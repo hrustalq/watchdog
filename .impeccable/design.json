@@ -1,0 +1,648 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-01T18:30:39.548Z",
+  "title": "Design System: Watchdog",
+  "extensions": {
+    "colorMeta": {
+      "background": {
+        "role": "neutral",
+        "displayName": "Graphite Floor",
+        "canonical": "oklch(0.1730 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Readout White",
+        "canonical": "oklch(0.9851 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "card": {
+        "role": "neutral",
+        "displayName": "Raised Graphite",
+        "canonical": "oklch(0.2134 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "popover": {
+        "role": "neutral",
+        "displayName": "Overlay Graphite",
+        "canonical": "oklch(0.2562 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "primary": {
+        "role": "primary",
+        "displayName": "Panel Ink",
+        "canonical": "oklch(0.9219 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "primary-foreground": {
+        "role": "neutral",
+        "displayName": "Panel Ink Text",
+        "canonical": "oklch(0.1730 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "secondary": {
+        "role": "neutral",
+        "displayName": "Instrument Well",
+        "canonical": "oklch(0.2850 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Instrument Well",
+        "canonical": "oklch(0.2850 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "muted-foreground": {
+        "role": "neutral",
+        "displayName": "Dimmed Readout",
+        "canonical": "oklch(0.7187 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "accent": {
+        "role": "neutral",
+        "displayName": "Pressed Graphite",
+        "canonical": "oklch(0.3211 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(0.3012 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "input": {
+        "role": "neutral",
+        "displayName": "Input Hairline",
+        "canonical": "oklch(0.3211 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "ring": {
+        "role": "neutral",
+        "displayName": "Focus Grey",
+        "canonical": "oklch(0.7187 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "alarm": {
+        "role": "signal",
+        "displayName": "Alarm Red",
+        "canonical": "oklch(0.6600 0.2150 27.0000)",
+        "tonalRamp": [
+          "oklch(0.15 0.085 27)",
+          "oklch(0.26 0.115 27)",
+          "oklch(0.37 0.155 27)",
+          "oklch(0.48 0.195 27)",
+          "oklch(0.59 0.215 27)",
+          "oklch(0.70 0.190 27)",
+          "oklch(0.82 0.100 27)",
+          "oklch(0.95 0.025 27)"
+        ]
+      },
+      "alarm-foreground": {
+        "role": "neutral",
+        "displayName": "Alarm Fill Text",
+        "canonical": "oklch(0.1448 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "caution": {
+        "role": "signal",
+        "displayName": "Caution Amber",
+        "canonical": "oklch(0.8190 0.1496 84.9468)",
+        "tonalRamp": [
+          "oklch(0.15 0.030 84.95)",
+          "oklch(0.26 0.060 84.95)",
+          "oklch(0.37 0.080 84.95)",
+          "oklch(0.48 0.100 84.95)",
+          "oklch(0.59 0.120 84.95)",
+          "oklch(0.70 0.140 84.95)",
+          "oklch(0.82 0.150 84.95)",
+          "oklch(0.95 0.050 84.95)"
+        ]
+      },
+      "ok": {
+        "role": "signal",
+        "displayName": "Healthy Green",
+        "canonical": "oklch(0.7499 0.1506 149.9295)",
+        "tonalRamp": [
+          "oklch(0.15 0.065 149.93)",
+          "oklch(0.26 0.080 149.93)",
+          "oklch(0.37 0.105 149.93)",
+          "oklch(0.48 0.130 149.93)",
+          "oklch(0.59 0.150 149.93)",
+          "oklch(0.70 0.150 149.93)",
+          "oklch(0.82 0.150 149.93)",
+          "oklch(0.95 0.080 149.93)"
+        ]
+      },
+      "chart-1": {
+        "role": "data",
+        "displayName": "Series Blue",
+        "canonical": "oklch(0.6997 0.1498 249.9296)",
+        "tonalRamp": [
+          "oklch(0.15 0.085 250)",
+          "oklch(0.26 0.080 250)",
+          "oklch(0.37 0.105 250)",
+          "oklch(0.48 0.135 250)",
+          "oklch(0.59 0.150 250)",
+          "oklch(0.70 0.150 250)",
+          "oklch(0.82 0.090 250)",
+          "oklch(0.95 0.025 250)"
+        ]
+      },
+      "chart-2": {
+        "role": "data",
+        "displayName": "Series Violet",
+        "canonical": "oklch(0.6796 0.2001 310.2489)",
+        "tonalRamp": [
+          "oklch(0.15 0.105 310)",
+          "oklch(0.26 0.140 310)",
+          "oklch(0.37 0.190 310)",
+          "oklch(0.48 0.200 310)",
+          "oklch(0.59 0.200 310)",
+          "oklch(0.70 0.200 310)",
+          "oklch(0.82 0.120 310)",
+          "oklch(0.95 0.030 310)"
+        ]
+      },
+      "light-background": {
+        "role": "neutral",
+        "displayName": "Light Floor",
+        "canonical": "oklch(1.0000 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "light-foreground": {
+        "role": "neutral",
+        "displayName": "Light Ink",
+        "canonical": "oklch(0.1448 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "light-primary": {
+        "role": "primary",
+        "displayName": "Panel Ink (light)",
+        "canonical": "oklch(0.2050 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "light-muted": {
+        "role": "neutral",
+        "displayName": "Light Well",
+        "canonical": "oklch(0.9612 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "light-muted-foreground": {
+        "role": "neutral",
+        "displayName": "Light Dimmed Readout",
+        "canonical": "oklch(0.4495 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "light-border": {
+        "role": "neutral",
+        "displayName": "Light Hairline",
+        "canonical": "oklch(0.9158 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "light-ring": {
+        "role": "neutral",
+        "displayName": "Light Focus Grey",
+        "canonical": "oklch(0.5555 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0 0)",
+          "oklch(0.26 0 0)",
+          "oklch(0.37 0 0)",
+          "oklch(0.48 0 0)",
+          "oklch(0.59 0 0)",
+          "oklch(0.70 0 0)",
+          "oklch(0.82 0 0)",
+          "oklch(0.95 0 0)"
+        ]
+      },
+      "light-alarm": {
+        "role": "signal",
+        "displayName": "Alarm Red (light)",
+        "canonical": "oklch(0.5500 0.2100 28.0000)",
+        "tonalRamp": [
+          "oklch(0.15 0.085 27)",
+          "oklch(0.26 0.115 27)",
+          "oklch(0.37 0.155 27)",
+          "oklch(0.48 0.195 27)",
+          "oklch(0.59 0.215 27)",
+          "oklch(0.70 0.190 27)",
+          "oklch(0.82 0.100 27)",
+          "oklch(0.95 0.025 27)"
+        ]
+      },
+      "light-caution": {
+        "role": "signal",
+        "displayName": "Caution Amber (light)",
+        "canonical": "oklch(0.5600 0.1200 65.0000)",
+        "tonalRamp": [
+          "oklch(0.15 0.030 84.95)",
+          "oklch(0.26 0.060 84.95)",
+          "oklch(0.37 0.080 84.95)",
+          "oklch(0.48 0.100 84.95)",
+          "oklch(0.59 0.120 84.95)",
+          "oklch(0.70 0.140 84.95)",
+          "oklch(0.82 0.150 84.95)",
+          "oklch(0.95 0.050 84.95)"
+        ]
+      },
+      "light-ok": {
+        "role": "signal",
+        "displayName": "Healthy Green (light)",
+        "canonical": "oklch(0.5300 0.1300 150.0000)",
+        "tonalRamp": [
+          "oklch(0.15 0.065 149.93)",
+          "oklch(0.26 0.080 149.93)",
+          "oklch(0.37 0.105 149.93)",
+          "oklch(0.48 0.130 149.93)",
+          "oklch(0.59 0.150 149.93)",
+          "oklch(0.70 0.150 149.93)",
+          "oklch(0.82 0.150 149.93)",
+          "oklch(0.95 0.080 149.93)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Page titles: Feed, Sources, Pipeline, Logs. One per view."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Panel headers, node names, feed item titles, dialog titles."
+      },
+      "reading": {
+        "displayName": "Reading",
+        "purpose": "Expanded item content and source excerpts; max 70ch."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default dense interface text: rows, cells, help, descriptions."
+      },
+      "control": {
+        "displayName": "Control",
+        "purpose": "Buttons, tabs, menu items, segmented controls."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Field labels, column headers, metadata, badges, 3D node captions. Sentence case."
+      },
+      "data": {
+        "displayName": "Data",
+        "purpose": "Recursive MONO 1, tabular: logs, extracted fields, expressions, scores, timestamps, IDs."
+      }
+    },
+    "shadows": [
+      {
+        "name": "float",
+        "value": "0 1px 8px -1px hsl(231.4286 46.6667% 2.9412% / 0.35), 0 2px 4px -2px hsl(231.4286 46.6667% 2.9412% / 0.35)",
+        "purpose": "shadow-md: popovers, menus, tooltips, HUD panels over the 3D scene. Never on resting surfaces."
+      },
+      {
+        "name": "lift",
+        "value": "0 1px 8px -1px hsl(231.4286 46.6667% 2.9412% / 0.35), 0 8px 10px -2px hsl(231.4286 46.6667% 2.9412% / 0.35)",
+        "purpose": "shadow-xl: dialogs and the command palette."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Camera moves in the pipeline scene and panel entrances. Provisional."
+      },
+      {
+        "name": "state",
+        "value": "150ms ease-out",
+        "purpose": "Hover, focus and pressed transitions on 2D controls."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px"
+      },
+      {
+        "name": "md",
+        "value": "768px"
+      },
+      {
+        "name": "lg",
+        "value": "1024px",
+        "note": "3D editor available at and above lg; below it the 2D stage list"
+      },
+      {
+        "name": "xl",
+        "value": "1280px"
+      },
+      {
+        "name": "2xl",
+        "value": "1536px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Panel Ink fill; the single main action in a region.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12h14\"/><path d=\"M12 5v14\"/></svg>Add source</button>",
+      "css": ".ds-btn-primary{font-family:var(--font-sans);font-variation-settings:'MONO' 0;font-size:0.875rem;font-weight:500;line-height:1.25;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid transparent;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:background-color .15s,border-color .15s,box-shadow .15s,transform .1s;outline:none;background:var(--primary);color:var(--primary-foreground);}.ds-btn-primary:hover{background:color-mix(in oklch,var(--primary) 80%,transparent);}.ds-btn-primary:focus-visible{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklch,var(--ring) 30%,transparent);}.ds-btn-primary:active{transform:translateY(1px);}"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Hairline-bordered secondary action.",
+      "html": "<button class=\"ds-btn-outline\">Test rule</button>",
+      "css": ".ds-btn-outline{font-family:var(--font-sans);font-variation-settings:'MONO' 0;font-size:0.875rem;font-weight:500;line-height:1.25;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid transparent;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:background-color .15s,border-color .15s,box-shadow .15s,transform .1s;outline:none;background:transparent;color:var(--foreground);border-color:var(--border);}.ds-btn-outline:hover{background:var(--muted);}.ds-btn-outline:focus-visible{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklch,var(--ring) 30%,transparent);}.ds-btn-outline:active{transform:translateY(1px);}"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost-hover",
+      "description": "Toolbar and inline actions; fill appears on hover.",
+      "html": "<button class=\"ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn-ghost{font-family:var(--font-sans);font-variation-settings:'MONO' 0;font-size:0.875rem;font-weight:500;line-height:1.25;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid transparent;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:background-color .15s,border-color .15s,box-shadow .15s,transform .1s;outline:none;background:transparent;color:var(--foreground);}.ds-btn-ghost:hover{background:color-mix(in oklch,var(--muted) 50%,transparent);}.ds-btn-ghost:focus-visible{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklch,var(--ring) 30%,transparent);}"
+    },
+    {
+      "name": "Destructive Button",
+      "kind": "button",
+      "refersTo": "button-destructive",
+      "description": "Red text on a red tint; only to confirm deleting or disabling.",
+      "html": "<button class=\"ds-btn-destructive\">Delete source</button>",
+      "css": ".ds-btn-destructive{font-family:var(--font-sans);font-variation-settings:'MONO' 0;font-size:0.875rem;font-weight:500;line-height:1.25;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid transparent;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:background-color .15s,border-color .15s,box-shadow .15s,transform .1s;outline:none;background:color-mix(in oklch,var(--destructive) 20%,transparent);color:var(--destructive);}.ds-btn-destructive:hover{background:color-mix(in oklch,var(--destructive) 30%,transparent);}.ds-btn-destructive:focus-visible{border-color:color-mix(in oklch,var(--destructive) 40%,transparent);box-shadow:0 0 0 3px color-mix(in oklch,var(--destructive) 40%,transparent);}"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Synthesized from tokens (no input component yet). 32px, hairline, neutral focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"https://github.com/owner/repo/issues\" />",
+      "css": ".ds-input{font-family:var(--font-sans);font-size:0.875rem;height:32px;padding:0 10px;width:280px;border-radius:var(--radius);border:1px solid var(--input);background:color-mix(in oklch,var(--input) 30%,transparent);color:var(--foreground);outline:none;transition:border-color .15s,box-shadow .15s;}.ds-input::placeholder{color:var(--muted-foreground);}.ds-input:focus-visible{border-color:var(--ring);box-shadow:0 0 0 3px color-mix(in oklch,var(--ring) 30%,transparent);}"
+    },
+    {
+      "name": "Severity Chips",
+      "kind": "chip",
+      "refersTo": "alarm",
+      "description": "Synthesized. Lamp + word; color never carries meaning alone.",
+      "html": "<span class=\"ds-chip ds-chip-high\"><i></i>High</span> <span class=\"ds-chip ds-chip-med\"><i></i>Medium</span> <span class=\"ds-chip ds-chip-low\"><i></i>Low</span>",
+      "css": ".ds-chip{font-family:var(--font-sans);font-size:0.75rem;font-weight:500;letter-spacing:0.01em;display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 6px;border-radius:calc(var(--radius) * 0.6);}.ds-chip i{width:6px;height:6px;border-radius:50%;display:block;}.ds-chip-high{color:var(--alarm);background:color-mix(in oklch,var(--alarm) 15%,transparent);}.ds-chip-high i{background:var(--alarm);}.ds-chip-med{color:var(--caution);background:color-mix(in oklch,var(--caution) 15%,transparent);}.ds-chip-med i{background:var(--caution);}.ds-chip-low{color:var(--muted-foreground);}.ds-chip-low i{border:1px solid var(--muted-foreground);}"
+    },
+    {
+      "name": "Feed Row",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "Synthesized signature row: flat on the floor, hairline separated, data-type timestamp.",
+      "html": "<div class=\"ds-row\"><span class=\"ds-row-src\">X</span><div class=\"ds-row-main\"><div class=\"ds-row-title\">Someone asked for an RSS-to-Telegram alert tool</div><div class=\"ds-row-ex\">\"Is there anything that watches forums and pings me when…\"</div></div><span class=\"ds-chip ds-chip-high\"><i></i>High</span><time class=\"ds-row-time\">21:14:59</time></div>",
+      "css": ".ds-row{display:flex;align-items:center;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);background:var(--background);color:var(--foreground);font-family:var(--font-sans);max-width:640px;transition:background-color .15s;}.ds-row:hover{background:var(--card);}.ds-row-src{width:24px;height:24px;border-radius:calc(var(--radius) * 0.6);background:var(--muted);display:grid;place-items:center;font-size:0.75rem;font-weight:600;flex:none;}.ds-row-main{flex:1;min-width:0;}.ds-row-title{font-size:1rem;font-weight:600;line-height:1.35;letter-spacing:-0.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.ds-row-ex{font-size:0.875rem;line-height:1.5;color:var(--muted-foreground);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}.ds-row-time{font-family:var(--font-mono);font-variation-settings:'MONO' 1;font-size:0.8125rem;font-variant-numeric:tabular-nums slashed-zero;color:var(--muted-foreground);flex:none;}.ds-chip{font-size:0.75rem;font-weight:500;display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 6px;border-radius:calc(var(--radius) * 0.6);flex:none;}.ds-chip i{width:6px;height:6px;border-radius:50%;display:block;}.ds-chip-high{color:var(--alarm);background:color-mix(in oklch,var(--alarm) 15%,transparent);}.ds-chip-high i{background:var(--alarm);}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Signal Room",
+    "overview": "Watchdog is an instrument panel for one person keeping watch over many sources. Every surface works like professional equipment: precise, dense, labelled, and readable at a glance. The room is dark and quiet by default. Achromatic surfaces, hairline borders and steady type set a calm baseline, so the few things that light up actually mean something. Color is a reading, not decoration: red means look now, amber means look soon, green means healthy, and everything else is ink on graphite.\n\nThe system is built on the project's shadcn/ui theme (`src/app/globals.css`, style `base-rhea`, Base UI primitives) and keeps its token names and structure. Dark is the default and the reference theme; light is derived from it and kept for parity. The 2D chrome (panels, feed, inputs, buttons) is flat and tonal. Real depth belongs to one place only: the three.js pipeline scene, where sources, classifiers, extractor rules and actions sit in space and items flow between them.\n\nDensity is compact (32px controls, 4px grid) because the job is scanning many items quickly. Type comes from a single variable family, Recursive, whose MONO axis switches between the UI voice and the data voice, so labels and readings always look like the same instrument.",
+    "keyCharacteristics": [
+      "Dark-first, achromatic graphite surfaces with hairline borders.",
+      "Red is reserved for alarms and errors; it never decorates or brands.",
+      "Primary actions are neutral ink, not color.",
+      "One type family (Recursive): sans for interface, mono for data, switched by axis.",
+      "Flat 2D chrome; depth lives only in the 3D pipeline scene and floating overlays.",
+      "Crisp corners (0.5rem), compact controls (32px), 4px rhythm."
+    ],
+    "rules": [
+      {
+        "name": "The Red Means Now Rule",
+        "body": "Alarm Red appears only where something needs attention: high severity, a firing alert, a failure, an error, or a destructive confirmation. It is never used for branding, primary buttons, links, focus, selection, decoration, or a chart's default series. If a screen is red with nothing wrong, the screen is wrong.",
+        "section": "colors"
+      },
+      {
+        "name": "The Graphite Baseline Rule",
+        "body": "On a healthy screen the only color is from content (avatars, thumbnails from sources) and small status lamps. A calm screen is the correct reading of a calm world.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Red Rule",
+        "body": "Each theme has one red: `alarm` and `destructive` share a value. Never introduce a second red, orange-red, or pink to make something feel urgent.",
+        "section": "colors"
+      },
+      {
+        "name": "The Mono Is Data Rule",
+        "body": "Monospace (MONO 1) is used only for content that is data: a log line, an extracted value, an expression, a score, a timestamp, an identifier. Never use it for headings, buttons, or to make a screen look technical.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Readings Rule",
+        "body": "Every number that changes or gets compared (counts, scores, durations, timestamps) is tabular so readings don't jitter. The base stylesheet already makes `font-mono`, `code`, `pre`, `kbd` and `samp` tabular with slashed zero; add `tabular-nums` when numbers are set in the sans.",
+        "section": "typography"
+      },
+      {
+        "name": "The Flat Chrome Rule",
+        "body": "Resting 2D surfaces never carry a shadow. If something has a shadow, it is floating over the work right now.",
+        "section": "elevation"
+      },
+      {
+        "name": "The One Deep Place Rule",
+        "body": "Perspective, lighting and depth happen inside the pipeline scene only. Don't fake 3D in the 2D chrome (tilted cards, parallax, glass panels).",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep Alarm Red (`alarm` / `destructive`) for high severity, firing alerts, failures, errors and destructive confirmations only.",
+      "Do use Panel Ink (`primary`) for the single main action per region and for selection, including in the 3D scene.",
+      "Do separate 2D surfaces by tone and 1px hairlines; reserve `shadow-md` / `shadow-xl` for floating overlays.",
+      "Do set every data reading (log, extracted value, score, timestamp, ID) in Data type (`font-mono`, MONO 1, tabular).",
+      "Do pair every severity color with a word or a lamp shape, so meaning never depends on color alone.",
+      "Do keep controls at 32px and the 4px rhythm; dense, but never cramped below 24px hit targets.",
+      "Do read 3D scene colors from the CSS custom properties so both themes stay in sync.",
+      "Do respect `prefers-reduced-motion` in the scene (flow → counts) and provide the 2D stage-list fallback."
+    ],
+    "donts": [
+      "Don't use red for brand, buttons, links, focus rings, selection, decoration, or the first chart series.",
+      "Don't load another font family. Recursive covers interface and data; the old Inter, Geist, Roboto, Pretendard and JetBrains Mono references were removed deliberately.",
+      "Don't use monospace as a costume on headings, buttons, or marketing-style labels.",
+      "Don't put shadows on resting panels, cards or feed rows.",
+      "Don't fake depth in the 2D chrome (glass, tilt, parallax); depth lives in the pipeline scene.",
+      "Don't use thick colored side borders on rows, cards or alerts; use lamps and tinted chips.",
+      "Don't add colored lights, bloom or emissive glow in the scene except for caution and alarm signals.",
+      "Don't mix radii: buttons, inputs, cards and panels all use `rounded-lg` (0.5rem)."
+    ]
+  }
+}
