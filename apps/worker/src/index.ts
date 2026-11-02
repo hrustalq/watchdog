@@ -1,0 +1,12 @@
+import { packageName as core } from "@watchdog/core";
+import { packageName as db } from "@watchdog/db";
+
+// Nothing to do until the queue arrives; keep the process alive until it is told to stop.
+const keepAlive = setInterval(() => {}, 2 ** 31 - 1);
+
+process.once("SIGTERM", () => {
+  clearInterval(keepAlive);
+  console.log("Worker stopped");
+});
+
+console.log(`Worker ready (${core}, ${db})`);

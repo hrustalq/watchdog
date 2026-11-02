@@ -1,0 +1,13 @@
+{
+  "name": "@watchdog/db",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^26",
+    "typescript": "^5"
+  }
+}
