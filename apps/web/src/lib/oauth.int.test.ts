@@ -84,7 +84,7 @@ describe("OAuth sign-in", () => {
   /** Starts a GitHub sign-in the way the sign-in page does and returns where GitHub is asked to send the user back. */
   async function startGitHub(using = auth) {
     const { headers, response } = await using.api.signInSocial({
-      body: { provider: "github", callbackURL: "/", errorCallbackURL: "/sign-in" },
+      body: { provider: "github", callbackURL: "/", errorCallbackURL: "/sign-in?via=github" },
       headers: new Headers({ origin: baseURL }),
       returnHeaders: true,
     });
@@ -153,7 +153,7 @@ describe("OAuth sign-in", () => {
     const callback = await withoutOAuth.handler(
       new Request(`${baseURL}/api/auth/callback/github?code=test-code&state=${state}`, { headers: { cookie } }),
     );
-    expect(callback.headers.get("location")).toBe("/sign-in?error=oauth_provider_not_found");
+    expect(callback.headers.get("location")).toBe("/sign-in?via=github&error=oauth_provider_not_found");
   });
 
   it("signs up a new user with a verified GitHub email into one Workspace", async () => {
@@ -200,7 +200,7 @@ describe("OAuth sign-in", () => {
 
     const { location, cookie } = await finishGitHub({ id: 104, email: "kai@example.com", verified: false });
 
-    expect(new URL(location, baseURL).searchParams.get("error")).toBe("email_not_verified");
+    expect(location).toBe("/sign-in?via=github&error=email_not_verified");
     expect(await auth.api.getSession({ headers: new Headers({ cookie }) })).toBeNull();
     expect(await db.$count(workspace)).toBe(workspacesBefore);
   });

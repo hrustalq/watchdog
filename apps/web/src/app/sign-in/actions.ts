@@ -43,7 +43,8 @@ export async function signInWithProvider(provider: ProviderId) {
   const { auth, providers } = server();
   if (!providers.includes(provider)) redirect("/sign-in");
   const { url } = await auth.api.signInSocial({
-    body: { provider, callbackURL: "/", errorCallbackURL: "/sign-in" },
+    // `via` lets the sign-in page name the provider in an error notice.
+    body: { provider, callbackURL: "/", errorCallbackURL: `/sign-in?via=${provider}` },
     headers: await headers(),
   });
   redirect(url ?? "/sign-in");
