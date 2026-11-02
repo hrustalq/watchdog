@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  # CI is the gate that counts; it never installs the local git hooks.
+  HUSKY: 0
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # The docs submodule needs a Knowledge API key, and nothing here reads it.
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Separate steps so the failing one is named; later steps still run after a failure.
+      - name: Lint
+        run: pnpm turbo run lint
+      - name: Typecheck
+        if: ${{ !cancelled() }}
+        run: pnpm turbo run typecheck
+      - name: Test (unit and integration)
+        if: ${{ !cancelled() }}
+        run: pnpm turbo run test
