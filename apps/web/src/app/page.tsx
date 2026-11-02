@@ -1,5 +1,6 @@
+import Link from "next/link";
 import { Suspense } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { requireWorkspace } from "@/lib/server";
 import { signOut } from "./actions";
 
@@ -12,7 +13,7 @@ export default function WorkspacePage() {
 }
 
 async function WorkspaceScreen() {
-  const { user, workspace } = await requireWorkspace();
+  const { user, workspace, admin } = await requireWorkspace();
   return (
     <div className="flex flex-1 flex-col">
       <header className="flex h-12 items-center justify-between gap-4 border-b px-4">
@@ -26,6 +27,11 @@ async function WorkspaceScreen() {
           <span className="hidden truncate text-sm text-muted-foreground sm:inline">
             {user.email}
           </span>
+          {admin ? (
+            <Link href="/settings" className={buttonVariants({ variant: "ghost" })}>
+              Settings
+            </Link>
+          ) : null}
           <form action={signOut}>
             <Button type="submit" variant="outline">
               Sign out

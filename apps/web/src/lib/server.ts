@@ -3,12 +3,14 @@ import { createDb } from "@watchdog/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createAuth, enabledProviders } from "./auth.ts";
+import { isInstanceAdmin } from "./instance.ts";
 import { workspaceFor } from "./workspace.ts";
 
 function start() {
   const config = loadConfig();
   const db = createDb(config.databaseUrl);
   const auth = createAuth({
+    mode: config.mode,
     baseURL: config.auth.url,
     secret: config.auth.secret,
     db,
@@ -18,6 +20,7 @@ function start() {
   return {
     db,
     auth,
+    mode: config.mode,
     baseURL: config.auth.url,
     // On a self-hosted install without SMTP, magic links go to the web log instead.
     mailGoesToLog: config.smtp === undefined,
@@ -37,11 +40,18 @@ export function server() {
   return started;
 }
 
-/** The signed-in user and their Workspace. Without a valid session it redirects to sign-in. */
+/**
+ * The signed-in user, their Workspace, and whether they're the admin of this self-hosted install.
+ * Without a valid session it redirects to sign-in.
+ */
 export async function requireWorkspace() {
   const requestHeaders = await headers();
-  const { auth, db } = server();
+  const { auth, db, mode } = server();
   const session = await auth.api.getSession({ headers: requestHeaders });
   if (session === null) redirect("/sign-in");
-  return { user: session.user, workspace: await workspaceFor(db, session.user) };
+  const [workspace, admin] = await Promise.all([
+    workspaceFor(db, session.user),
+    mode === "self-hosted" && isInstanceAdmin(db, session.user),
+  ]);
+  return { user: session.user, workspace, admin };
 }

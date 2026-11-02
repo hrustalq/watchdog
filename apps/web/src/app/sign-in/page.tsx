@@ -3,7 +3,8 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { providerNames, type ProviderId } from "@/lib/auth";
 import { server } from "@/lib/server";
-import { sendMagicLink, signInWithProvider } from "./actions";
+import { signInWithProvider } from "./actions";
+import { SignInForm } from "./sign-in-form";
 import { SubmitButton } from "./submit-button";
 
 export const metadata: Metadata = { title: "Sign in · Watchdog" };
@@ -41,6 +42,15 @@ const notices: Record<string, string> = {
   ATTEMPTS_EXCEEDED: linkFailed,
 };
 
+// A self-hosted install refusing to create a new user, by magic link or OAuth alike. These are
+// policy, not failures, so they aren't shown in red.
+const refusals: Record<string, string> = {
+  setup_pending:
+    "This Watchdog isn't set up yet, so nobody can sign up. Whoever runs it will find a setup link in the web container's log. If you just used that link, sign in with the email you entered there.",
+  signup_closed:
+    "Sign-up is closed on this instance, so Watchdog can't create an account for that email. Ask whoever runs it to open sign-up.",
+};
+
 // Codes for an OAuth sign-in that stopped: Better Auth's, the provider's own access_denied (a
 // cancel on its page, or an app it refuses), then the sign-in action's. `with` reads "with GitHub",
 // or "with that provider" when the URL doesn't say which one the sign-in started with.
@@ -55,6 +65,9 @@ const providerNotices: Record<string, (withProvider: string) => string> = {
     `Watchdog couldn't start signing in ${withProvider}. Try again, or sign in with an email link.`,
 };
 
+// The code comes from the URL, so only a map's own keys count, never ones like "constructor".
+const lookup = <T,>(map: Record<string, T>, key: string) => (Object.hasOwn(map, key) ? map[key] : undefined);
+
 const isProvider = (value: unknown): value is ProviderId =>
   typeof value === "string" && Object.hasOwn(providerNames, value);
 const unknownError =
@@ -66,55 +79,14 @@ async function SignInFormWithError({ searchParams }: Pick<PageProps<"/sign-in">,
   if (error === "invalid-email") {
     return <SignInForm email={typeof email === "string" ? email : ""} invalidEmail />;
   }
-  const providerNotice = providerNotices[error];
+  const providerNotice = lookup(providerNotices, error);
   if (providerNotice !== undefined) {
     const withProvider = isProvider(via) ? `with ${providerNames[via]}` : "with that provider";
     return <SignInForm notice={providerNotice(withProvider)} />;
   }
-  return <SignInForm notice={notices[error] ?? unknownError} />;
-}
-
-function SignInForm({
-  email = "",
-  invalidEmail = false,
-  notice,
-}: {
-  email?: string;
-  invalidEmail?: boolean;
-  notice?: string;
-}) {
-  return (
-    <form action={sendMagicLink} className="flex flex-col gap-4">
-      {notice === undefined ? null : (
-        <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-alarm">
-          {notice}
-        </p>
-      )}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="email" className="text-xs font-medium tracking-[0.01em]">
-          Email
-        </label>
-        <input
-          id="email"
-          name="email"
-          type="email"
-          required
-          autoComplete="email"
-          placeholder="name@example.com"
-          defaultValue={email}
-          aria-invalid={invalidEmail}
-          aria-describedby={invalidEmail ? "email-error" : undefined}
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-3 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/40 sm:text-sm"
-        />
-        {invalidEmail ? (
-          <p id="email-error" role="alert" className="text-xs font-medium tracking-[0.01em] text-alarm">
-            Enter a full email address, like name@example.com.
-          </p>
-        ) : null}
-      </div>
-      <SubmitButton pendingLabel="Sending link…">Email me a sign-in link</SubmitButton>
-    </form>
-  );
+  const refusal = lookup(refusals, error);
+  if (refusal !== undefined) return <SignInForm notice={refusal} noticeTone="neutral" />;
+  return <SignInForm notice={lookup(notices, error) ?? unknownError} />;
 }
 
 /** Read per request: which providers are on comes from the runtime environment, not the build. */

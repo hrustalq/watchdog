@@ -1,43 +1,15 @@
 "use server";
 
 import { parseSetCookieHeader, toCookieOptions } from "better-auth/cookies";
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { ProviderId } from "@/lib/auth";
 import { server } from "@/lib/server";
+import { postToAuth, requestMagicLink } from "./request-link";
 
-/**
- * POSTs to a Better Auth endpoint through its HTTP handler, not `auth.api`, because its rate limit
- * only applies to requests that pass through the handler. The visitor's own headers carry their IP
- * for the rate limit and their Origin for the CSRF check.
- */
-async function postToAuth(path: string, body: Record<string, unknown>) {
-  const forwarded = new Headers(await headers());
-  forwarded.delete("content-length");
-  forwarded.set("content-type", "application/json");
-  const { auth, baseURL } = server();
-  return auth.handler(
-    new Request(new URL(path, baseURL), { method: "POST", headers: forwarded, body: JSON.stringify(body) }),
-  );
-}
-
-/** Asks Better Auth for a magic link. */
+/** Asks Better Auth for a magic link; a failure comes back to sign-in with its code. */
 export async function sendMagicLink(formData: FormData) {
-  const field = formData.get("email");
-  const email = typeof field === "string" ? field.trim() : "";
-
-  const response = await postToAuth("/api/auth/sign-in/magic-link", {
-    email,
-    callbackURL: "/",
-    errorCallbackURL: "/sign-in",
-  });
-
-  if (response.ok) redirect(`/sign-in/check-email?email=${encodeURIComponent(email)}`);
-  // Better Auth rejects an address it can't parse with a 400. A failed send is logged by it.
-  if (response.status === 400) {
-    redirect(`/sign-in?error=invalid-email&email=${encodeURIComponent(email)}`);
-  }
-  redirect(response.status === 429 ? "/sign-in?error=too-many" : "/sign-in?error=send-failed");
+  await requestMagicLink(formData, { errorPage: "/sign-in" });
 }
 
 /**

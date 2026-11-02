@@ -17,6 +17,8 @@ describe("magic link sign-in", () => {
     await migrate(postgres.url);
     db = createDb(postgres.url);
     auth = createAuth({
+      // Hosted mode signs up anyone; the self-hosted sign-up gate is covered in instance.int.test.ts.
+      mode: "hosted",
       baseURL,
       secret: "a-test-secret-that-is-at-least-32-characters",
       db,

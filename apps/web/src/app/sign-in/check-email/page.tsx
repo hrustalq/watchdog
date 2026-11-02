@@ -13,13 +13,34 @@ export default function CheckEmailPage({ searchParams }: PageProps<"/sign-in/che
       <Suspense fallback={null}>
         <Sent searchParams={searchParams} />
       </Suspense>
-      <Link
-        href="/sign-in"
-        className="inline-flex h-8 items-center self-start rounded-sm text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
-      >
-        Use a different email
-      </Link>
+      <Suspense fallback={null}>
+        <DifferentEmail searchParams={searchParams} />
+      </Suspense>
     </>
+  );
+}
+
+/**
+ * Sign-in can't correct the email given on the setup page, because only the setup link can claim
+ * the install. So after setup this points back to that link instead.
+ */
+async function DifferentEmail({ searchParams }: Pick<PageProps<"/sign-in/check-email">, "searchParams">) {
+  const { from } = await searchParams;
+  if (from === "setup") {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Typed the wrong email? Open the setup link from the log again and enter the right one. It
+        keeps working until the admin signs in.
+      </p>
+    );
+  }
+  return (
+    <Link
+      href="/sign-in"
+      className="inline-flex h-8 items-center self-start rounded-sm text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+    >
+      Use a different email
+    </Link>
   );
 }
 
