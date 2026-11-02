@@ -11,19 +11,28 @@ import { startPostgres, type TestPostgres } from "./testing/postgres.ts";
 const packageDir = path.join(import.meta.dirname, "..");
 const migrationsDir = path.join(packageDir, "migrations");
 
-/** Every table outside the system schemas, plus the rows of Drizzle's migrations log. */
+/** Every column and index outside the system schemas, plus the rows of Drizzle's migrations log. */
 async function databaseState(url: string) {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   try {
-    const tables = await client.query<{ name: string }>(
-      `select table_schema || '.' || table_name as name from information_schema.tables
+    const columns = await client.query<{ name: string }>(
+      `select table_schema || '.' || table_name || '.' || column_name || ' ' || data_type as name
+       from information_schema.columns
        where table_schema not in ('pg_catalog', 'information_schema') order by 1`,
+    );
+    const indexes = await client.query<{ name: string }>(
+      `select indexdef as name from pg_indexes
+       where schemaname not in ('pg_catalog', 'information_schema') order by 1`,
     );
     const applied = await client.query<{ hash: string; created_at: string }>(
       "select hash, created_at from drizzle.__drizzle_migrations order by id",
     );
-    return { tables: tables.rows.map((row) => row.name), applied: applied.rows };
+    return {
+      columns: columns.rows.map((row) => row.name),
+      indexes: indexes.rows.map((row) => row.name),
+      applied: applied.rows,
+    };
   } finally {
     await client.end();
   }
@@ -52,7 +61,7 @@ describe("migrate", () => {
 
     await migrate(postgres.url);
     expect(await databaseState(postgres.url)).toEqual(first);
-  });
+  }, 60_000);
 });
 
 describe("drizzle-kit", () => {
@@ -70,6 +79,10 @@ describe("drizzle-kit", () => {
 
     await pnpm(["run", "db:migrate"], postgres.url);
     expect(await databaseState(postgres.url)).toEqual(first);
+
+    // migrate() at worker boot reads the same log, so it finds nothing to apply either.
+    await migrate(postgres.url);
+    expect(await databaseState(postgres.url)).toEqual(first);
   }, 60_000);
 
   it("leaves the pgboss schema alone on generate and push", async () => {
@@ -78,7 +91,7 @@ describe("drizzle-kit", () => {
     await boss.start();
     await boss.stop();
     const before = await databaseState(postgres.url);
-    expect(before.tables.some((name) => name.startsWith("pgboss."))).toBe(true);
+    expect(before.columns.some((name) => name.startsWith("pgboss."))).toBe(true);
     const migrations = await readdir(migrationsDir, { recursive: true });
 
     await pnpm(["run", "db:generate"], postgres.url);
