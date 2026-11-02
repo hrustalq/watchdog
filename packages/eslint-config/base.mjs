@@ -11,7 +11,7 @@ import { configs as ts } from "typescript-eslint";
 /** @param {string} packageDir the directory holding the package's tsconfig.json */
 export function base(packageDir) {
   return defineConfig([
-    globalIgnores(["**/.next/**", "**/out/**", "**/build/**", "**/dist/**", "**/next-env.d.ts", "**/.turbo/**"]),
+    globalIgnores(["**/.next/**", "**/next-env.d.ts", "**/dist/**"]),
 
     {
       linterOptions: { reportUnusedDisableDirectives: "error" },
@@ -33,25 +33,21 @@ export function base(packageDir) {
       },
       rules: {
         // No type casting: narrow with a type guard or a zod parse. `as const` stays allowed.
+        // strictTypeChecked already bans @ts-ignore and @ts-expect-error without a description.
         "@typescript-eslint/consistent-type-assertions": ["error", { assertionStyle: "never" }],
-        "@typescript-eslint/ban-ts-comment": [
-          "error",
-          { "ts-expect-error": "allow-with-description", "ts-ignore": true, "ts-nocheck": true },
-        ],
 
         // Null and edge-case checks.
         "@typescript-eslint/strict-boolean-expressions": "error",
         "@typescript-eslint/switch-exhaustiveness-check": "error",
 
-        // Promises and errors.
+        // Promises and errors. `no-empty` (no empty catch) comes from js.configs.recommended.
         "@typescript-eslint/return-await": ["error", "in-try-catch"],
-        "no-empty": ["error", { allowEmptyCatch: false }],
 
         // Escape hatches cost something.
         "@eslint-community/eslint-comments/require-description": "error",
 
         // No stubs or leftovers. Deferred work becomes an issue, not a comment.
-        "no-warning-comments": ["error", { terms: ["todo", "fixme", "xxx"] }],
+        "no-warning-comments": "error",
         "no-console": "error",
         "no-alert": "error",
         "@typescript-eslint/no-unused-vars": ["error", { ignoreRestSiblings: true }],
