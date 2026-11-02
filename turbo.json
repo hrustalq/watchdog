@@ -1,5 +1,6 @@
 {
   "$schema": "https://turborepo.com/schema.json",
+  "globalDependencies": ["tsconfig.base.json", "eslint.config.mjs"],
   "tasks": {
     "transit": {
       "dependsOn": ["^transit"]
@@ -19,6 +20,12 @@
       "dependsOn": ["transit"]
     },
     "test": {
+      "dependsOn": ["transit"]
+    },
+    "test:unit": {
+      "dependsOn": ["transit"]
+    },
+    "test:integration": {
       "dependsOn": ["transit"]
     }
   }

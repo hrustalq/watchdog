@@ -2,12 +2,23 @@
   "name": "@watchdog/db",
   "private": true,
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing/postgres.ts"
+  },
   "scripts": {
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests --exclude \"**/*.int.test.ts\"",
+    "test:integration": "vitest run --passWithNoTests .int.test.ts"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^12.2.1",
     "@types/node": "^26",
-    "typescript": "^5"
+    "@types/pg": "^8.23.1",
+    "pg": "^8.23.1",
+    "typescript": "^5",
+    "vitest": "^5.0.5"
   }
 }
