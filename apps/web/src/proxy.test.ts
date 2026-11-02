@@ -4,13 +4,14 @@ import { describe, expect, it } from "vitest";
 import { config, proxy } from "./proxy.ts";
 
 describe("proxy", () => {
-  it.each(["/", "/sources", "/api/sources", "/sign-out"])("guards the app route %s", (url) => {
+  it.each(["/", "/sources", "/api/sources", "/sign-out", "/settings", "/setup-other"])("guards the app route %s", (url) => {
     expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
   });
 
   it.each([
     "/sign-in",
     "/sign-in/check-email",
+    "/setup",
     "/api/auth/sign-in/magic-link",
     "/api/auth/magic-link/verify",
     "/api/auth/callback/github",

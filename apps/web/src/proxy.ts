@@ -10,7 +10,7 @@ export function proxy(request: NextRequest) {
   return NextResponse.redirect(new URL("/sign-in", request.url));
 }
 
-// Every route needs a session except sign-in, Better Auth's own endpoints and static files.
+// Every route needs a session except sign-in, setup, Better Auth's own endpoints and static files.
 export const config = {
-  matcher: ["/((?!sign-in(?:/|$)|api/auth/|_next/static/|_next/image|favicon\\.ico$).*)"],
+  matcher: ["/((?!sign-in(?:/|$)|setup$|api/auth/|_next/static/|_next/image|favicon\\.ico$).*)"],
 };

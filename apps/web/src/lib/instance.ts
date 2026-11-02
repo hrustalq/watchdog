@@ -50,8 +50,8 @@ export async function claimInstance(db: Db, token: string, email: string) {
  */
 export async function signupRefusal(db: Db, email: string) {
   const settings = await settingsOf(db);
-  if (settings?.adminUserId == null) {
-    return settings?.claimedEmail === email.toLowerCase() ? undefined : "setup_pending";
+  if (settings === undefined || settings.adminUserId === null) {
+    return email !== "" && settings?.claimedEmail === email.toLowerCase() ? undefined : "setup_pending";
   }
   return settings.signupOpen ? undefined : "signup_closed";
 }
@@ -69,7 +69,7 @@ export async function isInstanceAdmin(db: Db, user: { id: string; email: string 
       .where(and(isNull(instanceSettings.adminUserId), eq(instanceSettings.claimedEmail, settings.claimedEmail)));
     return (await settingsOf(db))?.adminUserId === user.id;
   }
-  return settings !== undefined && settings.adminUserId === user.id;
+  return settings?.adminUserId === user.id;
 }
 
 /** Opens or closes sign-up for emails Watchdog hasn't seen. Check that the caller is the admin. */

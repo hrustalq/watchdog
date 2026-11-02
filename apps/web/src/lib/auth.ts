@@ -53,7 +53,7 @@ export function createAuth({ mode, baseURL, secret, db, mailer, oauth = {} }: Au
       validateUserInfo: async ({ user, source }) => {
         if (source.action !== "create-user") return undefined;
         if (source.method === "oauth" && user.emailVerified !== true) return { error: "email_not_verified" };
-        const refusal = mode === "self-hosted" ? await signupRefusal(db, user.email) : undefined;
+        const refusal = mode === "self-hosted" ? await signupRefusal(db, user.email ?? "") : undefined;
         return refusal === undefined ? undefined : { error: refusal };
       },
     },

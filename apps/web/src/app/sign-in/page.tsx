@@ -3,7 +3,8 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { providerNames, type ProviderId } from "@/lib/auth";
 import { server } from "@/lib/server";
-import { sendMagicLink, signInWithProvider } from "./actions";
+import { signInWithProvider } from "./actions";
+import { SignInForm } from "./sign-in-form";
 import { SubmitButton } from "./submit-button";
 
 export const metadata: Metadata = { title: "Sign in · Watchdog" };
@@ -39,6 +40,11 @@ const notices: Record<string, string> = {
   INVALID_TOKEN: linkFailed,
   EXPIRED_TOKEN: linkFailed,
   ATTEMPTS_EXCEEDED: linkFailed,
+  // A self-hosted install refusing to create a new user, by magic link or OAuth alike.
+  setup_pending:
+    "This Watchdog isn't set up yet, so nobody can sign up. Whoever runs it will find a setup link in the web container's log.",
+  signup_closed:
+    "Sign-up is closed on this instance, so Watchdog can't create an account for that email. Ask whoever runs it to open sign-up.",
 };
 
 // Codes for an OAuth sign-in that stopped: Better Auth's, the provider's own access_denied (a
@@ -72,49 +78,6 @@ async function SignInFormWithError({ searchParams }: Pick<PageProps<"/sign-in">,
     return <SignInForm notice={providerNotice(withProvider)} />;
   }
   return <SignInForm notice={notices[error] ?? unknownError} />;
-}
-
-function SignInForm({
-  email = "",
-  invalidEmail = false,
-  notice,
-}: {
-  email?: string;
-  invalidEmail?: boolean;
-  notice?: string;
-}) {
-  return (
-    <form action={sendMagicLink} className="flex flex-col gap-4">
-      {notice === undefined ? null : (
-        <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-alarm">
-          {notice}
-        </p>
-      )}
-      <div className="flex flex-col gap-2">
-        <label htmlFor="email" className="text-xs font-medium tracking-[0.01em]">
-          Email
-        </label>
-        <input
-          id="email"
-          name="email"
-          type="email"
-          required
-          autoComplete="email"
-          placeholder="name@example.com"
-          defaultValue={email}
-          aria-invalid={invalidEmail}
-          aria-describedby={invalidEmail ? "email-error" : undefined}
-          className="h-8 w-full rounded-lg border border-input bg-transparent px-3 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/40 sm:text-sm"
-        />
-        {invalidEmail ? (
-          <p id="email-error" role="alert" className="text-xs font-medium tracking-[0.01em] text-alarm">
-            Enter a full email address, like name@example.com.
-          </p>
-        ) : null}
-      </div>
-      <SubmitButton pendingLabel="Sending link…">Email me a sign-in link</SubmitButton>
-    </form>
-  );
 }
 
 /** Read per request: which providers are on comes from the runtime environment, not the build. */
