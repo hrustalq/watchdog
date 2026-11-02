@@ -20,16 +20,6 @@ pnpm --filter web dev      # http://localhost:3000
 pnpm --filter worker start
 ```
 
-## Workspace scripts
-
-Run from the root. Turborepo runs each one across every package that defines it.
-
-| Script | Does |
-| --- | --- |
-| `pnpm dev` | Runs every `dev` script |
-| `pnpm build` | Builds the workspace |
-| `pnpm typecheck` | Typechecks the workspace |
-| `pnpm lint` | Lints the workspace |
-| `pnpm test` | Runs the tests |
+`pnpm dev|build|typecheck|lint|test` at the root runs that script in every package that has it, through Turborepo.
 
 The packages share `tsconfig.base.json`. `apps/worker`, `packages/core` and `packages/db` are ES modules that Node runs as TypeScript directly, without a build step. Mark type-only imports with `import type`, and give relative imports their `.ts` extension.
