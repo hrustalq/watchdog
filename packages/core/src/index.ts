@@ -1,1 +1,1 @@
-export { loadConfig, type Config, type Mode } from "./config.ts";
+export { loadConfig, type Config } from "./config.ts";

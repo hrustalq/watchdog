@@ -75,7 +75,6 @@ const schema = z
   }));
 
 export type Config = z.output<typeof schema>;
-export type Mode = Config["mode"];
 
 /** Parses the environment, or throws an error that names every invalid variable. */
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
