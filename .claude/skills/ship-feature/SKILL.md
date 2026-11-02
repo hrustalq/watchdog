@@ -18,7 +18,7 @@ Run these in parallel:
 - `git status --porcelain`. Tracked changes belong to someone else, so stop and ask. Untracked files are fine.
 - `gh auth status`.
 - `git switch main && git pull --ff-only`.
-- Make sure the Knowledge docs are present and current. `docs/` is a git submodule of the Knowledge platform. A fresh checkout needs the credential-helper setup in `AGENTS.md`. Then run `git -C docs fetch origin main` and `git -C docs log --oneline HEAD..origin/main`. If Knowledge `main` has moved, run `git submodule update --remote docs` so you read the current pages. Commit that pointer bump as the PR's first commit ("Point docs submodule at Knowledge main").
+- Make sure the Knowledge docs are present and current. `docs/` is a git submodule of the Knowledge platform. A fresh checkout needs the credential-helper setup in `AGENTS.md`. Then run `git -C docs fetch origin main` and `git -C docs log --oneline HEAD..origin/main`. If Knowledge `main` has moved, run `git submodule update --remote docs` so you read the current pages. Commit that pointer bump as the PR's first commit (`chore(docs): point submodule at Knowledge main`).
 
 ## 1. Pick the issue
 
@@ -63,7 +63,7 @@ The test rules exist so tests run without network access or a model bill: **no l
 
 Before a test runner exists (until #2 ships), or for criteria about the repo itself (layout, scripts, a fresh clone building), write the criteria as a small acceptance script in the scratchpad. Each criterion is one check that exits non-zero on failure. Watch it fail before the change and pass after, and quote its output as the evidence in the PR. Keep the script out of the commit, unless the issue asks for it.
 
-Work from red to green to refactor in small steps, and commit at green points. Write commit messages like the repo history: a plain imperative subject ("Start pg-boss in the worker"), an optional body, and **no `Co-Authored-By` or other trailer**.
+Work from red to green to refactor in small steps, and commit at green points. Write commit messages in Conventional Commits form, which the `commit-msg` hook enforces: `type(scope): subject` with a lowercase imperative subject (`feat(worker): start pg-boss`), an optional body with lines of at most 100 characters, and **no `Co-Authored-By` or other trailer**. The scopes and the case rule are in `AGENTS.md`. Never bypass a hook with `--no-verify`.
 
 While you work:
 
@@ -96,7 +96,7 @@ After pushing, check out the previous Knowledge `main` commit in `docs/` again (
 
 ## 8. Open the PR and get CI green
 
-Push the branch (`git push -u origin HEAD`). Then run `gh pr create --title "<issue title>" --body-file <file>`, with the body written to a file in the scratchpad, using this shape:
+Push the branch (`git push -u origin HEAD`). Then run `gh pr create --title "<type>(<scope>): <issue title, lowercased after the colon>" --body-file <file>`. CI lints the title with commitlint, because it becomes the squash commit's subject. Write the body to a file in the scratchpad, using this shape:
 
 ```markdown
 Closes #N
@@ -147,17 +147,17 @@ Otherwise:
 
 ```bash
 gh pr merge <PR> --squash --delete-branch \
-  --subject "<issue title> (#<PR>)" --body "<one-paragraph summary of the end state>"
+  --subject "<the PR title> (#<PR>)" --body "<one-paragraph summary of the end state, wrapped at 100 characters a line>"
 ```
 
-Pass `--body` explicitly so GitHub doesn't paste every branch commit into `main`'s message. The body has no trailers.
+Pass `--body` explicitly so GitHub doesn't paste every branch commit into `main`'s message. The body has no trailers. CI runs `commitlint --last` on `main`, so a body line over 100 characters turns `main` red.
 
 After the merge:
 
 - `git switch main && git pull --ff-only`, then delete the local branch.
 - `gh issue view N --json state` should say `CLOSED`, closed by `Closes #N`. If it doesn't, close it with a comment that links the PR.
 - Watch the run on `main` (`gh run list --branch main --limit 1`, then `gh run watch <id>`). The smoke test runs only there. If `main` goes red, say so right away and fix it forward on a new branch, because a red `main` blocks every later issue.
-- If the docs MR has merged by now, bump the submodule pointer through a small PR ("Point docs submodule at Knowledge main"). If it hasn't, list it as pending.
+- If the docs MR has merged by now, bump the submodule pointer through a small PR (`chore(docs): point submodule at Knowledge main`). If it hasn't, list it as pending.
 
 ## 10. Wrap up
 
