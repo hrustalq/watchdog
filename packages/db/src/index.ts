@@ -1,1 +1,2 @@
-export const packageName = "@watchdog/db";
+export { createDb, type Db } from "./client.ts";
+export { migrate } from "./migrate.ts";

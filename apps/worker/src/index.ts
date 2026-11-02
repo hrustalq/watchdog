@@ -1,5 +1,4 @@
 import { loadConfig } from "@watchdog/core";
-import { packageName as db } from "@watchdog/db";
 
 // Stops with the invalid variables named before the worker does anything else.
 const config = (() => {
@@ -21,4 +20,4 @@ process.once("SIGTERM", () => {
   console.log("Worker stopped");
 });
 
-console.log(`Worker ready (${config.mode}, ${db})`);
+console.log(`Worker ready (${config.mode})`);

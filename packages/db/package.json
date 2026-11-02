@@ -7,6 +7,8 @@
     "./testing": "./src/testing/postgres.ts"
   },
   "scripts": {
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
     "typecheck": "tsc",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --passWithNoTests",
@@ -18,9 +20,14 @@
     "@types/node": "^26",
     "@types/pg": "^8.23.1",
     "@watchdog/eslint-config": "workspace:*",
+    "drizzle-kit": "^0.31.11",
     "eslint": "^10.14.0",
-    "pg": "^8.23.1",
+    "pg-boss": "^12.38.0",
     "typescript": "^5",
     "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4",
+    "pg": "^8.23.1"
   }
 }
