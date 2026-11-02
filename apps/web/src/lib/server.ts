@@ -49,9 +49,9 @@ export async function requireWorkspace() {
   const { auth, db, mode } = server();
   const session = await auth.api.getSession({ headers: requestHeaders });
   if (session === null) redirect("/sign-in");
-  return {
-    user: session.user,
-    workspace: await workspaceFor(db, session.user),
-    admin: mode === "self-hosted" && (await isInstanceAdmin(db, session.user)),
-  };
+  const [workspace, admin] = await Promise.all([
+    workspaceFor(db, session.user),
+    mode === "self-hosted" && isInstanceAdmin(db, session.user),
+  ]);
+  return { user: session.user, workspace, admin };
 }

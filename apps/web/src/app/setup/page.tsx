@@ -65,7 +65,7 @@ async function Setup({ searchParams }: Pick<PageProps<"/setup">, "searchParams">
         hidden={<input type="hidden" name="token" value={token} />}
         email={typeof email === "string" ? email : ""}
         invalidEmail={error === "invalid-email"}
-        notice={typeof error === "string" ? notices[error] : undefined}
+        notice={typeof error === "string" && Object.hasOwn(notices, error) ? notices[error] : undefined}
       />
     </>
   );

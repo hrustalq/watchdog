@@ -65,6 +65,9 @@ const providerNotices: Record<string, (withProvider: string) => string> = {
     `Watchdog couldn't start signing in ${withProvider}. Try again, or sign in with an email link.`,
 };
 
+// The code comes from the URL, so only a map's own keys count, never ones like "constructor".
+const lookup = <T,>(map: Record<string, T>, key: string) => (Object.hasOwn(map, key) ? map[key] : undefined);
+
 const isProvider = (value: unknown): value is ProviderId =>
   typeof value === "string" && Object.hasOwn(providerNames, value);
 const unknownError =
@@ -76,14 +79,14 @@ async function SignInFormWithError({ searchParams }: Pick<PageProps<"/sign-in">,
   if (error === "invalid-email") {
     return <SignInForm email={typeof email === "string" ? email : ""} invalidEmail />;
   }
-  const providerNotice = providerNotices[error];
+  const providerNotice = lookup(providerNotices, error);
   if (providerNotice !== undefined) {
     const withProvider = isProvider(via) ? `with ${providerNames[via]}` : "with that provider";
     return <SignInForm notice={providerNotice(withProvider)} />;
   }
-  const refusal = refusals[error];
+  const refusal = lookup(refusals, error);
   if (refusal !== undefined) return <SignInForm notice={refusal} noticeTone="neutral" />;
-  return <SignInForm notice={notices[error] ?? unknownError} />;
+  return <SignInForm notice={lookup(notices, error) ?? unknownError} />;
 }
 
 /** Read per request: which providers are on comes from the runtime environment, not the build. */

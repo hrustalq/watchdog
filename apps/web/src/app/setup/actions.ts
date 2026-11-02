@@ -18,7 +18,12 @@ export async function claimAndSendLink(formData: FormData) {
     mode === "self-hosted" &&
     typeof token === "string" &&
     typeof email === "string" &&
+    // Only something shaped like an address may replace an earlier claim, so a typo like "me@"
+    // can't break the link already sent to the right one.
+    /^[^\s@]+@[^\s@]+$/.test(email.trim()) &&
     (await claimInstance(db, token, email));
-  if (!claimed) redirect("/setup");
+  if (!claimed) {
+    redirect(typeof token === "string" ? `/setup?${new URLSearchParams({ token, error: "invalid-email", email: typeof email === "string" ? email : "" })}` : "/setup");
+  }
   await requestMagicLink(formData, { errorPage: `/setup?${new URLSearchParams({ token })}`, from: "setup" });
 }
