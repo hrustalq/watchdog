@@ -1,4 +1,4 @@
-import type { Mailer } from "@watchdog/core";
+import type { Config, Mailer } from "@watchdog/core";
 import type { Db } from "@watchdog/db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -13,14 +13,45 @@ interface AuthDeps {
   secret: string;
   db: Db;
   mailer: Mailer;
+  /** OAuth credentials from the config. A provider without them is left out. */
+  oauth?: Partial<Config["oauth"]>;
 }
 
-/** Better Auth with magic-link sign-in. A link signs up an email it hasn't seen before. */
-export function createAuth({ baseURL, secret, db, mailer }: AuthDeps) {
+/** The OAuth providers Watchdog supports, in the order the sign-in page offers them. */
+const providerIds = ["google", "github"] as const;
+export type ProviderId = (typeof providerIds)[number];
+export const providerNames: Record<ProviderId, string> = { google: "Google", github: "GitHub" };
+
+/** The providers whose ID and secret are both set. */
+export function enabledProviders(oauth: Partial<Config["oauth"]>) {
+  return providerIds.filter((id) => oauth[id] !== undefined);
+}
+
+/**
+ * Better Auth with magic-link sign-in, plus Google and GitHub when their credentials are set. Either
+ * way signs up an email it hasn't seen before.
+ */
+export function createAuth({ baseURL, secret, db, mailer, oauth = {} }: AuthDeps) {
   return betterAuth({
     baseURL,
     secret,
     database: drizzleAdapter(db, { provider: "pg" }),
+    socialProviders: {
+      ...(oauth.google && { google: oauth.google }),
+      ...(oauth.github && { github: oauth.github }),
+    },
+    // Better Auth's default account linking attaches an OAuth sign-in to the existing user with
+    // the same email only when the provider says that email is verified; no provider is trusted
+    // beyond its own flag. Creating a user is held to the same bar, so an unverified provider email
+    // never makes a user row that would sit on someone else's address.
+    user: {
+      validateUserInfo: ({ user, source }) =>
+        source.action === "create-user" && source.method === "oauth" && user.emailVerified !== true
+          ? { error: "email_not_verified" }
+          : undefined,
+    },
+    // An OAuth failure Better Auth can't send to the sign-in's own error URL lands on sign-in too.
+    onAPIError: { errorURL: "/sign-in" },
     // Self-hosted Watchdog sends nothing home (ADR 0013), and hosted doesn't either.
     telemetry: { enabled: false },
     plugins: [
