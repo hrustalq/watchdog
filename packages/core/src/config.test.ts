@@ -43,6 +43,28 @@ describe("loadConfig", () => {
     });
   });
 
+  it("treats an undefined or blank variable as unset", () => {
+    expect(loadConfig({ ...minimal, SMTP_HOST: undefined, SMTP_USER: "  " }).smtp).toBeUndefined();
+  });
+
+  it("trims values", () => {
+    expect(loadConfig({ ...minimal, BETTER_AUTH_URL: " http://localhost:3000 " }).auth.url).toBe(
+      "http://localhost:3000",
+    );
+  });
+
+  it("does not turn SMTP on from SMTP_PORT alone", () => {
+    expect(loadConfig({ ...minimal, SMTP_PORT: "2525" }).smtp).toBeUndefined();
+  });
+
+  it("uses SMTP_PORT when SMTP is on", () => {
+    expect(loadConfig({ ...minimal, ...smtp, SMTP_PORT: "2525" }).smtp?.port).toBe(2525);
+  });
+
+  it("reports hosted mode without SMTP alongside other invalid variables", () => {
+    expect(() => loadConfig({ WATCHDOG_MODE: "hosted" })).toThrow(/DATABASE_URL[\s\S]*SMTP_HOST/);
+  });
+
   it("rejects an unknown mode and names WATCHDOG_MODE", () => {
     expect(() => loadConfig({ ...minimal, WATCHDOG_MODE: "foo" })).toThrow(/WATCHDOG_MODE/);
   });
@@ -126,8 +148,11 @@ describe("loadConfig", () => {
 
   it("rejects a malformed optional variable", () => {
     expect(() => loadConfig({ ...minimal, TELEGRAM_API_ID: "abc" })).toThrow(/TELEGRAM_API_ID/);
-    expect(() => loadConfig({ ...minimal, OBSCURA_CDP_URL: "obscura" })).toThrow(
+    expect(() => loadConfig({ ...minimal, OBSCURA_CDP_URL: "localhost:9222" })).toThrow(
       /OBSCURA_CDP_URL/,
+    );
+    expect(() => loadConfig({ ...minimal, GLITCHTIP_DSN: "javascript:alert(1)" })).toThrow(
+      /GLITCHTIP_DSN/,
     );
   });
 });
