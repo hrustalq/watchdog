@@ -29,9 +29,9 @@ async function databaseState(url: string) {
   }
 }
 
-/** Runs a command in packages/db against the given database, the way a developer would. */
-async function inPackage(command: string, args: string[], databaseUrl: string) {
-  return promisify(execFile)(command, args, {
+/** Runs pnpm in packages/db against the given database, the way a developer would. */
+async function pnpm(args: string[], databaseUrl: string) {
+  return promisify(execFile)("pnpm", args, {
     cwd: packageDir,
     env: { ...process.env, DATABASE_URL: databaseUrl },
   });
@@ -64,11 +64,11 @@ describe("drizzle-kit", () => {
   }, 120_000);
 
   it("db:migrate applies every migration to an empty database, and a second run changes nothing", async () => {
-    await inPackage("pnpm", ["run", "db:migrate"], postgres.url);
+    await pnpm(["run", "db:migrate"], postgres.url);
     const first = await databaseState(postgres.url);
     expect(first.applied.length).toBeGreaterThan(0);
 
-    await inPackage("pnpm", ["run", "db:migrate"], postgres.url);
+    await pnpm(["run", "db:migrate"], postgres.url);
     expect(await databaseState(postgres.url)).toEqual(first);
   }, 60_000);
 
@@ -81,11 +81,11 @@ describe("drizzle-kit", () => {
     expect(before.tables.some((name) => name.startsWith("pgboss."))).toBe(true);
     const migrations = await readdir(migrationsDir, { recursive: true });
 
-    await inPackage("pnpm", ["run", "db:generate"], postgres.url);
+    await pnpm(["run", "db:generate"], postgres.url);
     expect(await readdir(migrationsDir, { recursive: true })).toEqual(migrations);
 
     // --force approves data loss without a prompt, so a push that wanted pgboss gone would drop it.
-    await inPackage("pnpm", ["exec", "drizzle-kit", "push", "--force"], postgres.url);
+    await pnpm(["exec", "drizzle-kit", "push", "--force"], postgres.url);
     expect(await databaseState(postgres.url)).toEqual(before);
   }, 60_000);
 });

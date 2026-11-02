@@ -1,2 +1,2 @@
-export { createDb, type Db } from "./client.ts";
+export { createDb } from "./client.ts";
 export { migrate } from "./migrate.ts";
