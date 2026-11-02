@@ -83,6 +83,8 @@ describe("OAuth sign-in", () => {
   const mails: MailMessage[] = [];
   const authWith = (env: Record<string, string>) =>
     createAuth({
+      // Hosted mode signs up anyone; the self-hosted sign-up gate is covered in instance.int.test.ts.
+      mode: "hosted",
       baseURL,
       secret,
       db,

@@ -2,3 +2,4 @@
 // module against migrations/, and createDb passes it to Drizzle for relational queries.
 export * from "./auth.ts";
 export * from "./workspace.ts";
+export * from "./instance.ts";

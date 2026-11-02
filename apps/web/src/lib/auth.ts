@@ -4,10 +4,13 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
 import { magicLink } from "better-auth/plugins";
+import { signupRefusal } from "./instance.ts";
 
 export const linkLifetimeMinutes = 15;
 
 interface AuthDeps {
+  /** Self-hosted installs gate sign-up on the first-run admin and the sign-up switch. */
+  mode: Config["mode"];
   /** BETTER_AUTH_URL: magic links are built on it. */
   baseURL: string;
   secret: string;
@@ -31,7 +34,7 @@ export function enabledProviders(oauth: Partial<Config["oauth"]>) {
  * Better Auth with magic-link sign-in, plus Google and GitHub when their credentials are set. Either
  * way signs up an email it hasn't seen before.
  */
-export function createAuth({ baseURL, secret, db, mailer, oauth = {} }: AuthDeps) {
+export function createAuth({ mode, baseURL, secret, db, mailer, oauth = {} }: AuthDeps) {
   return betterAuth({
     baseURL,
     secret,
@@ -44,11 +47,15 @@ export function createAuth({ baseURL, secret, db, mailer, oauth = {} }: AuthDeps
     // the same email only when the provider says that email is verified; no provider is trusted
     // beyond its own flag. Creating a user is held to the same bar, so an unverified provider email
     // never makes a user row that would sit on someone else's address.
+    // A self-hosted install also creates no user before its admin claims it, and after that only
+    // while the admin has sign-up open. Existing users aren't created again, so they still sign in.
     user: {
-      validateUserInfo: ({ user, source }) =>
-        source.action === "create-user" && source.method === "oauth" && user.emailVerified !== true
-          ? { error: "email_not_verified" }
-          : undefined,
+      validateUserInfo: async ({ user, source }) => {
+        if (source.action !== "create-user") return undefined;
+        if (source.method === "oauth" && user.emailVerified !== true) return { error: "email_not_verified" };
+        const refusal = mode === "self-hosted" ? await signupRefusal(db, user.email) : undefined;
+        return refusal === undefined ? undefined : { error: refusal };
+      },
     },
     // An OAuth failure Better Auth can't send to the sign-in's own error URL lands on sign-in too.
     onAPIError: { errorURL: "/sign-in" },
