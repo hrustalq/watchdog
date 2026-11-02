@@ -1,1 +1,1 @@
-export const packageName = "@watchdog/core";
+export { loadConfig, type Config } from "./config.ts";

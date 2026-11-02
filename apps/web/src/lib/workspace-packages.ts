@@ -1,3 +1,2 @@
-// The web app resolves the workspace packages. #3 and #4 replace this with real imports.
-export { packageName as corePackage } from "@watchdog/core";
+// The web app resolves the workspace packages. #4 replaces this with real imports.
 export { packageName as dbPackage } from "@watchdog/db";

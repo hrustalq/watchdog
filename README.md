@@ -17,9 +17,12 @@ You need the Node version in `.nvmrc` (`nvm use`) and pnpm, at the version pinne
 
 ```bash
 pnpm install
+cp .env.example .env       # then set a real BETTER_AUTH_SECRET
 pnpm --filter web dev      # http://localhost:3000
 pnpm --filter worker start
 ```
+
+Web and worker read their settings from the environment, and from the root `.env` when it exists. They refuse to start when a variable is invalid and name it. `.env.example` lists every variable, and the Configuration page in `docs/` explains them.
 
 `pnpm dev|build|typecheck|lint|test` at the root runs that script in every package that has it, through Turborepo.
 
