@@ -134,7 +134,7 @@ components:
 
 Watchdog is an instrument panel for one person keeping watch over many sources. Every surface works like professional equipment: precise, dense, labelled, and readable at a glance. The room is dark and quiet by default. Achromatic surfaces, hairline borders and steady type set a calm baseline, so the few things that light up actually mean something. Color is a reading, not decoration: red means look now, amber means look soon, green means healthy, and everything else is ink on graphite.
 
-The system is built on the project's shadcn/ui theme (`src/app/globals.css`, style `base-rhea`, Base UI primitives) and keeps its token names and structure. Dark is the default and the reference theme; light is derived from it and kept for parity. The 2D chrome (panels, feed, inputs, buttons) is flat and tonal. Real depth belongs to one place only: the three.js pipeline scene, where sources, classifiers, extractor rules and actions sit in space and items flow between them.
+The system is built on the project's shadcn/ui theme (`apps/web/src/app/globals.css`, style `base-rhea`, Base UI primitives) and keeps its token names and structure. Dark is the default and the reference theme; light is derived from it and kept for parity. The 2D chrome (panels, feed, inputs, buttons) is flat and tonal. Real depth belongs to one place only: the three.js pipeline scene, where sources, classifiers, extractor rules and actions sit in space and items flow between them.
 
 Density is compact (32px controls, 4px grid) because the job is scanning many items quickly. Type comes from a single variable family, Recursive, whose MONO axis switches between the UI voice and the data voice, so labels and readings always look like the same instrument.
 
@@ -253,7 +253,7 @@ Crisp and engineered. One radius family derived from `--radius: 0.5rem`, identic
 
 ## Components
 
-Only the Button exists in code (`src/components/ui/button.tsx`, Base UI + cva). Other components follow this character as they are added from shadcn.
+Only the Button exists in code (`apps/web/src/components/ui/button.tsx`, Base UI + cva). Other components follow this character as they are added from shadcn.
 
 ### Buttons
 Character: precise and quiet; the action is clear from the label and position, not loud color.
