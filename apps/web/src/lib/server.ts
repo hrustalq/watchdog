@@ -2,7 +2,7 @@ import { createMailer, loadConfig } from "@watchdog/core";
 import { createDb } from "@watchdog/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { createAuth } from "./auth.ts";
+import { createAuth, enabledProviders } from "./auth.ts";
 import { workspaceFor } from "./workspace.ts";
 
 function start() {
@@ -13,9 +13,17 @@ function start() {
     secret: config.auth.secret,
     db,
     mailer: createMailer(config),
+    oauth: config.oauth,
   });
-  // On a self-hosted install without SMTP, magic links go to the web log instead.
-  return { db, auth, baseURL: config.auth.url, mailGoesToLog: config.smtp === undefined };
+  return {
+    db,
+    auth,
+    baseURL: config.auth.url,
+    // On a self-hosted install without SMTP, magic links go to the web log instead.
+    mailGoesToLog: config.smtp === undefined,
+    /** The OAuth providers the sign-in page offers. Names only: secrets never leave the server. */
+    providers: enabledProviders(config.oauth),
+  };
 }
 
 let started: ReturnType<typeof start> | undefined;

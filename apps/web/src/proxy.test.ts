@@ -13,6 +13,7 @@ describe("proxy", () => {
     "/sign-in/check-email",
     "/api/auth/sign-in/magic-link",
     "/api/auth/magic-link/verify",
+    "/api/auth/callback/github",
     "/_next/static/chunks/app.js",
     "/favicon.ico",
   ])("lets %s through without a session", (url) => {

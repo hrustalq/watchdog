@@ -2,6 +2,7 @@
 
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import type { ProviderId } from "@/lib/auth";
 import { server } from "@/lib/server";
 
 /**
@@ -31,4 +32,19 @@ export async function sendMagicLink(formData: FormData) {
     redirect(`/sign-in?error=invalid-email&email=${encodeURIComponent(email)}`);
   }
   redirect(response.status === 429 ? "/sign-in?error=too-many" : "/sign-in?error=send-failed");
+}
+
+/**
+ * Starts an OAuth sign-in and sends the browser to the provider. `auth.api` sets the state cookie
+ * through the nextCookies plugin. The provider arrives from the client, so it's checked against
+ * the enabled ones rather than trusted.
+ */
+export async function signInWithProvider(provider: ProviderId) {
+  const { auth, providers } = server();
+  if (!providers.includes(provider)) redirect("/sign-in");
+  const { url } = await auth.api.signInSocial({
+    body: { provider, callbackURL: "/", errorCallbackURL: "/sign-in" },
+    headers: await headers(),
+  });
+  redirect(url ?? "/sign-in");
 }

@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
+import { connection } from "next/server";
 import { Suspense } from "react";
-import { sendMagicLink } from "./actions";
+import { Button } from "@/components/ui/button";
+import { providerNames } from "@/lib/auth";
+import { server } from "@/lib/server";
+import { sendMagicLink, signInWithProvider } from "./actions";
 import { SubmitButton } from "./submit-button";
 
 export const metadata: Metadata = { title: "Sign in · Watchdog" };
@@ -18,6 +22,9 @@ export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
       <Suspense fallback={<SignInForm />}>
         <SignInFormWithError searchParams={searchParams} />
       </Suspense>
+      <Suspense fallback={null}>
+        <ProviderButtons />
+      </Suspense>
     </>
   );
 }
@@ -25,7 +32,8 @@ export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
 const linkFailed =
   "That sign-in link has expired or was already used. Enter your email to get a new one.";
 
-// The sign-in action's own codes, then Better Auth's codes for a magic link that didn't work.
+// The sign-in action's own codes, Better Auth's codes for a magic link that didn't work, then its
+// codes for an OAuth sign-in that a provider's unverified email stopped.
 const notices: Record<string, string> = {
   "too-many": "Too many sign-in links were requested. Wait a minute, then try again.",
   "send-failed":
@@ -33,13 +41,18 @@ const notices: Record<string, string> = {
   INVALID_TOKEN: linkFailed,
   EXPIRED_TOKEN: linkFailed,
   ATTEMPTS_EXCEEDED: linkFailed,
+  email_not_verified:
+    "That account's email isn't verified with the provider, so Watchdog can't sign you in with it. Verify the email there, or sign in with an email link.",
+  account_not_linked:
+    "This email already has a Watchdog account, and the provider didn't confirm the email is yours. Sign in with an email link instead.",
 };
 const unknownError =
   "Signing in didn't work. Try again. If it keeps failing, whoever runs this Watchdog can find the cause in its log.";
 
 async function SignInFormWithError({ searchParams }: Pick<PageProps<"/sign-in">, "searchParams">) {
   const { error, email } = await searchParams;
-  if (typeof error !== "string") return <SignInForm />;
+  // access_denied: the person cancelled on the provider's page, which needs no notice.
+  if (typeof error !== "string" || error === "access_denied") return <SignInForm />;
   if (error === "invalid-email") {
     return <SignInForm email={typeof email === "string" ? email : ""} invalidEmail />;
   }
@@ -86,5 +99,30 @@ function SignInForm({
       </div>
       <SubmitButton />
     </form>
+  );
+}
+
+/** Read per request: which providers are on comes from the runtime environment, not the build. */
+async function ProviderButtons() {
+  await connection();
+  const { providers } = server();
+  if (providers.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="flex items-center gap-3 text-xs font-medium tracking-[0.01em] text-muted-foreground">
+        <span aria-hidden="true" className="h-px flex-1 bg-border" />
+        or
+        <span aria-hidden="true" className="h-px flex-1 bg-border" />
+      </p>
+      <div className="flex flex-col gap-2">
+        {providers.map((id) => (
+          <form key={id} action={signInWithProvider.bind(null, id)}>
+            <Button type="submit" variant="outline" className="w-full">
+              Continue with {providerNames[id]}
+            </Button>
+          </form>
+        ))}
+      </div>
+    </div>
   );
 }

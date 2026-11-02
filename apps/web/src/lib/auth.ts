@@ -1,4 +1,4 @@
-import type { Mailer } from "@watchdog/core";
+import type { Config, Mailer } from "@watchdog/core";
 import type { Db } from "@watchdog/db";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -13,14 +13,39 @@ interface AuthDeps {
   secret: string;
   db: Db;
   mailer: Mailer;
+  /** OAuth credentials from the config. A provider without them is left out. */
+  oauth?: Partial<Config["oauth"]>;
 }
 
-/** Better Auth with magic-link sign-in. A link signs up an email it hasn't seen before. */
-export function createAuth({ baseURL, secret, db, mailer }: AuthDeps) {
+/** The OAuth providers Watchdog supports, in the order the sign-in page offers them. */
+export const providerNames = { google: "Google", github: "GitHub" } as const;
+export type ProviderId = keyof typeof providerNames;
+
+/** The providers whose ID and secret are both set. */
+export function enabledProviders(oauth: Partial<Config["oauth"]>) {
+  return (["google", "github"] as const).filter((id) => oauth[id] !== undefined);
+}
+
+/**
+ * Better Auth with magic-link sign-in, plus Google and GitHub when their credentials are set. Either
+ * way signs up an email it hasn't seen before.
+ */
+export function createAuth({ baseURL, secret, db, mailer, oauth = {} }: AuthDeps) {
+  // A provider signs in only with an email it says is verified. Better Auth's default account
+  // linking then attaches it to an existing user with that email, and no provider is trusted
+  // beyond its own verified flag, so an unverified provider email can't reach someone else's
+  // account.
+  const verified = { requireEmailVerification: true };
   return betterAuth({
     baseURL,
     secret,
     database: drizzleAdapter(db, { provider: "pg" }),
+    socialProviders: {
+      ...(oauth.google && { google: { ...oauth.google, ...verified } }),
+      ...(oauth.github && { github: { ...oauth.github, ...verified } }),
+    },
+    // An OAuth failure Better Auth can't send to the sign-in's own error URL lands on sign-in too.
+    onAPIError: { errorURL: "/sign-in" },
     // Self-hosted Watchdog sends nothing home (ADR 0013), and hosted doesn't either.
     telemetry: { enabled: false },
     plugins: [
