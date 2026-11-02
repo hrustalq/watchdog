@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, check, pgTable, text } from "drizzle-orm/pg-core";
 import { user } from "./auth.ts";
 
 /**
@@ -18,10 +18,6 @@ export const instanceSettings = pgTable(
     setupTokenHash: text("setup_token_hash"),
     /** Whether an email Watchdog hasn't seen may sign up. Closed until the admin opens it. */
     signupOpen: boolean("signup_open").notNull().default(false),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
   },
   (table) => [check("instance_settings_single_row", sql`${table.id}`)],
 );

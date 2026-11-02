@@ -15,8 +15,7 @@ export async function start() {
   }
 
   // A self-hosted install with no admin yet prints a fresh setup URL. Only someone who can read
-  // this log can claim the install, and nobody can sign up before that.
-  if (config.mode !== "self-hosted") return;
+  // this log can claim the install, and nobody can sign up before that. Hosted gets no URL.
   const db = createDb(config.databaseUrl);
   try {
     const url = await setupUrl(config.mode, db, config.auth.url);

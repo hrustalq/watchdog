@@ -4,7 +4,6 @@ CREATE TABLE "instance_settings" (
 	"claimed_email" text,
 	"setup_token_hash" text,
 	"signup_open" boolean DEFAULT false NOT NULL,
-	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
 	CONSTRAINT "instance_settings_single_row" CHECK ("instance_settings"."id")
 );
 --> statement-breakpoint
