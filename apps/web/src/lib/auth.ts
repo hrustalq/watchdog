@@ -18,12 +18,13 @@ interface AuthDeps {
 }
 
 /** The OAuth providers Watchdog supports, in the order the sign-in page offers them. */
-export const providerNames = { google: "Google", github: "GitHub" } as const;
-export type ProviderId = keyof typeof providerNames;
+const providerIds = ["google", "github"] as const;
+export type ProviderId = (typeof providerIds)[number];
+export const providerNames: Record<ProviderId, string> = { google: "Google", github: "GitHub" };
 
 /** The providers whose ID and secret are both set. */
 export function enabledProviders(oauth: Partial<Config["oauth"]>) {
-  return (["google", "github"] as const).filter((id) => oauth[id] !== undefined);
+  return providerIds.filter((id) => oauth[id] !== undefined);
 }
 
 /**
@@ -31,18 +32,23 @@ export function enabledProviders(oauth: Partial<Config["oauth"]>) {
  * way signs up an email it hasn't seen before.
  */
 export function createAuth({ baseURL, secret, db, mailer, oauth = {} }: AuthDeps) {
-  // A provider signs in only with an email it says is verified. Better Auth's default account
-  // linking then attaches it to an existing user with that email, and no provider is trusted
-  // beyond its own verified flag, so an unverified provider email can't reach someone else's
-  // account.
-  const verified = { requireEmailVerification: true };
   return betterAuth({
     baseURL,
     secret,
     database: drizzleAdapter(db, { provider: "pg" }),
     socialProviders: {
-      ...(oauth.google && { google: { ...oauth.google, ...verified } }),
-      ...(oauth.github && { github: { ...oauth.github, ...verified } }),
+      ...(oauth.google && { google: oauth.google }),
+      ...(oauth.github && { github: oauth.github }),
+    },
+    // Better Auth's default account linking attaches an OAuth sign-in to the existing user with
+    // the same email only when the provider says that email is verified; no provider is trusted
+    // beyond its own flag. Creating a user is held to the same bar, so an unverified provider email
+    // never makes a user row that would sit on someone else's address.
+    user: {
+      validateUserInfo: ({ user, source }) =>
+        source.action === "create-user" && source.method === "oauth" && user.emailVerified !== true
+          ? { error: "email_not_verified" }
+          : undefined,
     },
     // An OAuth failure Better Auth can't send to the sign-in's own error URL lands on sign-in too.
     onAPIError: { errorURL: "/sign-in" },

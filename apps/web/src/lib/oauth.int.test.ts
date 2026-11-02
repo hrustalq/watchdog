@@ -1,5 +1,5 @@
 import { loadConfig, type MailMessage } from "@watchdog/core";
-import { account, createDb, migrate, workspace, type Db } from "@watchdog/db";
+import { account, createDb, migrate, type Db } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth, enabledProviders } from "./auth.ts";
@@ -195,23 +195,17 @@ describe("OAuth sign-in", () => {
     expect((await accountsOf(judy.id)).map((row) => row.providerId)).not.toContain("github");
   });
 
-  it("doesn't sign in with a GitHub email that isn't verified", async () => {
-    const workspacesBefore = await db.$count(workspace);
-
+  it("doesn't create a user from a GitHub email that isn't verified", async () => {
     const { location, cookie } = await finishGitHub({ id: 104, email: "kai@example.com", verified: false });
 
-    expect(location).toBe("/sign-in?via=github&error=email_not_verified");
+    const back = new URL(location, baseURL);
+    expect(back.pathname).toBe("/sign-in");
+    expect(back.searchParams.get("via")).toBe("github");
+    expect(back.searchParams.get("error")).toBe("email_not_verified");
     expect(await auth.api.getSession({ headers: new Headers({ cookie }) })).toBeNull();
-    expect(await db.$count(workspace)).toBe(workspacesBefore);
-  });
-
-  it("drops an unverified GitHub link once a magic link proves who owns the email", async () => {
-    await finishGitHub({ id: 105, email: "lena@example.com", verified: false });
-
-    const { user: lena } = await openApp(await signInByMagicLink("lena@example.com"));
-
-    expect(await accountsOf(lena.id)).toHaveLength(0);
-    const { location } = await finishGitHub({ id: 105, email: "lena@example.com", verified: false });
-    expect(new URL(location, baseURL).searchParams.get("error")).toBe("account_not_linked");
+    // Nothing is left on the address, so its owner's later Google or GitHub sign-in isn't blocked.
+    expect(await db.query.user.findFirst({ where: (table, { eq }) => eq(table.email, "kai@example.com") })).toBeUndefined();
+    const { location: owner } = await finishGitHub({ id: 204, email: "kai@example.com", verified: true });
+    expect(owner).toBe("/");
   });
 });
