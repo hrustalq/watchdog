@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "next typegen && tsc",
-    "lint": "eslint . --max-warnings 0",
+    "lint": "next typegen && eslint . --max-warnings 0",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests --exclude \"**/*.int.test.ts\"",
     "test:integration": "vitest run --passWithNoTests .int.test.ts"
@@ -16,6 +16,7 @@
     "@base-ui/react": "^1.9.0",
     "@watchdog/core": "workspace:*",
     "@watchdog/db": "workspace:*",
+    "better-auth": "^1.7.15",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.5.1",
     "lucide-react": "^1.66.0",
