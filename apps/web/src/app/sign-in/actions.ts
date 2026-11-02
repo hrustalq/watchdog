@@ -17,7 +17,7 @@ export async function sendMagicLink(formData: FormData) {
   } catch (error) {
     // Better Auth rejects an address it can't parse with a 400.
     if (isAPIError(error) && error.statusCode === 400) {
-      redirect("/sign-in?error=invalid-email");
+      redirect(`/sign-in?error=invalid-email&email=${encodeURIComponent(email)}`);
     }
     throw error;
   }

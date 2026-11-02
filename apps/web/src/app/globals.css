@@ -200,6 +200,20 @@
   --tracking-normal: 0em;
 }
 
+/* Type roles from DESIGN.md → Typography → Hierarchy. */
+@utility text-headline {
+  font-size: 1.5rem;
+  line-height: 1.2;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+@utility text-title {
+  font-size: 1rem;
+  line-height: 1.35;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
