@@ -24,16 +24,24 @@ describe("createMailer with SMTP", () => {
     };
   }, 120_000);
 
+  const smtp = () => ({
+    host: mailpit.getHost(),
+    port: mailpit.getMappedPort(1025),
+    user: "watchdog",
+    password: "watchdog",
+    from: "Watchdog <watchdog@example.com>",
+  });
+
+  it("refuses to send without TLS in hosted mode", async () => {
+    const mailer = createMailer({ mode: "hosted", smtp: smtp() });
+
+    await expect(
+      mailer.send({ to: "alice@example.com", subject: "Sign in to Watchdog", text: "A link" }),
+    ).rejects.toThrow(/STARTTLS/);
+  }, 60_000);
+
   it("delivers the message over SMTP", async () => {
-    const mailer = createMailer({
-      smtp: {
-        host: mailpit.getHost(),
-        port: mailpit.getMappedPort(1025),
-        user: "watchdog",
-        password: "watchdog",
-        from: "Watchdog <watchdog@example.com>",
-      },
-    });
+    const mailer = createMailer({ mode: "self-hosted", smtp: smtp() });
 
     await mailer.send({ to: "alice@example.com", subject: "Sign in to Watchdog", text: "A link" });
 

@@ -26,6 +26,8 @@ export function createAuth({ baseURL, secret, db, mailer }: AuthDeps) {
     plugins: [
       magicLink({
         expiresIn: linkLifetimeMinutes * 60,
+        // Only a hash of the token is stored, so a database read can't be turned into a sign-in.
+        storeToken: "hashed",
         sendMagicLink: async ({ email, url }) => {
           await mailer.send({
             to: email,

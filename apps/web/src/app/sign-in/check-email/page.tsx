@@ -27,8 +27,9 @@ export default function CheckEmailPage({ searchParams }: PageProps<"/sign-in/che
 async function Sent({ searchParams }: Pick<PageProps<"/sign-in/check-email">, "searchParams">) {
   await connection();
   const { email } = await searchParams;
+  // Only something shaped like an address is shown, so the URL can't put other text on the page.
   const recipient =
-    typeof email === "string" && email !== "" ? (
+    typeof email === "string" && /^[^\s@]+@[^\s@]+$/.test(email) ? (
       <span className="font-medium text-foreground">{email}</span>
     ) : (
       "your email"

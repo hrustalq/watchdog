@@ -16,7 +16,7 @@ function captureOutput() {
 describe("createMailer without SMTP", () => {
   it("prints the message to the log instead of sending it", async () => {
     const { stream, output } = captureOutput();
-    const mailer = createMailer({ smtp: undefined }, stream);
+    const mailer = createMailer({ mode: "self-hosted", smtp: undefined }, stream);
 
     await mailer.send({
       to: "alice@example.com",

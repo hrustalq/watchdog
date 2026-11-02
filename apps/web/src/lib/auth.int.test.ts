@@ -105,6 +105,22 @@ describe("magic link sign-in", () => {
     await expect(db.insert(workspace).values({ name: "second", ownerUserId: dave.id })).rejects.toThrow();
   });
 
+  it("stores only a hash of the magic link's token", async () => {
+    await auth.handler(
+      new Request(`${baseURL}/api/auth/sign-in/magic-link`, {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: baseURL },
+        body: JSON.stringify({ email: "frank@example.com", callbackURL: "/" }),
+      }),
+    );
+    const token = new URL(/https?:\/\/\S+/.exec(mails.at(-1)?.text ?? "")?.[0] ?? baseURL).searchParams.get("token");
+    expect(token).toBeTruthy();
+
+    const stored = await db.query.verification.findMany();
+    expect(stored.length).toBeGreaterThan(0);
+    expect(stored.flatMap((row) => [row.identifier, row.value]).join(" ")).not.toContain(token);
+  });
+
   it("ends the session on sign-out", async () => {
     const cookie = await signIn("erin@example.com");
 

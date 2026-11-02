@@ -19,10 +19,10 @@ export interface Mailer {
  * from the web container's log.
  */
 export function createMailer(
-  config: Pick<Config, "smtp">,
+  config: Pick<Config, "mode" | "smtp">,
   log: NodeJS.WritableStream = process.stdout,
 ): Mailer {
-  const { smtp } = config;
+  const { mode, smtp } = config;
   if (smtp === undefined) {
     return {
       send: ({ to, subject, text }) => {
@@ -33,11 +33,13 @@ export function createMailer(
     };
   }
 
-  // Port 587 upgrades to TLS with STARTTLS when the server offers it.
+  // Port 587 upgrades to TLS with STARTTLS. Hosted insists on it, so a stripped STARTTLS can't
+  // expose the login or a magic link; self-hosted also allows a local relay without TLS.
   const transport = createTransport({
     host: smtp.host,
     port: smtp.port,
     auth: { user: smtp.user, pass: smtp.password },
+    requireTLS: mode === "hosted",
   });
   return {
     send: async ({ to, subject, text }) => {

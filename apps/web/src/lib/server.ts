@@ -15,7 +15,7 @@ function start() {
     mailer: createMailer(config),
   });
   // On a self-hosted install without SMTP, magic links go to the web log instead.
-  return { db, auth, mailGoesToLog: config.smtp === undefined };
+  return { db, auth, baseURL: config.auth.url, mailGoesToLog: config.smtp === undefined };
 }
 
 let started: ReturnType<typeof start> | undefined;

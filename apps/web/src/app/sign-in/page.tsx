@@ -22,31 +22,46 @@ export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
   );
 }
 
+const linkFailed =
+  "That sign-in link has expired or was already used. Enter your email to get a new one.";
+
+// The sign-in action's own codes, then Better Auth's codes for a magic link that didn't work.
+const notices: Record<string, string> = {
+  "too-many": "Too many sign-in links were requested. Wait a minute, then try again.",
+  "send-failed":
+    "Watchdog couldn't send the email. Try again in a moment. If it keeps failing, whoever runs this Watchdog should check its mail settings.",
+  INVALID_TOKEN: linkFailed,
+  EXPIRED_TOKEN: linkFailed,
+  ATTEMPTS_EXCEEDED: linkFailed,
+};
+const unknownError =
+  "Signing in didn't work. Try again. If it keeps failing, whoever runs this Watchdog can find the cause in its log.";
+
 async function SignInFormWithError({ searchParams }: Pick<PageProps<"/sign-in">, "searchParams">) {
   const { error, email } = await searchParams;
+  if (typeof error !== "string") return <SignInForm />;
   if (error === "invalid-email") {
     return <SignInForm email={typeof email === "string" ? email : ""} invalidEmail />;
   }
-  // Any other code is Better Auth sending someone back from a magic link that didn't work.
-  return <SignInForm linkFailed={typeof error === "string"} />;
+  return <SignInForm notice={notices[error] ?? unknownError} />;
 }
 
 function SignInForm({
   email = "",
   invalidEmail = false,
-  linkFailed = false,
+  notice,
 }: {
   email?: string;
   invalidEmail?: boolean;
-  linkFailed?: boolean;
+  notice?: string;
 }) {
   return (
     <form action={sendMagicLink} className="flex flex-col gap-4">
-      {linkFailed ? (
+      {notice === undefined ? null : (
         <p role="alert" className="rounded-lg bg-destructive/20 px-3 py-2 text-sm text-alarm">
-          That sign-in link has expired or was already used. Enter your email to get a new one.
+          {notice}
         </p>
-      ) : null}
+      )}
       <div className="flex flex-col gap-2">
         <label htmlFor="email" className="text-xs font-medium tracking-[0.01em]">
           Email
