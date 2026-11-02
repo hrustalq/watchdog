@@ -1,17 +1,15 @@
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { startPostgres, type TestPostgres } from "./postgres.ts";
 
 describe("startPostgres", () => {
   let postgres: TestPostgres;
 
+  // The returned teardown runs only if the container started.
   beforeAll(async () => {
     postgres = await startPostgres();
+    return postgres.stop;
   }, 120_000);
-
-  afterAll(async () => {
-    await postgres.stop();
-  });
 
   it("serves queries on the returned URL", async () => {
     const client = new pg.Client({ connectionString: postgres.url });

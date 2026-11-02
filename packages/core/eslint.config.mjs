@@ -7,6 +7,6 @@ export default defineConfig([
   // The config loader is the one place that reads the environment.
   {
     files: ["src/config.ts"],
-    rules: { "no-restricted-properties": "off" },
+    rules: { "no-restricted-properties": "off", "no-restricted-imports": "off" },
   },
 ]);

@@ -1,6 +1,6 @@
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 
-// Same major version as the Compose stack.
+// The Postgres in Compose (#8) must run the same major version.
 export const postgresImage = "postgres:18-alpine";
 
 export interface TestPostgres {

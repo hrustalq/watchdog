@@ -8,6 +8,8 @@ import { importX } from "eslint-plugin-import-x";
 import { defineConfig, globalIgnores } from "eslint/config";
 import { configs as ts } from "typescript-eslint";
 
+const envMessage = "Read configuration through the config loader in packages/core/src/config.ts.";
+
 /** @param {string} packageDir the directory holding the package's tsconfig.json */
 export function base(packageDir) {
   return defineConfig([
@@ -71,14 +73,12 @@ export function base(packageDir) {
         "import-x/no-duplicates": "error",
         "import-x/no-extraneous-dependencies": "error",
 
-        // Config comes in one way: the config loader in packages/core/src/config.ts.
-        "no-restricted-properties": [
+        // Config comes in one way: the config loader in packages/core/src/config.ts (#3).
+        "no-restricted-properties": ["error", { object: "process", property: "env", message: envMessage }],
+        "no-restricted-imports": [
           "error",
-          {
-            object: "process",
-            property: "env",
-            message: "Read configuration through the config loader in packages/core/src/config.ts.",
-          },
+          { name: "node:process", importNames: ["env"], message: envMessage },
+          { name: "process", importNames: ["env"], message: envMessage },
         ],
       },
     },
@@ -92,7 +92,7 @@ export function base(packageDir) {
     // Tests and tool configs set up the environment they run in.
     {
       files: ["**/*.test.{ts,tsx}", "**/*.config.{ts,mts,mjs,js}"],
-      rules: { "no-restricted-properties": "off" },
+      rules: { "no-restricted-properties": "off", "no-restricted-imports": "off" },
     },
 
     // Tests mean something: no `.only`, no `.skip`, every test asserts.

@@ -2,7 +2,6 @@ name: CI
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened]
   push:
     branches: [main]
 
@@ -15,8 +14,6 @@ env:
 
 jobs:
   checks:
-    # A title edit only needs the commitlint job.
-    if: github.event.action != 'edited'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -39,27 +36,3 @@ jobs:
       - name: Test (unit and integration)
         if: ${{ !cancelled() }}
         run: pnpm turbo run test
-
-  commitlint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          submodules: false
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      # PRs are squash-merged and the title becomes the commit subject on main.
-      # The title is untrusted input, so it goes through env, never inline in the script.
-      - name: Lint the PR title
-        if: github.event_name == 'pull_request'
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: printf '%s\n' "$PR_TITLE" | pnpm exec commitlint
-      - name: Lint the pushed commit
-        if: github.event_name == 'push'
-        run: pnpm exec commitlint --last

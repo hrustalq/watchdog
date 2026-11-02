@@ -96,7 +96,7 @@ After pushing, check out the previous Knowledge `main` commit in `docs/` again (
 
 ## 8. Open the PR and get CI green
 
-Push the branch (`git push -u origin HEAD`). Then run `gh pr create --title "<type>(<scope>): <issue title, lowercased after the colon>" --body-file <file>`. CI lints the title with commitlint, because it becomes the squash commit's subject. Write the body to a file in the scratchpad, using this shape:
+Push the branch (`git push -u origin HEAD`). Then run `gh pr create --title "<type>(<scope>): <issue title as a subject starting with a lowercase verb>" --body-file <file>`. CI lints the title with commitlint, because it becomes the squash commit's subject. Write the body to a file in the scratchpad, using this shape:
 
 ```markdown
 Closes #N
