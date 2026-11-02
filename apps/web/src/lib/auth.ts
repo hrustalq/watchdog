@@ -49,6 +49,8 @@ export function createAuth({ mode, baseURL, secret, db, mailer, oauth = {} }: Au
     // never makes a user row that would sit on someone else's address.
     // A self-hosted install also creates no user before its admin claims it, and after that only
     // while the admin has sign-up open. Existing users aren't created again, so they still sign in.
+    // The refusal comes when the link is opened, not when it's asked for, so asking doesn't reveal
+    // which emails have an account.
     user: {
       validateUserInfo: async ({ user, source }) => {
         if (source.action !== "create-user") return undefined;

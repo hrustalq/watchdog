@@ -40,9 +40,13 @@ const notices: Record<string, string> = {
   INVALID_TOKEN: linkFailed,
   EXPIRED_TOKEN: linkFailed,
   ATTEMPTS_EXCEEDED: linkFailed,
-  // A self-hosted install refusing to create a new user, by magic link or OAuth alike.
+};
+
+// A self-hosted install refusing to create a new user, by magic link or OAuth alike. These are
+// policy, not failures, so they aren't shown in red.
+const refusals: Record<string, string> = {
   setup_pending:
-    "This Watchdog isn't set up yet, so nobody can sign up. Whoever runs it will find a setup link in the web container's log.",
+    "This Watchdog isn't set up yet, so nobody can sign up. Whoever runs it will find a setup link in the web container's log. If you just used that link, sign in with the email you entered there.",
   signup_closed:
     "Sign-up is closed on this instance, so Watchdog can't create an account for that email. Ask whoever runs it to open sign-up.",
 };
@@ -77,6 +81,8 @@ async function SignInFormWithError({ searchParams }: Pick<PageProps<"/sign-in">,
     const withProvider = isProvider(via) ? `with ${providerNames[via]}` : "with that provider";
     return <SignInForm notice={providerNotice(withProvider)} />;
   }
+  const refusal = refusals[error];
+  if (refusal !== undefined) return <SignInForm notice={refusal} noticeTone="neutral" />;
   return <SignInForm notice={notices[error] ?? unknownError} />;
 }
 

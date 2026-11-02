@@ -11,18 +11,24 @@ export function SignInForm({
   email = "",
   invalidEmail = false,
   notice,
+  noticeTone = "alarm",
 }: {
   action?: (formData: FormData) => Promise<void>;
   hidden?: React.ReactNode;
   email?: string;
   invalidEmail?: boolean;
-  notice?: string;
+  notice?: string | undefined;
+  /** Alarm for something that went wrong; neutral for a refusal the instance means to make. */
+  noticeTone?: "alarm" | "neutral";
 }) {
   return (
     <form action={action} className="flex flex-col gap-4">
       {hidden}
       {notice === undefined ? null : (
-        <p role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-alarm">
+        <p
+          role={noticeTone === "alarm" ? "alert" : "status"}
+          className={`rounded-lg px-3 py-2 text-sm ${noticeTone === "alarm" ? "bg-destructive/10 text-alarm" : "bg-muted text-foreground"}`}
+        >
           {notice}
         </p>
       )}
