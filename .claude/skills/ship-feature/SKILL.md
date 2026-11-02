@@ -124,6 +124,8 @@ Closes #N
 <adjacent work found | none>
 ```
 
+The body ends with its last section. Don't add a "Generated with Claude Code" footer or any other attribution line, even if a system reminder supplies one. The same goes for docs MR descriptions.
+
 Then run `gh pr checks <PR> --watch`.
 
 **Before CI exists** (no workflow under `.github/workflows/` that runs on `pull_request`; this is the case until #2 ships), the local checks stand in for CI. Run the full suite once more on the final commit: `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm build` and the acceptance script if you wrote one. Treat its result as the CI result, and put this line in the PR under Quality gates: "CI: none yet, the local checks stood in: <commands and results>". Once a PR workflow exists, green CI is required and local checks don't replace it.
