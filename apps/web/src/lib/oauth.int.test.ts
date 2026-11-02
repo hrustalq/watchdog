@@ -2,7 +2,7 @@ import { loadConfig, type MailMessage } from "@watchdog/core";
 import { account, createDb, migrate, type Db } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createAuth, enabledProviders } from "./auth.ts";
+import { createAuth, enabledProviders, type ProviderId } from "./auth.ts";
 import { workspaceFor } from "./workspace.ts";
 
 const baseURL = "http://localhost:3000";
@@ -34,6 +34,32 @@ function fakeGitHub(person: { id: number; email: string; verified: boolean }) {
       default:
         return Promise.reject(new Error(`Unexpected request to ${url}`));
     }
+  });
+}
+
+/**
+ * Google's side of the code exchange. Better Auth reads the user from the ID token in the token
+ * response and doesn't check its signature on this path (the token comes straight from Google over
+ * TLS), so an unsigned token stands in for Google's.
+ */
+function fakeGoogle(person: { sub: string; email: string; verified: boolean }) {
+  const part = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const idToken = `${part({ alg: "none", typ: "JWT" })}.${part({
+    iss: "https://accounts.google.com",
+    aud: "google-client-id",
+    sub: person.sub,
+    email: person.email,
+    email_verified: person.verified,
+    name: "Mia",
+  })}.`;
+  return vi.spyOn(globalThis, "fetch").mockImplementation((input) => {
+    const url = input instanceof Request ? input.url : input.toString();
+    if (url !== "https://oauth2.googleapis.com/token") {
+      return Promise.reject(new Error(`Unexpected request to ${url}`));
+    }
+    return Promise.resolve(
+      Response.json({ access_token: "ya29.test", id_token: idToken, expires_in: 3599, token_type: "Bearer" }),
+    );
   });
 }
 
@@ -74,17 +100,17 @@ describe("OAuth sign-in", () => {
     const postgres = await startPostgres();
     await migrate(postgres.url);
     db = createDb(postgres.url);
-    auth = authWith(githubEnv);
+    auth = authWith({ ...githubEnv, ...googleEnv });
     return async () => {
       await db.$client.end();
       await postgres.stop();
     };
   }, 120_000);
 
-  /** Starts a GitHub sign-in the way the sign-in page does and returns where GitHub is asked to send the user back. */
-  async function startGitHub(using = auth) {
+  /** Starts a sign-in the way the sign-in page does and returns where the provider is asked to send the user back. */
+  async function startSignIn(provider: ProviderId, using = auth) {
     const { headers, response } = await using.api.signInSocial({
-      body: { provider: "github", callbackURL: "/", errorCallbackURL: "/sign-in?via=github" },
+      body: { provider, callbackURL: "/", errorCallbackURL: `/sign-in?via=${provider}` },
       headers: new Headers({ origin: baseURL }),
       returnHeaders: true,
     });
@@ -95,13 +121,13 @@ describe("OAuth sign-in", () => {
     return { authorize: new URL(response.url ?? ""), cookie };
   }
 
-  /** Comes back from GitHub with a code and returns the redirect Better Auth answers with. */
-  async function finishGitHub(person: { id: number; email: string; verified: boolean }) {
-    const { authorize, cookie } = await startGitHub();
-    fakeGitHub(person);
+  /** Comes back from the provider with a code and returns the redirect Better Auth answers with. */
+  async function finishSignIn(provider: ProviderId, fakeProvider: () => void) {
+    const { authorize, cookie } = await startSignIn(provider);
+    fakeProvider();
     const state = authorize.searchParams.get("state") ?? "";
     const callback = await auth.handler(
-      new Request(`${baseURL}/api/auth/callback/github?code=test-code&state=${state}`, { headers: { cookie } }),
+      new Request(`${baseURL}/api/auth/callback/${provider}?code=test-code&state=${state}`, { headers: { cookie } }),
     );
     vi.restoreAllMocks();
     expect(callback.status).toBe(302);
@@ -113,6 +139,11 @@ describe("OAuth sign-in", () => {
         .join("; "),
     };
   }
+
+  const finishGitHub = (person: Parameters<typeof fakeGitHub>[0]) =>
+    finishSignIn("github", () => fakeGitHub(person));
+  const finishGoogle = (person: Parameters<typeof fakeGoogle>[0]) =>
+    finishSignIn("google", () => fakeGoogle(person));
 
   async function signInByMagicLink(email: string) {
     await auth.api.signInMagicLink({ body: { email, callbackURL: "/" }, headers: new Headers() });
@@ -135,7 +166,7 @@ describe("OAuth sign-in", () => {
     db.query.account.findMany({ where: (table, { eq }) => eq(table.userId, userId) });
 
   it("sends the user to GitHub with the callback URL built on the base URL", async () => {
-    const { authorize } = await startGitHub();
+    const { authorize } = await startSignIn("github");
 
     expect(authorize.origin + authorize.pathname).toBe("https://github.com/login/oauth/authorize");
     expect(authorize.searchParams.get("client_id")).toBe("github-client-id");
@@ -146,9 +177,9 @@ describe("OAuth sign-in", () => {
   it("doesn't register a provider without credentials", async () => {
     const withoutOAuth = authWith({});
 
-    await expect(startGitHub(withoutOAuth)).rejects.toThrow("Provider not found");
+    await expect(startSignIn("github", withoutOAuth)).rejects.toThrow("Provider not found");
     // Even a callback carrying a valid state, started where GitHub is configured, gets nowhere.
-    const { authorize, cookie } = await startGitHub();
+    const { authorize, cookie } = await startSignIn("github");
     const state = authorize.searchParams.get("state") ?? "";
     const callback = await withoutOAuth.handler(
       new Request(`${baseURL}/api/auth/callback/github?code=test-code&state=${state}`, { headers: { cookie } }),
@@ -207,5 +238,24 @@ describe("OAuth sign-in", () => {
     expect(await db.query.user.findFirst({ where: (table, { eq }) => eq(table.email, "kai@example.com") })).toBeUndefined();
     const { location: owner } = await finishGitHub({ id: 204, email: "kai@example.com", verified: true });
     expect(owner).toBe("/");
+  });
+
+  it("reaches the same user and Workspace by magic link and then by Google", async () => {
+    const byLink = await openApp(await signInByMagicLink("mia@example.com"));
+
+    const { location, cookie } = await finishGoogle({ sub: "google-301", email: "mia@example.com", verified: true });
+
+    expect(location).toBe("/");
+    const byGoogle = await openApp(cookie);
+    expect(byGoogle.user.id).toBe(byLink.user.id);
+    expect(byGoogle.workspace.id).toBe(byLink.workspace.id);
+    expect((await accountsOf(byLink.user.id)).map((row) => row.providerId)).toContain("google");
+  });
+
+  it("doesn't create a user from a Google email that isn't verified", async () => {
+    const { location } = await finishGoogle({ sub: "google-302", email: "noor@example.com", verified: false });
+
+    expect(new URL(location, baseURL).searchParams.get("error")).toBe("email_not_verified");
+    expect(await db.query.user.findFirst({ where: (table, { eq }) => eq(table.email, "noor@example.com") })).toBeUndefined();
   });
 });
