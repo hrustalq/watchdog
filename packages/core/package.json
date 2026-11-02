@@ -12,12 +12,15 @@
   },
   "devDependencies": {
     "@types/node": "^26",
+    "@types/nodemailer": "^8.0.2",
     "@watchdog/eslint-config": "workspace:*",
     "eslint": "^10.14.0",
+    "testcontainers": "^12.2.1",
     "typescript": "^5",
     "vitest": "^5.0.5"
   },
   "dependencies": {
+    "nodemailer": "^10.3.1",
     "zod": "^4.6.7"
   }
 }
