@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "next typegen && tsc",
-    "lint": "eslint . --max-warnings 0",
+    "lint": "next typegen && eslint . --max-warnings 0",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests --exclude \"**/*.int.test.ts\"",
     "test:integration": "vitest run --passWithNoTests .int.test.ts"
