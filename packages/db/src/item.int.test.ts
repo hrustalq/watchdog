@@ -2,7 +2,6 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { eq, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate as applyMigrations } from "drizzle-orm/node-postgres/migrator";
 import { beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, type Db } from "./client.ts";
@@ -165,7 +164,7 @@ describe("Source, Item and Log tables", () => {
       const journal = await readFile(journalPath, "utf8");
       await writeFile(journalPath, JSON.stringify(JSON.parse(journal, firstThree)));
 
-      const old = drizzle(url.href);
+      const old = createDb(url.href);
       try {
         await applyMigrations(old, { migrationsFolder: migrationsAt0002 });
         await old.execute(sql`insert into "user" (id, name, email) values ('u', 'O', 'o@example.com')`);

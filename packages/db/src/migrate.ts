@@ -1,7 +1,6 @@
 import path from "node:path";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate as applyMigrations } from "drizzle-orm/node-postgres/migrator";
-import { closeDb } from "./client.ts";
 
 /**
  * Applies the pending migrations from packages/db/migrations and skips the applied ones, keeping
@@ -14,6 +13,6 @@ export async function migrate(databaseUrl: string): Promise<void> {
   try {
     await applyMigrations(db, { migrationsFolder });
   } finally {
-    await closeDb(db);
+    await db.$client.end();
   }
 }
