@@ -1,1 +1,13 @@
+# Lint the message of every commit this push sends that the remote ref or any remote-tracking
+# ref already has. commitlint's default ignores skip "Merge branch ..." messages.
+while read -r _ local_sha _ remote_sha; do
+  case $local_sha in *[!0]*) ;; *) continue ;; esac # deleting a remote ref sends no commits
+  known=--remotes
+  git cat-file -e "$remote_sha^{commit}" 2>/dev/null && known="$remote_sha --remotes"
+  for c in $(git rev-list "$local_sha" --not $known); do
+    git log -1 --format=%B "$c" | pnpm exec commitlint ||
+      { echo "pre-push: commitlint failed on commit $(git rev-parse --short "$c")" >&2; exit 1; }
+  done
+done
+
 pnpm turbo run lint typecheck test:unit
