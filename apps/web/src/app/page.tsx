@@ -3,9 +3,8 @@ import { Suspense } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { eq, source } from "@watchdog/db";
 import { Timestamp } from "@/components/timestamp";
-import { feedPage, type FeedItem } from "@/lib/feed";
+import { feedPage, parseCursor, type FeedItem } from "@/lib/feed";
 import { requireWorkspace, server } from "@/lib/server";
-import { isUuid } from "@/lib/uuid";
 import { signOut } from "./actions";
 import { FeedRefresher } from "./feed-refresher";
 
@@ -19,8 +18,8 @@ export default function WorkspacePage({ searchParams }: PageProps<"/">) {
 
 async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchParams">) {
   const [{ user, workspace, admin }, params] = await Promise.all([requireWorkspace(), searchParams]);
-  // A cursor that isn't an Item id is ignored, so the page is the newest one and keeps refreshing.
-  const before = typeof params.before === "string" && isUuid(params.before) ? params.before : undefined;
+  // A malformed cursor is ignored, so the page is the newest one and keeps refreshing.
+  const before = parseCursor(params.before);
   const { db } = server();
   const { items, older } = await feedPage(db, workspace.id, before);
   // Only an empty newest page needs to know whether there's anything to watch.

@@ -3,7 +3,7 @@ import { createEgressFetch, loadConfig, pollSource } from "@watchdog/core";
 import { closeDb, createDb, type Db, item, itemLog, migrate, source, sql, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
-import { feedPage, feedPageSize, itemWithLog } from "./feed.ts";
+import { feedPage, feedPageSize, itemWithLog, parseCursor } from "./feed.ts";
 
 const now = new Date("2026-11-03T15:00:00Z");
 const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000);
@@ -93,7 +93,7 @@ describe("Feed", () => {
     const pages = [];
     let before: string | undefined;
     do {
-      const page = await feedPage(db, workspaceId, before);
+      const page = await feedPage(db, workspaceId, parseCursor(before));
       pages.push(page.items.map((row) => row.id));
       before = page.older ?? undefined;
     } while (before !== undefined);
@@ -165,16 +165,41 @@ describe("Feed", () => {
     expect(new Set(pages.flat())).toEqual(new Set(ids));
   });
 
-  it("shows only the Workspace's own Items, and ignores another Workspace's cursor", async () => {
+  it("keeps paging from a cursor whose Item has been deleted", async () => {
+    const seeded = await seed();
+    await insertItems(
+      seeded,
+      Array.from({ length: feedPageSize + 10 }, (_, i) => ({ capturedAt: hoursAgo(i % 4) })),
+    );
+    const expected = await allPages(seeded.workspaceId);
+    const first = await feedPage(db, seeded.workspaceId);
+    const last = present(first.items.at(-1));
+
+    await db.delete(item).where(sql`${item.id} = ${last.id}`);
+    const next = await feedPage(db, seeded.workspaceId, parseCursor(first.older));
+
+    expect(next.items.map((row) => row.id)).toEqual(expected[1]);
+    expect(next.older).toBeNull();
+  });
+
+  it("shows only the Workspace's own Items", async () => {
     const ours = await seed();
     const theirs = await seed();
     const [mine] = await insertItems(ours, [{ capturedAt: hoursAgo(2) }]);
-    const [other] = await insertItems(theirs, [{ capturedAt: hoursAgo(1) }]);
+    await insertItems(theirs, [{ capturedAt: hoursAgo(1) }]);
 
     expect((await feedPage(db, ours.workspaceId)).items.map((row) => row.id)).toEqual([mine]);
-    expect((await feedPage(db, ours.workspaceId, other)).items).toEqual([]);
-    // A cursor that isn't an id is the first page.
-    expect((await feedPage(db, ours.workspaceId, "not-a-uuid")).items.map((row) => row.id)).toEqual([mine]);
+  });
+
+  it("shows the newest page for a malformed cursor", async () => {
+    const seeded = await seed();
+    const [newest] = await insertItems(seeded, [{ capturedAt: hoursAgo(1) }]);
+
+    // An Item id was the cursor before it carried the sort keys, so old links land here too.
+    for (const before of ["not-a-cursor", present(newest), "2026-02-30T00:00:00.000000Z_-infinity_x"]) {
+      const page = await feedPage(db, seeded.workspaceId, parseCursor(before));
+      expect(page.items.map((row) => row.id)).toEqual([newest]);
+    }
   });
 
   it("loads an Item's envelope and its Log, oldest first", async () => {
