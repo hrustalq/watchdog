@@ -1,4 +1,4 @@
-import { createMailer, loadConfig } from "@watchdog/core";
+import { createEgressFetch, createMailer, loadConfig } from "@watchdog/core";
 import { createDb } from "@watchdog/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -22,6 +22,8 @@ function start() {
     db,
     auth,
     mode: config.mode,
+    /** The egress guard's fetch, for checking a feed URL before its Source is saved. */
+    fetch: createEgressFetch(config),
     baseURL: config.auth.url,
     // On a self-hosted install without SMTP, magic links go to the web log instead.
     mailGoesToLog: config.smtp === undefined,
