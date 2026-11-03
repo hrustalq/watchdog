@@ -1,13 +1,7 @@
 # Lint the message of every commit this push sends that no remote-tracking ref already has.
-# A new ref, or a remote tip we haven't fetched, falls back to "not on any remote".
-while read -r _ local_sha _ remote_sha; do
+while read -r _ local_sha _ _; do
   case $local_sha in *[!0]*) ;; *) continue ;; esac # deleting a remote ref sends no commits
-  if git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
-    range="$remote_sha..$local_sha"
-  else
-    range="$local_sha --not --remotes"
-  fi
-  for c in $(git rev-list --no-merges $range); do
+  for c in $(git rev-list --no-merges "$local_sha" --not --remotes); do
     git log -1 --format=%B "$c" | pnpm exec commitlint ||
       { echo "pre-push: commit $(git rev-parse --short "$c") breaks commitlint.config.mjs" >&2; exit 1; }
   done
