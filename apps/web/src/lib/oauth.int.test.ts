@@ -3,6 +3,7 @@ import { account, createDb, migrate, type Db } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth, enabledProviders, type ProviderId } from "./auth.ts";
+import { pressSignIn } from "./testing.ts";
 import { workspaceFor } from "./workspace.ts";
 
 const baseURL = "http://localhost:3000";
@@ -150,7 +151,7 @@ describe("OAuth sign-in", () => {
   async function signInByMagicLink(email: string) {
     await auth.api.signInMagicLink({ body: { email, callbackURL: "/" }, headers: new Headers() });
     const link = /https?:\/\/\S+/.exec(mails.at(-1)?.text ?? "")?.[0] ?? "";
-    const verified = await auth.handler(new Request(link));
+    const verified = await pressSignIn(auth, link);
     return verified.headers
       .getSetCookie()
       .map((set) => set.split(";")[0])

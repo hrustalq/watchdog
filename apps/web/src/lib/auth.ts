@@ -8,6 +8,19 @@ import { signupRefusal } from "./instance.ts";
 
 export const linkLifetimeMinutes = 15;
 
+/**
+ * The emailed link opens this page, and only its button spends the token. Mail gateways that scan
+ * links fetch every one on delivery, so a link that signed in when fetched would be spent before
+ * the person clicked it.
+ */
+export const confirmPage = "/sign-in/confirm";
+
+/** What the confirm page's button submits, with the token: a GET of Better Auth's verify endpoint. */
+export const verifyForm = {
+  action: "/api/auth/magic-link/verify",
+  fields: { callbackURL: "/", errorCallbackURL: "/sign-in" },
+} as const;
+
 interface AuthDeps {
   /** Self-hosted installs gate sign-up on the first-run admin and the sign-up switch. */
   mode: Config["mode"];
@@ -68,14 +81,16 @@ export function createAuth({ mode, baseURL, secret, db, mailer, oauth = {} }: Au
         expiresIn: linkLifetimeMinutes * 60,
         // Only a hash of the token is stored, so a database read can't be turned into a sign-in.
         storeToken: "hashed",
-        sendMagicLink: async ({ email, url }) => {
+        sendMagicLink: async ({ email, token }) => {
+          const url = new URL(confirmPage, baseURL);
+          url.searchParams.set("token", token);
           await mailer.send({
             to: email,
             subject: "Sign in to Watchdog",
             text: [
               "Open this link to sign in to Watchdog:",
               "",
-              url,
+              url.toString(),
               "",
               `It works once and expires in ${String(linkLifetimeMinutes)} minutes.`,
               "If you didn't ask to sign in, you can ignore this email.",

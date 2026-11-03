@@ -21,11 +21,11 @@ describe("createMailer without SMTP", () => {
     await mailer.send({
       to: "alice@example.com",
       subject: "Sign in to Watchdog",
-      text: "Open http://localhost:3000/api/auth/magic-link/verify?token=abc to sign in.",
+      text: "Open http://localhost:3000/sign-in/confirm?token=abc to sign in.",
     });
 
     expect(output()).toContain("alice@example.com");
     expect(output()).toContain("Sign in to Watchdog");
-    expect(output()).toContain("http://localhost:3000/api/auth/magic-link/verify?token=abc");
+    expect(output()).toContain("http://localhost:3000/sign-in/confirm?token=abc");
   });
 });

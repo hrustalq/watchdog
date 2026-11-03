@@ -16,6 +16,7 @@ test("a new install signs in to an empty Workspace", async ({ page }) => {
 
   await test.step("sign in with the magic link", async () => {
     await page.goto(await magicLink(email));
+    await page.getByRole("button", { name: "Sign in to Watchdog" }).click();
     await expect(page.getByRole("heading", { name: "Nothing is being watched yet" })).toBeVisible();
   });
 });

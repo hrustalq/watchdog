@@ -4,6 +4,7 @@ import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "./auth.ts";
 import { claimInstance, isInstanceAdmin, setSignupOpen, setupUrl } from "./instance.ts";
+import { pressSignIn } from "./testing.ts";
 
 const baseURL = "http://localhost:3000";
 
@@ -48,7 +49,7 @@ function stack(mode: "self-hosted" | "hosted") {
       headers: new Headers(),
     });
     const link = /https?:\/\/\S+/.exec(mails.at(-1)?.text ?? "")?.[0] ?? "";
-    const verified = await ready().auth.handler(new Request(link));
+    const verified = await pressSignIn(ready().auth, link);
     const cookie = verified.headers
       .getSetCookie()
       .map((set) => set.split(";")[0])
