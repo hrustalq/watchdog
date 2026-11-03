@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/hrustalq/watchdog/compare/v0.3.0...v0.4.0) (2026-11-03)
+
+
+### Features
+
+* **web:** announce sign-in error notices to screen readers when the page loads ([#44](https://github.com/hrustalq/watchdog/issues/44)) ([da511a8](https://github.com/hrustalq/watchdog/commit/da511a8856cc580b4b41978243e1a0a31c462efa))
+* **web:** stop clients from choosing their own rate-limit key with x-forwarded-for ([#42](https://github.com/hrustalq/watchdog/issues/42)) ([24a52d4](https://github.com/hrustalq/watchdog/commit/24a52d44f4995a61af5f6de62b2da4d265ec2eb5))
+
 ## [0.3.0](https://github.com/hrustalq/watchdog/compare/v0.2.0...v0.3.0) (2026-11-03)
 
 
