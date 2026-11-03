@@ -36,29 +36,25 @@ export interface EgressOptions {
 
 const maxRedirects = 5;
 
+const family = (address: string) => (isIP(address) === 6 ? "ipv6" : "ipv4");
+
 // BlockList also matches the IPv4-mapped IPv6 form (::ffff:a.b.c.d) of an IPv4 subnet.
 const blocked = new BlockList();
 for (const [address, prefix] of [
   ["0.0.0.0", 8], // this network
-  ["10.0.0.0", 8], // private
-  ["100.64.0.0", 10], // CGNAT
+  ["::", 128], // this network
   ["127.0.0.0", 8], // loopback
-  ["169.254.0.0", 16], // link-local, with the 169.254.169.254 metadata address
+  ["::1", 128], // loopback
+  ["10.0.0.0", 8], // private
   ["172.16.0.0", 12], // private
   ["192.168.0.0", 16], // private
-] as const) {
-  blocked.addSubnet(address, prefix, "ipv4");
-}
-for (const [address, prefix] of [
-  ["::", 128], // this network
-  ["::1", 128], // loopback
   ["fc00::", 7], // private, with the fd00:ec2::254 metadata address
+  ["100.64.0.0", 10], // CGNAT
+  ["169.254.0.0", 16], // link-local, with the 169.254.169.254 metadata address
   ["fe80::", 10], // link-local
 ] as const) {
-  blocked.addSubnet(address, prefix, "ipv6");
+  blocked.addSubnet(address, prefix, family(address));
 }
-
-const family = (address: string) => (isIP(address) === 6 ? "ipv6" : "ipv4");
 
 /** Parses one EGRESS_ALLOWLIST entry, or returns undefined when it's no host, IP or CIDR. */
 export function parseEgressRule(entry: string): EgressRule | undefined {
