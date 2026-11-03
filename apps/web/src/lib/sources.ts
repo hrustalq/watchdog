@@ -5,8 +5,9 @@ import {
   type createEgressFetch,
   EgressBlockedError,
   EgressLimitError,
+  FeedHttpError,
   fetchFeed,
-  scheduleError,
+  NotAFeedError,
 } from "@watchdog/core";
 import { and, type Db, eq, source } from "@watchdog/db";
 
@@ -38,8 +39,8 @@ export type AddSourceResult =
   | { problem: AddProblem; status?: string };
 
 /**
- * The schedules the add form offers, the same in both modes: the form is rendered at build time,
- * before the mode is known, so it works without JavaScript. Every one meets hosted's minimum.
+ * The schedules a Source can be added with, the same in both modes: the form is rendered at build
+ * time, before the mode is known, so it works without JavaScript. Every one meets hosted's minimum.
  */
 export const schedules = [
   { cron: "*/15 * * * *", label: "Every 15 minutes" },
@@ -61,8 +62,9 @@ export async function addRssSource(
   if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) {
     return { problem: "invalid-url" };
   }
+  // Only the form's own schedules: a posted cron expression could be anything.
   const schedule = input.schedule.trim();
-  if (scheduleError(schedule, deps.mode) !== undefined) return { problem: "schedule" };
+  if (!schedules.some((preset) => preset.cron === schedule)) return { problem: "schedule" };
 
   let feedTitle;
   try {
@@ -73,8 +75,7 @@ export async function addRssSource(
     return fetchProblem(error);
   }
 
-  const given = input.name.trim();
-  const name = given === "" ? (feedTitle ?? url.hostname) : given;
+  const name = cleanName(input.name) || cleanName(feedTitle ?? "") || url.hostname;
   const [saved] = await db
     .insert(source)
     .values({ workspaceId, type: "rss", name, config: { url: url.href }, schedule })
@@ -83,25 +84,25 @@ export async function addRssSource(
   return { source: saved };
 }
 
+/** A name on one line, at most 200 characters, without the NUL Postgres text refuses. */
+const cleanName = (name: string) => name.replaceAll("\0", "").replace(/\s+/g, " ").trim().slice(0, 200);
+
 function fetchProblem(error: unknown): { problem: AddProblem; status?: string } {
-  // Without an address, the guard refused a redirect to a URL that isn't http or https.
-  if (error instanceof EgressBlockedError) {
-    return { problem: error.address === undefined ? "failed" : "blocked" };
-  }
+  // Also a redirect to a blocked address, or to a URL that isn't http or https.
+  if (error instanceof EgressBlockedError) return { problem: "blocked" };
+  // A timeout, a response over the size cap, or too many redirects.
   if (error instanceof EgressLimitError) return { problem: "limit" };
   // fetch's TypeError means no answer at all: DNS, a refused connection, TLS.
   if (error instanceof TypeError) return { problem: "unreachable" };
-  const message = error instanceof Error ? error.message : "";
-  if (message.endsWith("is not an RSS or Atom feed")) return { problem: "not-a-feed" };
-  const status = / answered (\d{3})\b/.exec(message)?.[1];
-  if (status !== undefined) return { problem: "answered", status };
+  if (error instanceof NotAFeedError) return { problem: "not-a-feed" };
+  if (error instanceof FeedHttpError) return { problem: "answered", status: String(error.status) };
   return { problem: "failed" };
 }
 
 /** What the form says about a problem, naming the host of the URL it was given. */
 export function problemMessage(
   problem: AddProblem,
-  { url, schedule, status, mode }: { url: string; schedule: string; status: string; mode: Config["mode"] },
+  { url, status, mode }: { url: string; status: string; mode: Config["mode"] },
 ) {
   const hostname = URL.parse(url.trim())?.hostname ?? "";
   const host = hostname === "" ? "that address" : hostname;
@@ -109,9 +110,9 @@ export function problemMessage(
     case "invalid-url":
       return "Enter the full RSS feed URL, starting with https://.";
     case "schedule":
-      return scheduleError(schedule, mode) ?? "Choose one of the schedules in the list.";
+      return "Choose one of the schedules in the list.";
     case "blocked":
-      return `${host} resolves to a private or local address, which Watchdog doesn't fetch.${mode === "self-hosted" ? " Whoever runs this Watchdog can allow it with EGRESS_ALLOWLIST." : ""}`;
+      return `${host} leads to a private, local or non-web address, which Watchdog doesn't fetch.${mode === "self-hosted" ? " Whoever runs this Watchdog can allow a private address with EGRESS_ALLOWLIST." : ""}`;
     case "unreachable":
       return `Watchdog couldn't reach ${host}. Check the URL and try again.`;
     case "answered":
@@ -119,7 +120,7 @@ export function problemMessage(
     case "not-a-feed":
       return "That page isn't an RSS or Atom feed. Use the URL of the feed itself.";
     case "limit":
-      return `${host} took longer than 30 seconds or sent more than 10 MB, so Watchdog stopped reading it.`;
+      return `${host} was too slow, sent too much or redirected too many times, so Watchdog stopped reading it.`;
     case "failed":
       return `Watchdog couldn't read a feed from ${host}. Try again in a moment.`;
   }

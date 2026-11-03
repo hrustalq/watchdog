@@ -8,10 +8,12 @@ export {
 export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/capture.ts";
 export type { ItemDraft } from "./sources/item.ts";
 export {
+  FeedHttpError,
   fetchFeed,
   type FetchFeedDeps,
   type FetchFeedResult,
   type FetchState,
+  NotAFeedError,
 } from "./sources/rss/fetch-feed.ts";
 export { createMailer, type MailMessage, type Mailer } from "./mail/mailer.ts";
 export { defaultSchedule, nextPollAt, scheduleError } from "./schedule.ts";

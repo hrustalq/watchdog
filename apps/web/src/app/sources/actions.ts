@@ -5,7 +5,8 @@ import { requireWorkspace, server } from "@/lib/server";
 import { addRssSource, removeSource } from "@/lib/sources";
 
 // Both actions end in a redirect. Without JavaScript that's a 303 to a page the browser renders;
-// an action that only returned would leave it a blank page.
+// an action that only returned would leave it a blank page. What the page then shows from the URL
+// streams in, so it appears only with JavaScript, as on sign-in.
 
 const text = (formData: FormData, name: string) => {
   const value = formData.get(name);

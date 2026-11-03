@@ -123,10 +123,16 @@ describe("Sources", () => {
     expect(saved?.createdAt.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
   });
 
-  it("keeps the name the user gave", async () => {
-    const { id } = await added(ours, { url: at("/news.rss"), name: "  Our releases " });
+  it("keeps the name the user gave, on one line and without NUL", async () => {
+    const { id } = await added(ours, { url: at("/news.rss"), name: "  Our\n  rel\u0000eases " });
     const [saved] = await db.select().from(source).where(eq(source.id, id));
     expect(saved?.name).toBe("Our releases");
+  });
+
+  it("caps a long name at 200 characters", async () => {
+    const { id } = await added(ours, { url: at("/news.rss"), name: "x".repeat(1000) });
+    const [saved] = await db.select().from(source).where(eq(source.id, id));
+    expect(saved?.name).toHaveLength(200);
   });
 
   it.each<[string, () => string, AddProblem, RegExp]>([
@@ -135,7 +141,7 @@ describe("Sources", () => {
     ["isn't a feed", () => at("/page.html"), "not-a-feed", /isn't an RSS or Atom feed/],
     ["answers with an error", () => at("/gone.rss"), "answered", /feeds\.test answered HTTP 404/],
     ["can't be reached", () => "https://unreachable.test/feed.rss", "unreachable", /couldn't reach unreachable\.test/],
-    ["resolves to a blocked address", () => "http://intranet.test/feed.rss", "blocked", /intranet\.test resolves to a private/],
+    ["resolves to a blocked address", () => "http://intranet.test/feed.rss", "blocked", /intranet\.test leads to a private/],
   ])("refuses a URL that %s and saves nothing", async (_case, url, problem, message) => {
     const before = (await sourcesIn(ours)).length;
     const result = await addRssSource(db, selfHosted, ours, {
@@ -146,12 +152,12 @@ describe("Sources", () => {
     if ("source" in result) throw new Error("It was saved");
     expect(result.problem).toBe(problem);
     expect(problemField(result.problem)).toBe("url");
-    const shown = { url: url(), schedule: "", status: result.status ?? "", mode: "self-hosted" as const };
+    const shown = { url: url(), status: result.status ?? "", mode: "self-hosted" as const };
     expect(problemMessage(result.problem, shown)).toMatch(message);
     expect(await sourcesIn(ours)).toHaveLength(before);
   });
 
-  it("refuses a schedule the mode doesn't allow, before fetching", async () => {
+  it.each(["*/5 * * * *", "* * * * *", "nonsense"])("refuses the schedule %s, before fetching", async (schedule) => {
     let fetched = false;
     const hosted: SourceDeps = {
       mode: "hosted",
@@ -162,11 +168,10 @@ describe("Sources", () => {
     };
     const before = (await sourcesIn(ours)).length;
 
-    const result = await addRssSource(db, hosted, ours, { url: at("/news.rss"), name: "", schedule: "*/5 * * * *" });
+    const result = await addRssSource(db, hosted, ours, { url: at("/news.rss"), name: "", schedule });
 
     expect(result).toEqual({ problem: "schedule" });
-    const shown = { url: "", schedule: "*/5 * * * *", status: "", mode: "hosted" as const };
-    expect(problemMessage("schedule", shown)).toContain("every 15 minutes");
+    expect(problemMessage("schedule", { url: "", status: "", mode: "hosted" })).not.toContain(schedule);
     expect(fetched).toBe(false);
     expect(await sourcesIn(ours)).toHaveLength(before);
   });

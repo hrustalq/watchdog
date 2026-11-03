@@ -36,8 +36,8 @@ export default function SourcesPage({ searchParams }: PageProps<"/sources">) {
           <h2 id="add-source" className="text-title">
             Add an RSS Source
           </h2>
-          {/* The form is in the static shell, so it works without JavaScript. What the last submit
-              said, read from the URL, streams in over it. */}
+          {/* The form is in the static shell, so it submits without JavaScript. What the last submit
+              said, read from the URL, streams in over it, which takes JavaScript to show. */}
           <Suspense fallback={<AddSourceForm />}>
             <AddSourceFormWithOutcome searchParams={searchParams} />
           </Suspense>
@@ -61,7 +61,7 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
   const problem = addProblems.find((known) => known === param("error"));
   if (problem === undefined) return <AddSourceForm />;
   const values = { url: param("url"), name: param("name"), schedule: param("schedule") };
-  const shown = { ...values, status: param("status"), mode: server().mode };
+  const shown = { url: values.url, status: param("status"), mode: server().mode };
   return (
     <AddSourceForm
       values={values}
@@ -96,7 +96,8 @@ async function SourceList() {
                     {scheduleLabel(row.schedule) ?? <span className="font-mono">{row.schedule}</span>}
                     {" · "}
                     {row.lastPolledAt === null ? (
-                      "Not polled yet"
+                      // A poll that failed doesn't set lastPolledAt.
+                      `${row.lastError === null ? "Not polled" : "No successful poll"} yet`
                     ) : (
                       <>
                         Last polled <Timestamp at={row.lastPolledAt} />

@@ -20,6 +20,24 @@ export type FetchFeedResult =
   | { notModified: true }
   | { entries: ItemDraft[]; fetchState: FetchState; feedTitle: string | null };
 
+/** The feed URL answered with an HTTP error status. */
+export class FeedHttpError extends Error {
+  override name = "FeedHttpError";
+  readonly status: number;
+  constructor(url: string, status: number, statusText: string) {
+    super(`${url} answered ${String(status)} ${statusText}`.trim());
+    this.status = status;
+  }
+}
+
+/** The feed URL answered, but not with an RSS or Atom feed. */
+export class NotAFeedError extends Error {
+  override name = "NotAFeedError";
+  constructor(url: string, options?: ErrorOptions) {
+    super(`${url} is not an RSS or Atom feed`, options);
+  }
+}
+
 const userAgent = `Watchdog/${rootPackage.version} (+https://github.com/hrustalq/watchdog)`;
 
 export async function fetchFeed(
@@ -44,7 +62,7 @@ export async function fetchFeed(
   }
   if (!response.ok) {
     await response.body?.cancel();
-    throw new Error(`${url} answered ${String(response.status)} ${response.statusText}`.trim());
+    throw new FeedHttpError(url, response.status, response.statusText);
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
   const text = decode(bytes, response.headers.get("content-type"));
@@ -53,7 +71,7 @@ export async function fetchFeed(
   try {
     parsed = parseFeed(text);
   } catch (error) {
-    throw new Error(`${url} is not an RSS or Atom feed`, { cause: error });
+    throw new NotAFeedError(url, { cause: error });
   }
   // Relative links resolve against where the feed was finally fetched from.
   const base = response.url || url;
@@ -70,7 +88,7 @@ export async function fetchFeed(
       feedTitle = atomText(parsed.feed.title);
       break;
     case "json":
-      throw new Error(`${url} is not an RSS or Atom feed`);
+      throw new NotAFeedError(url);
   }
 
   const etag = response.headers.get("etag");
