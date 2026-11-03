@@ -2,7 +2,7 @@
 // Workspace, so another Workspace's Source id behaves like a missing one.
 import {
   type Config,
-  createEgressFetch,
+  type createEgressFetch,
   EgressBlockedError,
   EgressLimitError,
   fetchFeed,
@@ -63,7 +63,8 @@ export async function addRssSource(
     return { field: "url", error: fetchError(error, url, deps.mode) };
   }
 
-  const name = input.name.trim() || feedTitle || url.hostname;
+  const given = input.name.trim();
+  const name = given === "" ? (feedTitle ?? url.hostname) : given;
   const [saved] = await db
     .insert(source)
     .values({ workspaceId, type: "rss", name, config: { url: url.href }, schedule })
