@@ -9,7 +9,7 @@ import {
   fetchFeed,
   NotAFeedError,
 } from "@watchdog/core";
-import { and, type Db, eq, source } from "@watchdog/db";
+import { and, type Db, eq, source, sql } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 export interface SourceDeps {
@@ -25,6 +25,7 @@ export interface SourceDeps {
 export const addProblems = [
   "invalid-url",
   "schedule",
+  "duplicate",
   "blocked",
   "unreachable",
   "answered",
@@ -66,6 +67,7 @@ export async function addRssSource(
   // Only the form's own schedules: a posted cron expression could be anything.
   const schedule = input.schedule.trim();
   if (!schedules.some((preset) => preset.cron === schedule)) return { problem: "schedule" };
+  if ((await watchedSourceName(db, workspaceId, url.href)) !== undefined) return { problem: "duplicate" };
 
   let feedTitle;
   try {
@@ -77,12 +79,14 @@ export async function addRssSource(
   }
 
   const name = cleanName(input.name) || cleanName(feedTitle ?? "") || url.hostname;
+  // Another add of the same URL can finish between the check above and this insert. The unique
+  // key on (workspace_id, url) is the only one an insert can hit, so a skipped row is that add.
   const [saved] = await db
     .insert(source)
     .values({ workspaceId, type: "rss", name, config: { url: url.href }, schedule })
+    .onConflictDoNothing()
     .returning({ id: source.id });
-  if (saved === undefined) throw new Error("Inserting the Source returned no row");
-  return { source: saved };
+  return saved === undefined ? { problem: "duplicate" } : { source: saved };
 }
 
 /** A name on one line, at most 200 characters, without the NUL Postgres text refuses. */
@@ -100,10 +104,32 @@ function fetchProblem(error: unknown): { problem: AddProblem; status?: string } 
   return { problem: "failed" };
 }
 
-/** What the form says about a problem, naming the host of the URL it was given. */
+/**
+ * The name of the Workspace's Source that watches this feed URL, compared as saved (`URL.href`), or
+ * undefined.
+ */
+export async function watchedSourceName(db: Db, workspaceId: string, url: string) {
+  const href = URL.parse(url.trim())?.href;
+  if (href === undefined) return undefined;
+  const [watched] = await db
+    .select({ name: source.name })
+    .from(source)
+    .where(and(eq(source.workspaceId, workspaceId), sql`${source.config}->>'url' = ${href}`));
+  return watched?.name;
+}
+
+/**
+ * What the form says about a problem, naming the host of the URL it was given, or for "duplicate"
+ * the Source that already watches it.
+ */
 export function problemMessage(
   problem: AddProblem,
-  { url, status, mode }: { url: string; status: string; mode: Config["mode"] },
+  {
+    url,
+    status,
+    mode,
+    source: watching,
+  }: { url: string; status: string; mode: Config["mode"]; source?: string | undefined },
 ) {
   const hostname = URL.parse(url.trim())?.hostname ?? "";
   const host = hostname === "" ? "that address" : hostname;
@@ -112,6 +138,10 @@ export function problemMessage(
       return "Enter the full RSS feed URL, starting with https://.";
     case "schedule":
       return "Choose one of the schedules in the list.";
+    case "duplicate":
+      return watching === undefined
+        ? "This Workspace already watches that feed."
+        : `This Workspace already watches that feed as the Source “${watching}”.`;
     case "blocked":
       return `${host} leads to a private, local or non-web address, which Watchdog doesn't fetch.${mode === "self-hosted" ? " Whoever runs this Watchdog can allow a private address with EGRESS_ALLOWLIST." : ""}`;
     case "unreachable":

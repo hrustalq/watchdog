@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { check, index, jsonb, pgTable, text, timestamp, unique, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { workspace } from "./workspace.ts";
 
 /** A place a Workspace watches for new Items. */
@@ -48,5 +48,8 @@ export const source = pgTable(
     // Lists a Workspace's Sources, and lets item reference (workspace_id, id) so an Item's
     // denormalised workspace_id can only be its Source's.
     unique("source_workspace_id_id_key").on(table.workspaceId, table.id),
+    // A Workspace watches a feed URL once, compared as saved (URL.href). Another Workspace can
+    // watch the same URL.
+    uniqueIndex("source_workspace_id_url_key").on(table.workspaceId, sql`(${table.config}->>'url')`),
   ],
 );
