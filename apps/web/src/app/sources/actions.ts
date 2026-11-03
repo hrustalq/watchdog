@@ -1,34 +1,30 @@
 "use server";
 
-import { refresh } from "next/cache";
+import { redirect } from "next/navigation";
 import { requireWorkspace, server } from "@/lib/server";
 import { addRssSource, removeSource } from "@/lib/sources";
 
-export interface AddSourceState {
-  /** Changes on every submit, so the form remounts with these values and focuses the error. */
-  attempt: number;
-  values: { url: string; name: string; schedule: string };
-  error?: { field: "url" | "schedule"; message: string };
-  added?: string;
-}
+// Both actions end in a redirect. Without JavaScript that's a 303 to a page the browser renders;
+// an action that only returned would leave it a blank page.
 
 const text = (formData: FormData, name: string) => {
   const value = formData.get(name);
   return typeof value === "string" ? value : "";
 };
 
-/** Checks the feed and saves it as a Source of the user's Workspace, or says why it can't. */
-export async function addSource(previous: AddSourceState, formData: FormData): Promise<AddSourceState> {
+/**
+ * Checks the feed and saves it as a Source of the user's Workspace. A problem goes back to the
+ * form as a code, with what was entered, so the page can say what's wrong and keep the values.
+ */
+export async function addSource(formData: FormData) {
   const { workspace } = await requireWorkspace();
   const values = { url: text(formData, "url"), name: text(formData, "name"), schedule: text(formData, "schedule") };
   const { db, fetch, mode } = server();
   const result = await addRssSource(db, { fetch, mode }, workspace.id, values);
-  const attempt = previous.attempt + 1;
-  if ("error" in result) {
-    return { attempt, values, error: { field: result.field, message: result.error } };
-  }
-  refresh();
-  return { attempt, values: { url: "", name: "", schedule: values.schedule }, added: result.source.name };
+  if ("source" in result) redirect("/sources?added=1");
+  const back = new URLSearchParams({ error: result.problem, ...values });
+  if (result.status !== undefined) back.set("status", result.status);
+  redirect(`/sources?${back}`);
 }
 
 /** Removes a Source with its Items. An id outside the user's Workspace changes nothing. */
@@ -36,5 +32,5 @@ export async function addSource(previous: AddSourceState, formData: FormData): P
 export async function removeSourceAction(sourceId: unknown) {
   const { workspace } = await requireWorkspace();
   if (typeof sourceId === "string") await removeSource(server().db, workspace.id, sourceId);
-  refresh();
+  redirect("/sources");
 }

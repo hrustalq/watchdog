@@ -14,7 +14,15 @@ import {
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
-import { addRssSource, listSources, removeSource, type SourceDeps } from "./sources.ts";
+import {
+  addRssSource,
+  type AddProblem,
+  listSources,
+  problemField,
+  problemMessage,
+  removeSource,
+  type SourceDeps,
+} from "./sources.ts";
 
 const feed =
   `<?xml version="1.0"?><rss version="2.0"><channel><title>Release notes</title>` +
@@ -91,7 +99,7 @@ describe("Sources", () => {
       schedule: "*/15 * * * *",
       ...input,
     });
-    if (!("source" in result)) throw new Error(`Not added: ${result.error}`);
+    if (!("source" in result)) throw new Error(`Not added: ${result.problem}`);
     return result.source;
   }
 
@@ -121,22 +129,25 @@ describe("Sources", () => {
     expect(saved?.name).toBe("Our releases");
   });
 
-  it.each([
-    ["isn't a URL", () => "not a url", /full RSS feed URL/],
-    ["isn't http or https", () => at("/news.rss").replace("http:", "ftp:"), /full RSS feed URL/],
-    ["isn't a feed", () => at("/page.html"), /isn't an RSS or Atom feed/],
-    ["answers with an error", () => at("/gone.rss"), /answered 404 Not Found/],
-    ["can't be reached", () => "https://unreachable.test/feed.rss", /couldn't reach unreachable\.test/],
-    ["resolves to a blocked address", () => "http://intranet.test/feed.rss", /10\.0\.0\.1, a private/],
-  ])("refuses a URL that %s and saves nothing", async (_case, url, message) => {
+  it.each<[string, () => string, AddProblem, RegExp]>([
+    ["isn't a URL", () => "not a url", "invalid-url", /full RSS feed URL/],
+    ["isn't http or https", () => at("/news.rss").replace("http:", "ftp:"), "invalid-url", /full RSS feed URL/],
+    ["isn't a feed", () => at("/page.html"), "not-a-feed", /isn't an RSS or Atom feed/],
+    ["answers with an error", () => at("/gone.rss"), "answered", /feeds\.test answered HTTP 404/],
+    ["can't be reached", () => "https://unreachable.test/feed.rss", "unreachable", /couldn't reach unreachable\.test/],
+    ["resolves to a blocked address", () => "http://intranet.test/feed.rss", "blocked", /intranet\.test resolves to a private/],
+  ])("refuses a URL that %s and saves nothing", async (_case, url, problem, message) => {
     const before = (await sourcesIn(ours)).length;
     const result = await addRssSource(db, selfHosted, ours, {
       url: url(),
       name: "",
       schedule: "*/15 * * * *",
     });
-    expect("error" in result && result).toMatchObject({ field: "url" });
-    expect("error" in result ? result.error : "").toMatch(message);
+    if ("source" in result) throw new Error("It was saved");
+    expect(result.problem).toBe(problem);
+    expect(problemField(result.problem)).toBe("url");
+    const shown = { url: url(), schedule: "", status: result.status ?? "", mode: "self-hosted" as const };
+    expect(problemMessage(result.problem, shown)).toMatch(message);
     expect(await sourcesIn(ours)).toHaveLength(before);
   });
 
@@ -153,8 +164,9 @@ describe("Sources", () => {
 
     const result = await addRssSource(db, hosted, ours, { url: at("/news.rss"), name: "", schedule: "*/5 * * * *" });
 
-    expect(result).toMatchObject({ field: "schedule" });
-    expect("error" in result ? result.error : "").toContain("every 15 minutes");
+    expect(result).toEqual({ problem: "schedule" });
+    const shown = { url: "", schedule: "*/5 * * * *", status: "", mode: "hosted" as const };
+    expect(problemMessage("schedule", shown)).toContain("every 15 minutes");
     expect(fetched).toBe(false);
     expect(await sourcesIn(ours)).toHaveLength(before);
   });

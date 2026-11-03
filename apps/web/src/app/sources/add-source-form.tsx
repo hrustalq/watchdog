@@ -1,9 +1,7 @@
-"use client";
-
-import { useActionState } from "react";
+import { schedules } from "@/lib/sources";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
-import { addSource, type AddSourceState } from "./actions";
+import { addSource } from "./actions";
 
 const field =
   "h-8 w-full rounded-lg border border-input bg-transparent px-3 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/40 sm:text-sm";
@@ -11,29 +9,27 @@ const label = "text-xs font-medium tracking-[0.01em]";
 const fieldError = "text-xs font-medium tracking-[0.01em] text-alarm";
 
 /**
- * Adds an RSS Source. The server fetches the feed before saving it, and an error comes back on the
- * field it's about. Without JavaScript the form posts and the page renders with the same state.
+ * Adds an RSS Source. The server fetches the feed before saving it, and a problem comes back on
+ * the field it's about, with the values that were entered.
  */
 export function AddSourceForm({
-  schedules,
-  defaultSchedule,
+  values = { url: "", name: "", schedule: "" },
+  error,
+  added = false,
 }: {
-  schedules: { cron: string; label: string }[];
-  defaultSchedule: string;
+  values?: { url: string; name: string; schedule: string };
+  error?: { field: "url" | "schedule"; message: string };
+  added?: boolean;
 }) {
-  const initial: AddSourceState = { attempt: 0, values: { url: "", name: "", schedule: defaultSchedule } };
-  const [state, action] = useActionState(addSource, initial);
-  const { values, error } = state;
   const invalid = (name: "url" | "schedule") => error?.field === name;
-
   return (
-    <form key={state.attempt} action={action} className="flex flex-col gap-4">
-      {state.added === undefined ? null : (
+    <form action={addSource} className="flex flex-col gap-4">
+      {added ? (
         <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
-          Added {state.added}. The worker fetches it within a minute, and its recent entries show up
-          in the Feed as the Backfill.
+          Source added. The worker fetches it within a minute, and its recent entries show up in the
+          Feed as the Backfill.
         </Notice>
-      )}
+      ) : null}
       <div className="flex flex-col gap-2">
         <label htmlFor="url" className={label}>
           RSS feed URL
@@ -43,13 +39,13 @@ export function AddSourceForm({
           name="url"
           type="url"
           required
-          inputMode="url"
           autoComplete="url"
           spellCheck={false}
           placeholder="https://example.com/feed.xml"
           defaultValue={values.url}
           aria-invalid={invalid("url")}
           aria-describedby={invalid("url") ? "url-error" : "url-help"}
+          // Focus lands here with the error, so the field and its message are read together.
           // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
           autoFocus={invalid("url")}
           className={field}

@@ -1,16 +1,21 @@
-import { defaultSchedule } from "@watchdog/core";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { requireWorkspace, server } from "@/lib/server";
-import { listSources, schedulePresets } from "@/lib/sources";
+import {
+  addProblems,
+  listSources,
+  problemField,
+  problemMessage,
+  schedules,
+} from "@/lib/sources";
 import { SubmitButton } from "../sign-in/submit-button";
 import { removeSourceAction } from "./actions";
 import { AddSourceForm } from "./add-source-form";
 
 export const metadata: Metadata = { title: "Sources · Watchdog" };
 
-export default function SourcesPage() {
+export default function SourcesPage({ searchParams }: PageProps<"/sources">) {
   return (
     <div className="flex flex-1 flex-col">
       <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
@@ -27,31 +32,51 @@ export default function SourcesPage() {
       </nav>
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
         <h1 className="text-headline">Sources</h1>
-        <Suspense fallback={<div aria-busy="true" className="h-64 rounded-lg bg-muted" />}>
-          <SourcesScreen />
+        <section aria-labelledby="add-source" className="flex flex-col gap-4 rounded-lg border p-4">
+          <h2 id="add-source" className="text-title">
+            Add an RSS Source
+          </h2>
+          {/* The form is in the static shell, so it works without JavaScript. What the last submit
+              said, read from the URL, streams in over it. */}
+          <Suspense fallback={<AddSourceForm />}>
+            <AddSourceFormWithOutcome searchParams={searchParams} />
+          </Suspense>
+        </section>
+        <Suspense fallback={<div aria-busy="true" className="h-32 rounded-lg bg-muted" />}>
+          <SourceList />
         </Suspense>
       </main>
     </div>
   );
 }
 
-async function SourcesScreen() {
+async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sources">, "searchParams">) {
+  const params = await searchParams;
+  const param = (name: string) => {
+    const value = params[name];
+    return typeof value === "string" ? value : "";
+  };
+  if (param("added") !== "") return <AddSourceForm added />;
+  // The code comes from the URL, so only a known one counts.
+  const problem = addProblems.find((known) => known === param("error"));
+  if (problem === undefined) return <AddSourceForm />;
+  const values = { url: param("url"), name: param("name"), schedule: param("schedule") };
+  const shown = { ...values, status: param("status"), mode: server().mode };
+  return (
+    <AddSourceForm
+      values={values}
+      error={{ field: problemField(problem), message: problemMessage(problem, shown) }}
+    />
+  );
+}
+
+async function SourceList() {
   const { workspace } = await requireWorkspace();
-  const { db, mode } = server();
-  const sources = await listSources(db, workspace.id);
-  const schedules = schedulePresets(mode);
+  const sources = await listSources(server().db, workspace.id);
   const scheduleLabel = (cron: string) => schedules.find((preset) => preset.cron === cron)?.label;
 
   return (
-    <>
-      <section aria-labelledby="add-source" className="flex flex-col gap-4 rounded-lg border p-4">
-        <h2 id="add-source" className="text-title">
-          Add an RSS Source
-        </h2>
-        <AddSourceForm schedules={schedules} defaultSchedule={defaultSchedule} />
-      </section>
-
-      <section aria-labelledby="watched" className="flex flex-col gap-3">
+    <section aria-labelledby="watched" className="flex flex-col gap-3">
         <h2 id="watched" className="text-title">
           Watching <span className="tabular-nums">{sources.length}</span>{" "}
           {sources.length === 1 ? "Source" : "Sources"}
@@ -100,7 +125,6 @@ async function SourcesScreen() {
           </ul>
         )}
       </section>
-    </>
   );
 }
 
