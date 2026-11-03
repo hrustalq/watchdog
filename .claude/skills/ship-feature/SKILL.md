@@ -148,11 +148,14 @@ If any of them fails, leave the PR open, tell the user exactly what's missing, a
 Otherwise:
 
 ```bash
+# msg.txt in the scratchpad: the subject "<the PR title> (#<PR>)", a blank line, then a
+# one-paragraph summary of the end state.
+pnpm exec commitlint < msg.txt   # must pass: main runs the same check on the squash commit
 gh pr merge <PR> --squash --delete-branch \
-  --subject "<the PR title> (#<PR>)" --body "<one-paragraph summary of the end state, wrapped at 100 characters a line>"
+  --subject "$(head -1 msg.txt)" --body "$(tail -n +3 msg.txt)"
 ```
 
-Pass `--body` explicitly so GitHub doesn't paste every branch commit into `main`'s message. The body has no trailers. CI runs `commitlint --last` on `main`, so a body line over 100 characters turns `main` red.
+Pass `--body` explicitly so GitHub doesn't paste every branch commit into `main`'s message. The body has no trailers. CI runs `commitlint --last` on `main`, so a body line over 100 characters turns `main` red. That's why the message is linted before the merge, not wrapped by eye.
 
 After the merge:
 
