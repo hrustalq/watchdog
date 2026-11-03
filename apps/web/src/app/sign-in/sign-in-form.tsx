@@ -48,7 +48,7 @@ export function SignInForm({
           aria-invalid={invalidEmail}
           aria-describedby={invalidEmail ? "email-error" : undefined}
           // Focus lands here with the error, so the field and its message are read together.
-          // eslint-disable-next-line jsx-a11y/no-autofocus -- only after a failed submit, never on arrival
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an invalid-email error to fix
           autoFocus={invalidEmail}
           className="h-8 w-full rounded-lg border border-input bg-transparent px-3 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/40 sm:text-sm"
         />
