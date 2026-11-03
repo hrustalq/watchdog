@@ -15,6 +15,9 @@ services:
   caddy:
     image: caddy:2.11.7-alpine
     command: caddy reverse-proxy --from :3000 --to web:3000
+    # The image declares volumes for certificates and state. Plain HTTP keeps nothing worth saving,
+    # and tmpfs stops each `up` after a `down` from leaving two anonymous volumes behind.
+    tmpfs: [/data, /config]
     ports:
       - "3000:3000"
     depends_on:
