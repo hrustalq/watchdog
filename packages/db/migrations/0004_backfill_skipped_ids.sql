@@ -1,1 +1,1 @@
-ALTER TABLE "source" ADD COLUMN "backfill_skipped_ids" text[] DEFAULT '{}' NOT NULL;
+ALTER TABLE "source" ADD COLUMN "backfill_skipped_ids" text[];

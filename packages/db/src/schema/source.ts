@@ -32,9 +32,10 @@ export const source = pgTable(
     backfilledAt: timestamp("backfilled_at", { withTimezone: true }),
     /**
      * IDs of the entries the Backfill fetch saw but didn't capture: undated, too old, or beyond the
-     * cap of 50. Later polls never capture them (docs: Processing pipeline, "Stages").
+     * cap of 50. Later polls never capture them (docs: Processing pipeline, "Stages"). Null until
+     * the Backfill.
      */
-    backfillSkippedIds: text("backfill_skipped_ids").array().notNull().default([]),
+    backfillSkippedIds: text("backfill_skipped_ids").array(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

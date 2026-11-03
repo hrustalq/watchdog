@@ -70,7 +70,7 @@ export async function pollSource(
       backfill = { backfilledAt: fetchedAt, backfillSkippedIds: skipped };
     } else {
       const start = backfilledAt.getTime() - backfillWindow;
-      const skipped = new Set(locked.backfillSkippedIds);
+      const skipped = new Set(locked.backfillSkippedIds ?? []);
       const candidates = entries.filter(
         (entry) => !skipped.has(entry.externalId) && published(entry) >= start,
       );

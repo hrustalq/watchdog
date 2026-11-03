@@ -1,5 +1,5 @@
 {
-  "id": "0806b610-5dfb-476c-ad79-4b697401f557",
+  "id": "134b6745-20cf-479e-ac88-3c2c777103c7",
   "prevId": "ff11b9db-f088-4506-8ef1-e333573ddff0",
   "version": "7",
   "dialect": "postgresql",
@@ -576,8 +576,7 @@
           "name": "backfill_skipped_ids",
           "type": "text[]",
           "primaryKey": false,
-          "notNull": true,
-          "default": "'{}'"
+          "notNull": false
         },
         "created_at": {
           "name": "created_at",
