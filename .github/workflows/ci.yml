@@ -36,3 +36,33 @@ jobs:
       - name: Test (unit and integration)
         if: ${{ !cancelled() }}
         run: pnpm turbo run test
+
+  # Builds the images and signs in on the whole Compose stack, which is too slow for every pull
+  # request. The workflow runs on pushes to main only, so this job does too.
+  smoke:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @watchdog/e2e
+      - run: pnpm --filter @watchdog/e2e exec playwright install --with-deps chromium
+      # The example values work as they are: no SMTP, so the links go to the web log.
+      - run: cp .env.example .env
+      - run: pnpm smoke
+      - name: Keep the trace and the container logs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: smoke
+          path: |
+            apps/e2e/playwright-report/
+            apps/e2e/test-results/
+            apps/e2e/compose.log

@@ -6,6 +6,7 @@ A pnpm + Turborepo monorepo (ADR 0011).
 | --- | --- |
 | `apps/web` | Next.js app: UI, settings, webhook inbox |
 | `apps/worker` | Triggers and pipeline stages |
+| `apps/e2e` | The Playwright smoke test (`pnpm smoke`) |
 | `packages/core` | The pipeline, the rule model and the Agent interface (`@watchdog/core`) |
 | `packages/db` | The database layer (`@watchdog/db`) |
 | `packages/eslint-config` | The shared lint rules each package's `eslint.config.mjs` builds on |
@@ -56,6 +57,8 @@ pnpm turbo run test:unit # unit tests only, no Docker
 ```
 
 Tests are Vitest. A file named `*.int.test.ts` is an integration test: it may start Postgres with `startPostgres()` from `@watchdog/db/testing` (testcontainers). Every other `*.test.ts` is a unit test and must run without Docker or network access.
+
+`pnpm smoke` runs the Playwright smoke test: on a fresh Compose stack it claims the install with the setup link, signs in with the magic link and checks the empty Workspace, reading both links from the web container's log. It needs Docker, port 3000 free, a `.env` with the SMTP variables empty, and Chromium, installed once with `pnpm --filter @watchdog/e2e exec playwright install chromium`. The stack runs as the Compose project `watchdog-smoke`, apart from the one `docker compose up` starts, so its volume is wiped without touching yours. A passing run removes the stack. A failing one leaves it up and keeps the trace in `apps/e2e/test-results/` and the container logs in `apps/e2e/compose.log`. CI runs it on every push to `main`, not on pull requests.
 
 `pnpm install` installs two git hooks (husky):
 
