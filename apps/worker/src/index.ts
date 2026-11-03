@@ -1,8 +1,9 @@
 import { rmSync, writeFileSync } from "node:fs";
-import { loadConfig } from "@watchdog/core";
-import { migrate } from "@watchdog/db";
+import { createEgressFetch, loadConfig } from "@watchdog/core";
+import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { readyFile } from "./ready.ts";
+import { startScheduler } from "./scheduler.ts";
 
 // Stops with the invalid variables named before the worker does anything else.
 const config = (() => {
@@ -28,8 +29,11 @@ boss.on("error", (error) => {
   console.error("pg-boss error:", error);
 });
 await boss.start();
+const db = createDb(config.databaseUrl);
+await startScheduler(db, boss, config.mode, { fetch: createEgressFetch(config) });
 
-// The first SIGTERM or SIGINT stops pg-boss. A second signal while it stops is ignored.
+// The first SIGTERM or SIGINT stops pg-boss, which stops the tick and lets running polls finish.
+// A second signal while it stops is ignored.
 let stopping = false;
 const stop = async () => {
   if (stopping) return;
@@ -37,6 +41,7 @@ const stop = async () => {
   rmSync(readyFile, { force: true });
   try {
     await boss.stop();
+    await db.$client.end();
     console.log("Worker stopped: pg-boss stopped cleanly");
   } catch (error) {
     console.error("Worker stopped: pg-boss failed to stop:", error);

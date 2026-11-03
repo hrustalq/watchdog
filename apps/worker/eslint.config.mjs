@@ -4,9 +4,9 @@ import { defineConfig } from "eslint/config";
 export default defineConfig([
   ...base(import.meta.dirname),
 
-  // The entry point reports the worker's lifecycle on stdout; there is no logger yet.
+  // The worker reports its lifecycle and failed polls on stdout and stderr; there is no logger yet.
   {
-    files: ["src/index.ts"],
+    files: ["src/index.ts", "src/scheduler.ts"],
     rules: { "no-console": "off" },
   },
 ]);

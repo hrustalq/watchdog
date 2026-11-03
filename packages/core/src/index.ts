@@ -14,3 +14,4 @@ export {
   type FetchState,
 } from "./sources/rss/fetch-feed.ts";
 export { createMailer, type MailMessage, type Mailer } from "./mail/mailer.ts";
+export { defaultSchedule, nextPollAt, scheduleError } from "./schedule.ts";

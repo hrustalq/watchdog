@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createDb } from "@watchdog/db";
+import { createDb, eq, migrate, source, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readyFile } from "./ready.ts";
 
 // Each worker gets its own temp dir, so its ready file can't collide with a local dev worker's.
@@ -28,6 +29,8 @@ async function startWorker(databaseUrl: string) {
       DATABASE_URL: databaseUrl,
       BETTER_AUTH_SECRET: "a-test-secret-of-at-least-32-characters",
       BETTER_AUTH_URL: "http://localhost:3000",
+      // The test's feed server listens on loopback, which the egress guard blocks by default.
+      EGRESS_ALLOWLIST: "127.0.0.1",
     },
   });
   running.add(child);
@@ -96,5 +99,59 @@ describe("worker", () => {
     const worker = await startWorker(postgres.url);
     expect(await databaseState(postgres.url)).toEqual(before);
     expect(await worker.stop()).toBe(0);
+  }, 60_000);
+
+  it("polls a new Source at start, and lets the poll finish when stopped mid-poll", async () => {
+    // A feed that answers after 3 s, so the worker is stopped while the poll is running.
+    let requested = false;
+    const server = createServer((_request, response) => {
+      requested = true;
+      setTimeout(() => {
+        response.setHeader("content-type", "application/rss+xml");
+        response.end(
+          `<?xml version="1.0"?><rss version="2.0"><channel><title>Slow</title>` +
+            `<item><guid>one</guid><title>One</title><description>An entry.</description></item>` +
+            `</channel></rss>`,
+        );
+      }, 3000);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    if (address === null || typeof address === "string") throw new Error("The server has no port");
+    const { port } = address;
+
+    await migrate(postgres.url);
+    const db = createDb(postgres.url);
+    try {
+      await db.insert(user).values({ id: "owner", name: "Owner", email: "owner@example.com" });
+      const [ws] = await db
+        .insert(workspace)
+        .values({ name: "Workspace", ownerUserId: "owner" })
+        .returning();
+      const [src] = await db
+        .insert(source)
+        .values({
+          workspaceId: ws?.id ?? "",
+          type: "rss",
+          name: "Slow feed",
+          config: { url: `http://127.0.0.1:${String(port)}/feed.rss` },
+          schedule: "*/15 * * * *",
+        })
+        .returning();
+      const sourceId = src?.id ?? "";
+      const added = new Date();
+
+      const worker = await startWorker(postgres.url);
+      await vi.waitFor(() => { expect(requested).toBe(true); }, { timeout: 30_000, interval: 100 });
+      expect(await worker.stop()).toBe(0);
+
+      const polled = await db.query.source.findFirst({ where: eq(source.id, sourceId) });
+      expect(polled?.lastError).toBeNull();
+      expect(polled?.lastPolledAt?.getTime()).toBeGreaterThan(added.getTime());
+      expect(polled?.nextPollAt.getTime()).toBeGreaterThan(Date.now());
+    } finally {
+      await db.$client.end();
+      server.close();
+    }
   }, 60_000);
 });
