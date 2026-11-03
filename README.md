@@ -73,12 +73,12 @@ Commit messages follow [Conventional Commits](https://www.conventionalcommits.or
 
 Watchdog has one product version, following [SemVer](https://semver.org/). It lives in the root `package.json` and `.release-please-manifest.json`. The packages under `apps/` and `packages/` are private and have no version of their own.
 
-[release-please](https://github.com/googleapis/release-please) cuts releases from the commit history (`.github/workflows/release.yml`, configured in `release-please-config.json`). On every push to `main` it updates one open release PR, `chore(release): release X.Y.Z`, which bumps the version and adds the next section to [`CHANGELOG.md`](CHANGELOG.md). The squash-merged PR titles decide the bump:
+[release-please](https://github.com/googleapis/release-please) cuts releases from the commit history (`.github/workflows/release.yml`, configured in `release-please-config.json`). On every push to `main` it updates one open release PR, `chore(release): release X.Y.Z`, which bumps the version and adds the next section to [`CHANGELOG.md`](CHANGELOG.md). The subjects of the commits on `main`, one per squash-merged PR, decide the bump:
 
-- `fix` is a patch release, `feat` a minor one.
+- `fix`, `perf` and `revert` are patch releases, listed under "Bug Fixes", "Performance" and "Reverts". `feat` is a minor release, under "Features".
 - A breaking change (`feat!:` or a `BREAKING CHANGE:` footer) is listed under "⚠ BREAKING CHANGES". While the version is `0.x` it bumps the minor version, so **any `0.x` minor release may break your install**: read its breaking changes before upgrading. From `1.0.0` on, a breaking change is a major release.
-- `docs`, `test`, `ci`, `chore`, `style`, `refactor` and `build` commits don't appear in the changelog.
+- Every other type (`docs`, `test`, `ci`, `chore`, `style`, `refactor`, `build`) stays out of the changelog, and a push with only those opens no release.
 
 A person merges the release PR. That run tags the commit `vX.Y.Z` and publishes a [GitHub Release](https://github.com/hrustalq/watchdog/releases) with the same notes as its `CHANGELOG.md` section.
 
-The workflow opens the release PR with the `RELEASE_PLEASE_TOKEN` repo secret, a fine-grained personal access token (or GitHub App token) for this repo with Contents and Pull requests write access. A PR opened with the default `GITHUB_TOKEN` triggers no workflows, so without the secret the release PR still opens but CI doesn't run on it.
+The workflow acts with the `RELEASE_PLEASE_TOKEN` repo secret: a fine-grained personal access token (or GitHub App token) for this repo with Contents, Issues and Pull requests read and write. release-please labels its PR through the Issues API. The default `GITHUB_TOKEN` won't do, because a PR it opens triggers no workflows, so CI wouldn't run on the release PR. Without the secret the Release workflow fails.
