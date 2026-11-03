@@ -10,17 +10,51 @@ export const feedPageSize = 50;
 const published = sql`coalesce(${item.publishedAt}, '-infinity')`;
 const latestKey = sql`(${item.capturedAt}, ${published}, ${item.id})`;
 
+// A cursor timestamp: UTC, every microsecond kept, and nothing a URL has to escape.
+// node-postgres can't write a year past 9999. A BC date (a feed's bad date) loses its era here, which
+// can only repeat such Items among themselves.
+const stamp = (column: typeof item.capturedAt | typeof item.publishedAt) =>
+  sql`to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+const stampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d{6}Z$/;
+
+/** Whether text is a cursor timestamp for a real instant, so `::timestamptz` can't throw on it. */
+function isStamp(text: string) {
+  const seconds = stampPattern.exec(text)?.[1];
+  // Postgres has no year 0, and a JS Date rolls a day that doesn't exist into the next month.
+  if (seconds === undefined || seconds.startsWith("0000")) return false;
+  const date = new Date(`${seconds}Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(seconds);
+}
+
+/**
+ * The sort keys of a "Show older" cursor, `<captured_at>_<published_at or -infinity>_<id>`, or
+ * undefined when the value isn't one. The cursor holds the keys rather than an Item id, so it
+ * still marks its place after that Item is deleted.
+ */
+export function parseCursor(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const [captured = "", publishedAt = "", id = "", ...rest] = value.split("_");
+  const valid =
+    rest.length === 0 &&
+    isStamp(captured) &&
+    (publishedAt === "-infinity" || isStamp(publishedAt)) &&
+    isUuid(id);
+  return valid ? { captured, published: publishedAt, id } : undefined;
+}
+
+export type FeedCursor = NonNullable<ReturnType<typeof parseCursor>>;
+
 /**
  * One page of the Feed, newest first, and the cursor for the page after it (null on the last).
- * The cursor is the id of the page's last Item, so "Show older" can't skip or repeat an Item as new
- * ones arrive. Its sort keys are read back in SQL, keeping captured_at's microseconds a Date drops.
+ * The cursor is built in SQL from the last Item's keys, keeping captured_at's microseconds that a
+ * JS Date drops, so "Show older" can't skip or repeat an Item as new ones arrive.
  */
-export async function feedPage(db: Db, workspaceId: string, before?: string) {
-  const after = before !== undefined && isUuid(before)
-    ? sql`${latestKey} < (
-        select c.captured_at, coalesce(c.published_at, '-infinity'), c.id from item c
-        where c.id = ${before} and c.workspace_id = ${workspaceId})`
-    : undefined;
+export async function feedPage(db: Db, workspaceId: string, before?: FeedCursor) {
+  const after =
+    before === undefined
+      ? undefined
+      : sql`${latestKey} < (
+          ${before.captured}::timestamptz, ${before.published}::timestamptz, ${before.id}::uuid)`;
   const rows = await db
     .select({
       id: item.id,
@@ -31,14 +65,18 @@ export async function feedPage(db: Db, workspaceId: string, before?: string) {
       isBackfill: item.isBackfill,
       // A row shows one or two lines of it, and body can be 32 KB.
       excerpt: sql<string>`left(${item.body}, 300)`,
+      // The last row's sort keys, in the shape parseCursor reads.
+      cursor: sql<string>`concat_ws('_', ${stamp(item.capturedAt)},
+        coalesce(${stamp(item.publishedAt)}, '-infinity'), ${item.id})`,
     })
     .from(item)
     .innerJoin(source, eq(source.id, item.sourceId))
     .where(and(eq(item.workspaceId, workspaceId), after))
     .orderBy(desc(item.capturedAt), sql`${published} desc`, desc(item.id))
     .limit(feedPageSize + 1);
-  const items = rows.slice(0, feedPageSize);
-  return { items, older: rows.length > feedPageSize ? (items.at(-1)?.id ?? null) : null };
+  const items = rows.slice(0, feedPageSize).map(({ cursor: _, ...row }) => row);
+  const older = rows.length > feedPageSize ? (rows[feedPageSize - 1]?.cursor ?? null) : null;
+  return { items, older };
 }
 
 export type FeedItem = Awaited<ReturnType<typeof feedPage>>["items"][number];
