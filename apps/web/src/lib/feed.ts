@@ -1,10 +1,9 @@
 // The Feed as the Workspace screen reads it, in the Latest view (docs: Processing pipeline, "Feed").
 // Every query is scoped to the Workspace, so another Workspace's Item id behaves like a missing one.
 import { and, type Db, desc, eq, item, source, sql } from "@watchdog/db";
+import { isUuid } from "./uuid.ts";
 
 export const feedPageSize = 50;
-
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // The Latest order, which item_feed_idx serves: newest captured, then newest published with undated
 // last, then id. Every key is non-null, so the keyset cursor is one row comparison.
@@ -17,7 +16,7 @@ const latestKey = sql`(${item.capturedAt}, ${published}, ${item.id})`;
  * ones arrive. Its sort keys are read back in SQL, keeping captured_at's microseconds a Date drops.
  */
 export async function feedPage(db: Db, workspaceId: string, before?: string) {
-  const after = before !== undefined && uuid.test(before)
+  const after = before !== undefined && isUuid(before)
     ? sql`${latestKey} < (
         select c.captured_at, coalesce(c.published_at, '-infinity'), c.id from item c
         where c.id = ${before} and c.workspace_id = ${workspaceId})`
@@ -46,8 +45,7 @@ export type FeedItem = Awaited<ReturnType<typeof feedPage>>["items"][number];
 
 /** An Item's envelope with its Source's name and its Log, oldest first, or undefined. */
 export function itemWithLog(db: Db, workspaceId: string, itemId: string) {
-  // Postgres refuses a malformed uuid with an error rather than matching nothing.
-  if (!uuid.test(itemId)) return Promise.resolve(undefined);
+  if (!isUuid(itemId)) return Promise.resolve(undefined);
   return db.query.item.findFirst({
     where: and(eq(item.workspaceId, workspaceId), eq(item.id, itemId)),
     columns: { raw: false, summary: false, workspaceId: false, sourceId: false, externalId: false },

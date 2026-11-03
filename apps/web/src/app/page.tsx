@@ -5,6 +5,7 @@ import { eq, source } from "@watchdog/db";
 import { Timestamp } from "@/components/timestamp";
 import { feedPage, type FeedItem } from "@/lib/feed";
 import { requireWorkspace, server } from "@/lib/server";
+import { isUuid } from "@/lib/uuid";
 import { signOut } from "./actions";
 import { FeedRefresher } from "./feed-refresher";
 
@@ -18,11 +19,15 @@ export default function WorkspacePage({ searchParams }: PageProps<"/">) {
 
 async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchParams">) {
   const [{ user, workspace, admin }, params] = await Promise.all([requireWorkspace(), searchParams]);
-  const before = typeof params.before === "string" ? params.before : undefined;
+  // A cursor that isn't an Item id is ignored, so the page is the newest one and keeps refreshing.
+  const before = typeof params.before === "string" && isUuid(params.before) ? params.before : undefined;
   const { db } = server();
   const { items, older } = await feedPage(db, workspace.id, before);
-  // Only an empty Feed needs to know whether there's anything to watch.
-  const sources = items.length === 0 ? await db.$count(source, eq(source.workspaceId, workspace.id)) : 0;
+  // Only an empty newest page needs to know whether there's anything to watch.
+  const sources =
+    items.length === 0 && before === undefined
+      ? await db.$count(source, eq(source.workspaceId, workspace.id))
+      : 0;
   return (
     <div className="flex flex-1 flex-col">
       <header className="flex h-12 items-center justify-between gap-2 border-b px-4 sm:gap-4">
@@ -116,7 +121,7 @@ function EmptyState({ title, children }: { title: string; children: React.ReactN
 
 function FeedList({ items }: { items: FeedItem[] }) {
   return (
-    <ol className="divide-y rounded-lg border">
+    <ol className="divide-y overflow-hidden rounded-lg border">
       {items.map((row) => (
         // The title's link covers the row, so the whole row opens the Item.
         <li key={row.id} className="relative flex flex-col gap-1 px-4 py-3 hover:bg-card">
@@ -124,7 +129,7 @@ function FeedList({ items }: { items: FeedItem[] }) {
             <h2 className="text-title min-w-0 break-words">
               <Link
                 href={`/items/${row.id}`}
-                className="rounded-sm outline-none after:absolute after:inset-0 after:rounded-lg focus-visible:after:ring-3 focus-visible:after:ring-ring/30"
+                className="rounded-sm outline-none after:absolute after:inset-0 focus-visible:after:ring-3 focus-visible:after:ring-inset focus-visible:after:ring-ring/30"
               >
                 {row.title ?? "Untitled Item"}
               </Link>

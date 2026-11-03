@@ -19,7 +19,8 @@ export function FeedRefresher({ ids }: { ids: string[] }) {
   if (ids !== shown) {
     setShown(ids);
     const arrived = ids.filter((id) => !shown.includes(id)).length;
-    if (arrived > 0) setAnnouncement(`${String(arrived)} new ${arrived === 1 ? "Item" : "Items"} in the Feed`);
+    // Cleared when nothing arrived, so the same count next time is a change screen readers announce.
+    setAnnouncement(arrived === 0 ? "" : `${String(arrived)} new ${arrived === 1 ? "Item" : "Items"} in the Feed`);
   }
 
   useEffect(() => {
