@@ -63,12 +63,12 @@ Tests are Vitest. A file named `*.int.test.ts` is an integration test: it may st
 
 `pnpm install` installs two git hooks (husky):
 
-- **pre-push** runs `lint`, `typecheck` and `test:unit` through Turborepo and rejects the push if any of them fails. Unchanged packages hit the cache. It doesn't need Docker, because integration tests run in CI.
+- **pre-push** first checks the message of every commit the push sends that no remote has yet, and names the commit and the rule that failed. Then it runs `lint`, `typecheck` and `test:unit` through Turborepo. It rejects the push if any of them fails, before anything is sent. Unchanged packages hit the cache. It doesn't need Docker, because integration tests run in CI.
 - **commit-msg** checks the message with commitlint.
 
 A new git worktree gets the hooks after its own `pnpm install`. `HUSKY=0` skips installing them, as CI does.
 
-Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope)!: subject`, e.g. `fix(db): close the pool on shutdown`. Scopes are `web`, `worker`, `core`, `db`, `docs`, `deps`, `ci` and `release`, and the scope is optional. PRs are squash-merged, so CI checks the PR title the same way.
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope)!: subject`, e.g. `fix(db): close the pool on shutdown`. Scopes are `web`, `worker`, `core`, `db`, `docs`, `deps`, `ci` and `release`, and the scope is optional. PRs are squash-merged as `<PR title> (#N)`, and the `ship-feature` skill checks that squash message with commitlint before it merges. CI doesn't check commit messages, so a PR merged any other way goes unchecked.
 
 ## Releases
 

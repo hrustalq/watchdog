@@ -98,7 +98,7 @@ After pushing, check out the previous Knowledge `main` commit in `docs/` again (
 
 ## 8. Open the PR and get CI green
 
-Push the branch (`git push -u origin HEAD`). Then run `gh pr create --title "<type>(<scope>): <issue title as a subject starting with a lowercase verb>" --body-file <file>`. CI lints the title with commitlint, because it becomes the squash commit's subject. Write the body to a file in the scratchpad, using this shape:
+Push the branch (`git push -u origin HEAD`). Then run `gh pr create --title "<type>(<scope>): <issue title as a subject starting with a lowercase verb>" --body-file <file>`. The title becomes the squash commit's subject, and step 9 checks it with commitlint before the merge. Write the body to a file in the scratchpad, using this shape:
 
 ```markdown
 Closes #N
@@ -148,20 +148,19 @@ If any of them fails, leave the PR open, tell the user exactly what's missing, a
 Otherwise:
 
 ```bash
-# msg.txt in the scratchpad: the subject "<the PR title> (#<PR>)", a blank line, then a
-# one-paragraph summary of the end state.
-pnpm exec commitlint < msg.txt   # must pass: main runs the same check on the squash commit
-gh pr merge <PR> --squash --delete-branch \
-  --subject "$(head -1 msg.txt)" --body "$(tail -n +3 msg.txt)"
+# body.txt in the scratchpad: a one-paragraph summary of the end state, with no trailers.
+subject="$(gh pr view <PR> --json title --jq .title) (#<PR>)"
+printf '%s\n\n%s\n' "$subject" "$(cat body.txt)" | pnpm exec commitlint &&
+  gh pr merge <PR> --squash --delete-branch --subject "$subject" --body-file body.txt
 ```
 
-Pass `--body` explicitly so GitHub doesn't paste every branch commit into `main`'s message. The body has no trailers. CI runs `commitlint --last` on `main`, so a body line over 100 characters turns `main` red. That's why the message is linted before the merge, not wrapped by eye.
+This lints the squash commit exactly as `main` gets it: the PR's current title with the ` (#N)` suffix, then the body. Nothing else checks the message on `main`, so the merge runs only when commitlint passes. If it fails, fix the title (`gh pr edit <PR> --title`) or rewrap the body, and run the block again. The usual failures are a body line over 100 characters, and a title that goes over 100 once ` (#N)` is added. Pass the body explicitly so GitHub doesn't paste every branch commit into `main`'s message.
 
 After the merge:
 
 - `git switch main && git pull --ff-only`, then delete the local branch.
 - `gh issue view N --json state` should say `CLOSED`, closed by `Closes #N`. If it doesn't, close it with a comment that links the PR.
-- Watch the run on `main` (`gh run list --commit "$(git rev-parse HEAD)"`, then `gh run watch <id>` for each of CI, Commitlint and Release). The smoke test runs only there. Release updates the release PR. Leave that PR alone. If `main` goes red, say so right away and fix it forward on a new branch, because a red `main` blocks every later issue.
+- Watch the run on `main` (`gh run list --commit "$(git rev-parse HEAD)"`, then `gh run watch <id>` for each of CI and Release). The smoke test runs only there. Release updates the release PR. Leave that PR alone. If `main` goes red, say so right away and fix it forward on a new branch, because a red `main` blocks every later issue.
 - If the docs MR has merged by now, bump the submodule pointer through a small PR (`chore(docs): point submodule at Knowledge main`). If it hasn't, list it as pending.
 
 ## 10. Wrap up
