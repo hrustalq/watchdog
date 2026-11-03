@@ -11,6 +11,7 @@ describe("proxy", () => {
   it.each([
     "/sign-in",
     "/sign-in/check-email",
+    "/sign-in/confirm?token=a-token",
     "/setup",
     "/api/auth/sign-in/magic-link",
     "/api/auth/magic-link/verify",

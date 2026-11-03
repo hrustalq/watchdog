@@ -1,8 +1,9 @@
 import type { MailMessage } from "@watchdog/core";
-import { createDb, migrate, user, workspace, type Db } from "@watchdog/db";
+import { createDb, migrate, user, verification, workspace, type Db } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "./auth.ts";
+import { pressSignIn } from "./testing.ts";
 import { workspaceFor } from "./workspace.ts";
 
 const baseURL = "http://localhost:3000";
@@ -35,23 +36,23 @@ describe("magic link sign-in", () => {
     };
   }, 120_000);
 
-  /** Asks for a magic link, opens it, and returns the session cookie it sets. */
-  async function signIn(email: string) {
+  /** Asks for a magic link, as the sign-in page does. */
+  async function requestLink(email: string) {
     const request = await auth.handler(
       new Request(`${baseURL}/api/auth/sign-in/magic-link`, {
         method: "POST",
         headers: { "content-type": "application/json", origin: baseURL },
-        body: JSON.stringify({ email, callbackURL: "/" }),
+        body: JSON.stringify({ email, callbackURL: "/", errorCallbackURL: "/sign-in" }),
       }),
     );
     expect(request.status).toBe(200);
+    expect(mails.at(-1)?.to).toBe(email);
+  }
 
-    const mail = mails.at(-1);
-    expect(mail?.to).toBe(email);
-    const link = /https?:\/\/\S+/.exec(mail?.text ?? "")?.[0];
-    expect(link).toMatch(`${baseURL}/api/auth/magic-link/verify?token=`);
-
-    const verified = await auth.handler(new Request(link ?? ""));
+  /** Asks for a magic link, presses the confirm page's button, and returns the session cookie. */
+  async function signIn(email: string) {
+    await requestLink(email);
+    const verified = await pressSignIn(auth, emailedLink());
     expect(verified.status).toBe(302);
     expect(verified.headers.get("location")).toBe(`${baseURL}/`);
     return verified.headers
@@ -59,6 +60,8 @@ describe("magic link sign-in", () => {
       .map((cookie) => cookie.split(";")[0])
       .join("; ");
   }
+
+  const emailedLink = () => /https?:\/\/\S+/.exec(mails.at(-1)?.text ?? "")?.[0] ?? "";
 
   /** What the app does on the request that follows: read the session, then its Workspace. */
   async function openApp(cookie: string) {
@@ -107,15 +110,50 @@ describe("magic link sign-in", () => {
     await expect(db.insert(workspace).values({ name: "second", ownerUserId: dave.id })).rejects.toThrow();
   });
 
+  it("emails a link to the confirm page, not to Better Auth's verify endpoint", async () => {
+    await requestLink("grace@example.com");
+
+    expect(emailedLink()).toMatch(new RegExp(`^${baseURL}/sign-in/confirm\\?token=[^&\\s]+$`));
+  });
+
+  it("keeps the token when the emailed link is fetched before the button is pressed", async () => {
+    await requestLink("grace@example.com");
+    const link = emailedLink();
+
+    // A mail scanner fetching the link, twice. It's a page of the app, which Better Auth doesn't serve.
+    expect((await auth.handler(new Request(link))).status).toBe(404);
+    expect((await auth.handler(new Request(link))).status).toBe(404);
+
+    const verified = await pressSignIn(auth, link);
+    expect(verified.headers.get("location")).toBe(`${baseURL}/`);
+    expect(verified.headers.getSetCookie().join()).toContain("session_token=");
+  });
+
+  it("sends a used link back to sign-in with INVALID_TOKEN", async () => {
+    await requestLink("heidi@example.com");
+    const link = emailedLink();
+    await pressSignIn(auth, link);
+
+    const again = await pressSignIn(auth, link);
+
+    expect(again.status).toBe(302);
+    expect(again.headers.get("location")).toBe(`${baseURL}/sign-in?error=INVALID_TOKEN`);
+  });
+
+  it("sends an expired link back to sign-in with an error the sign-in page explains", async () => {
+    await requestLink("ivan@example.com");
+    const link = emailedLink();
+    await db.update(verification).set({ expiresAt: new Date(Date.now() - 1000) });
+
+    const expired = await pressSignIn(auth, link);
+
+    expect(expired.status).toBe(302);
+    expect(expired.headers.get("location")).toMatch(new RegExp(`^${baseURL}/sign-in\\?error=(INVALID|EXPIRED)_TOKEN$`));
+  });
+
   it("stores only a hash of the magic link's token", async () => {
-    await auth.handler(
-      new Request(`${baseURL}/api/auth/sign-in/magic-link`, {
-        method: "POST",
-        headers: { "content-type": "application/json", origin: baseURL },
-        body: JSON.stringify({ email: "frank@example.com", callbackURL: "/" }),
-      }),
-    );
-    const token = new URL(/https?:\/\/\S+/.exec(mails.at(-1)?.text ?? "")?.[0] ?? baseURL).searchParams.get("token");
+    await requestLink("frank@example.com");
+    const token = new URL(emailedLink()).searchParams.get("token");
     expect(token).toBeTruthy();
 
     const stored = await db.query.verification.findMany();

@@ -34,5 +34,5 @@ export const setupLink = () =>
 export const magicLink = (email: string) =>
   linkFromWebLog(`magic link for ${email} (with SMTP set in .env, it was mailed instead)`, (log) => {
     const mail = log.lastIndexOf(`To: ${email}\n`);
-    return mail === -1 ? undefined : /https?:\/\/\S+\/magic-link\/verify\?\S+/.exec(log.slice(mail))?.[0];
+    return mail === -1 ? undefined : /https?:\/\/\S+\/sign-in\/confirm\?\S+/.exec(log.slice(mail))?.[0];
   });
