@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
+import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
 import {
   addProblems,
@@ -127,15 +128,6 @@ async function SourceList() {
           </ul>
         )}
       </section>
-  );
-}
-
-/** A UTC time, as the Schedule runs in UTC. */
-function Timestamp({ at }: { at: Date }) {
-  return (
-    <time dateTime={at.toISOString()} className="font-mono text-[0.8125rem]">
-      {at.toISOString().slice(0, 16).replace("T", " ")} UTC
-    </time>
   );
 }
 

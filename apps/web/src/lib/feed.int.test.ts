@@ -1,4 +1,5 @@
-import { pollSource, type PollSourceDeps } from "@watchdog/core";
+import { createServer } from "node:http";
+import { createEgressFetch, loadConfig, pollSource } from "@watchdog/core";
 import { createDb, type Db, item, itemLog, migrate, source, sql, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -13,16 +14,36 @@ function present<T>(value: T | undefined): T {
   return value;
 }
 
+// No live HTTP: a server on loopback answers for feeds.test, which the allowlist lets through.
+let feed = "";
+const feeds = createServer((_request, response) => {
+  response.writeHead(200, { "content-type": "application/rss+xml" }).end(feed);
+});
+const env = {
+  DATABASE_URL: "postgres://unused",
+  BETTER_AUTH_SECRET: "a".repeat(32),
+  BETTER_AUTH_URL: "http://localhost:3000",
+  EGRESS_ALLOWLIST: "feeds.test",
+};
+const lookup = () => Promise.resolve([{ address: "127.0.0.1", family: 4 }]);
+const deps = { fetch: createEgressFetch(loadConfig(env, () => undefined), { lookup }), now: () => now };
+
 describe("Feed", () => {
   let db: Db;
+  let feedUrl = "";
 
   beforeAll(async () => {
+    await new Promise<void>((resolve) => feeds.listen(0, "127.0.0.1", resolve));
+    const address = feeds.address();
+    if (address === null || typeof address === "string") throw new Error("The server has no port");
+    feedUrl = `http://feeds.test:${String(address.port)}/feed.rss`;
     const postgres = await startPostgres();
     await migrate(postgres.url);
     db = createDb(postgres.url);
     return async () => {
       await db.$client.end();
       await postgres.stop();
+      feeds.close();
     };
   }, 120_000);
 
@@ -37,7 +58,7 @@ describe("Feed", () => {
         workspaceId: present(ws).id,
         type: "rss",
         name: sourceName,
-        config: { url: `https://feeds.test/${id}.rss` },
+        config: { url: feedUrl },
         schedule: "*/15 * * * *",
       })
       .returning();
@@ -82,7 +103,7 @@ describe("Feed", () => {
   it("shows a Source's Backfill after its first poll, marked as Backfill and newest first", async () => {
     const seeded = await seed("Synthetic");
     const entries = [3, 1, 2].map((hours) => ({ id: `build-${String(hours)}`, published: hoursAgo(hours) }));
-    const feed =
+    feed =
       `<?xml version="1.0"?><rss version="2.0"><channel><title>Synthetic</title>` +
       entries
         .map(
@@ -93,13 +114,6 @@ describe("Feed", () => {
         )
         .join("") +
       `</channel></rss>`;
-    // No live HTTP: the Source's feed URL answers with the feed above.
-    const deps: PollSourceDeps = {
-      fetch: () =>
-        Promise.resolve(new Response(feed, { headers: { "content-type": "application/rss+xml" } })),
-      now: () => now,
-    };
-
     expect(await pollSource(db, seeded.source.id, deps)).toEqual({ captured: 3 });
 
     const { items, older } = await feedPage(db, seeded.workspaceId);
