@@ -4,7 +4,7 @@ import { type Config, nextPollAt, pollSource, type PollSourceDeps } from "@watch
 import { type Db, eq, lte, source } from "@watchdog/db";
 import type { PgBoss } from "pg-boss";
 
-export const tickQueue = "schedule-tick";
+const tickQueue = "schedule-tick";
 export const pollQueue = "poll-source";
 
 /** Enqueues a poll of every Source that is due. A Source already queued or polling is skipped. */
@@ -26,13 +26,21 @@ export async function startScheduler(
   await boss.createQueue(tickQueue);
   // `exclusive` with a singletonKey per Source: one poll of a Source queued or running at a time.
   // pollSource records fetch failures itself, so a throw is a bug or a lost database connection.
-  await boss.createQueue(pollQueue, { policy: "exclusive", retryBackoff: true, retryDelay: 30 });
+  // A poll takes at most the 30 s fetch timeout plus the capture, so a job still active after two
+  // minutes belongs to a worker that died, and expiring it lets the Source be polled again.
+  await boss.createQueue(pollQueue, {
+    policy: "exclusive",
+    retryBackoff: true,
+    retryDelay: 30,
+    expireInSeconds: 120,
+  });
 
   await boss.work<{ sourceId: string }>(pollQueue, { localConcurrency: 10 }, async ([job]) => {
     if (job === undefined) return;
     const { sourceId } = job.data;
     try {
-      await pollSource(db, sourceId, deps);
+      // The next poll is set first, so a poll that throws gets pg-boss's retries and then waits for
+      // its schedule, rather than being enqueued again by every tick.
       const found = await db.query.source.findFirst({
         where: eq(source.id, sourceId),
         columns: { schedule: true },
@@ -42,6 +50,7 @@ export async function startScheduler(
         .update(source)
         .set({ nextPollAt: nextPollAt(found.schedule, mode, new Date()) })
         .where(eq(source.id, sourceId));
+      await pollSource(db, sourceId, deps);
     } catch (error) {
       console.error(`Polling Source ${sourceId} failed:`, error);
       throw error;

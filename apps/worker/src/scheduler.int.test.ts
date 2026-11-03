@@ -123,7 +123,9 @@ describe("scheduler", () => {
 
     await enqueueDuePolls(db, boss);
     await vi.waitFor(() => { expect(fetched).toContain(src.url); }, { timeout: 15_000 });
-    // The poll is running and the Source is still due: two more ticks.
+    // The poll is running, and the Source is due again (as it is when two workers' ticks race):
+    // two more ticks.
+    await db.update(source).set({ nextPollAt: new Date(0) }).where(eq(source.id, src.id));
     await enqueueDuePolls(db, boss);
     await enqueueDuePolls(db, boss);
     expect(await pollJobs(src.id)).toEqual([{ state: "active" }]);

@@ -36,9 +36,14 @@ describe("scheduleError", () => {
   });
 
   it("accepts slower schedules and aliases", () => {
-    for (const schedule of ["0 * * * *", "@hourly", "30 9 * * 1-5", "0 0 29 2 *"]) {
+    for (const schedule of ["0 * * * *", "@hourly", " @hourly ", "30 9 * * 1-5", "0 0 29 2 *"]) {
       expect(scheduleError(schedule, "hosted")).toBeUndefined();
     }
+  });
+
+  it("finds a short gap that only a leap day has", () => {
+    // 23:55 on 28 February and 00:00 on 29 February.
+    expect(scheduleError("0,55 0,23 28,29 2 *", "hosted")).toMatch(/15 minutes/);
   });
 
   it("refuses an expression that isn't cron", () => {
@@ -76,6 +81,7 @@ describe("nextPollAt", () => {
 
   it("falls back to the default schedule when the mode refuses the Source's", () => {
     expect(nextPollAt("*/5 * * * *", "hosted", at("15:07:00"), () => 0)).toEqual(at("15:15:00"));
+    expect(nextPollAt(" @hourly ", "hosted", at("15:07:00"), () => 0)).toEqual(at("16:00:00"));
     expect(nextPollAt("not cron", "self-hosted", at("15:07:00"), () => 0)).toEqual(at("15:15:00"));
   });
 });
