@@ -15,7 +15,7 @@ export function proxy(request: NextRequest) {
 }
 
 // Every route needs a session except sign-in, setup, Better Auth's own endpoints, Next's build output
-// and files (any path ending in an extension, such as public/ files).
+// and public/ files (any non-API path ending in an extension).
 export const config = {
-  matcher: ["/((?!sign-in(?:/|$)|setup$|api/auth/|_next/static/|_next/image|.*\\.\\w+$).*)"],
+  matcher: ["/((?!sign-in(?:/|$)|setup$|api/auth/|_next/static/|_next/image|(?!api/).*\\.\\w+$).*)"],
 };
