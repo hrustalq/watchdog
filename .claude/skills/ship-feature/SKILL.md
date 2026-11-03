@@ -26,7 +26,7 @@ Run these in parallel:
 - **`next`:** take the open milestone that sorts first by title (`M0 …`, `M1 …`), and in it the lowest-numbered open issue with no assignee:
   `gh issue list --milestone "<title>" --state open --json number,title,assignees --jq 'map(select(.assignees|length==0))|sort_by(.number)|.[0]'`
   Get the milestones with `gh api 'repos/{owner}/{repo}/milestones?state=open' --jq 'sort_by(.title)|.[].title'`.
-- **Never the release PR.** release-please keeps one open PR titled `chore(release): release X.Y.Z` (branch `release-please--branches--main`). It isn't an issue to ship. Don't edit, update or merge it, because a person cuts each release.
+- **Never the release PR.** release-please keeps one open PR titled `chore(release): release X.Y.Z` (on a `release-please--branches--main…` branch). It isn't an issue to ship. Don't edit, update or merge it, because a person cuts each release.
 
 Then check that the work can start:
 
