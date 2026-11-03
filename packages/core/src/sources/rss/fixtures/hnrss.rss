@@ -1,0 +1,16 @@
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom"><channel><title>Hacker News - Newest: &#34;postgres&#34;</title><link>https://news.ycombinator.com/newest</link><description>Hacker News RSS</description><docs>https://hnrss.org/</docs><generator>hnrss v2.1.1</generator><lastBuildDate>Tue, 03 Nov 2026 14:53:48 +0000</lastBuildDate><atom:link href="https://hnrss.org/newest?q=postgres" rel="self" type="application/rss+xml"></atom:link><item><title><![CDATA[Show HN: LokaDB – store each SaaS clients rows in a separate Postgres database]]></title><description><![CDATA[
+<p>Article URL: <a href="https://github.com/lokadb/lokadb">https://github.com/lokadb/lokadb</a></p>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50351409">https://news.ycombinator.com/item?id=50351409</a></p>
+<p>Points: 5</p>
+<p># Comments: 3</p>
+]]></description><pubDate>Tue, 03 Nov 2026 12:51:40 +0000</pubDate><link>https://github.com/lokadb/lokadb</link><dc:creator>kagen</dc:creator><comments>https://news.ycombinator.com/item?id=50351409</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50351409</guid></item><item><title><![CDATA[Postgres Max_wal_size]]></title><description><![CDATA[
+<p>Article URL: <a href="https://guardioz.com/blog/max-wal-size-explained">https://guardioz.com/blog/max-wal-size-explained</a></p>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50342764">https://news.ycombinator.com/item?id=50342764</a></p>
+<p>Points: 1</p>
+<p># Comments: 0</p>
+]]></description><pubDate>Mon, 02 Nov 2026 19:58:01 +0000</pubDate><link>https://guardioz.com/blog/max-wal-size-explained</link><dc:creator>StefanKP9</dc:creator><comments>https://news.ycombinator.com/item?id=50342764</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50342764</guid></item><item><title><![CDATA[The Postgres logging setting that slows down new connections]]></title><description><![CDATA[
+<p>Article URL: <a href="https://guardioz.com/blog/log-hostname-explained">https://guardioz.com/blog/log-hostname-explained</a></p>
+<p>Comments URL: <a href="https://news.ycombinator.com/item?id=50342715">https://news.ycombinator.com/item?id=50342715</a></p>
+<p>Points: 1</p>
+<p># Comments: 0</p>
+]]></description><pubDate>Mon, 02 Nov 2026 19:54:47 +0000</pubDate><link>https://guardioz.com/blog/log-hostname-explained</link><dc:creator>StefanKP9</dc:creator><comments>https://news.ycombinator.com/item?id=50342715</comments><guid isPermaLink="false">https://news.ycombinator.com/item?id=50342715</guid></item></channel></rss>
