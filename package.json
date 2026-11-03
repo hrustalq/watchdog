@@ -11,6 +11,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "smoke": "pnpm --filter @watchdog/e2e smoke",
     "prepare": "husky || true"
   },
   "devDependencies": {

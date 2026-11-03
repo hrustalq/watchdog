@@ -12,6 +12,9 @@ node_modules/
 
 # testing
 coverage/
+playwright-report/
+test-results/
+compose.log
 
 # next.js
 .next/
