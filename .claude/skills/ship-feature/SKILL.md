@@ -148,10 +148,10 @@ If any of them fails, leave the PR open, tell the user exactly what's missing, a
 Otherwise:
 
 ```bash
-# body.txt in the scratchpad: a one-paragraph summary of the end state, with no trailers.
+body=<scratchpad>/body.txt # a one-paragraph summary of the end state, with no trailers
 subject="$(gh pr view <PR> --json title --jq .title) (#<PR>)"
-printf '%s\n\n%s\n' "$subject" "$(cat body.txt)" | pnpm exec commitlint &&
-  gh pr merge <PR> --squash --delete-branch --subject "$subject" --body-file body.txt
+printf '%s\n\n%s\n' "$subject" "$(cat "$body")" | pnpm exec commitlint &&
+  gh pr merge <PR> --squash --delete-branch --subject "$subject" --body-file "$body"
 ```
 
 This lints the squash commit exactly as `main` gets it: the PR's current title with the ` (#N)` suffix, then the body. Nothing else checks the message on `main`, so the merge runs only when commitlint passes. If it fails, fix the title (`gh pr edit <PR> --title`) or rewrap the body, and run the block again. The usual failures are a body line over 100 characters, and a title that goes over 100 once ` (#N)` is added. Pass the body explicitly so GitHub doesn't paste every branch commit into `main`'s message.
