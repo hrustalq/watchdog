@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { config, proxy } from "./proxy.ts";
 
 describe("proxy", () => {
-  it.each(["/", "/sources", "/api/sources", "/sign-out", "/settings", "/setup-other"])("guards the app route %s", (url) => {
+  it.each(["/", "/sources", "/api/sources", "/sign-out", "/settings", "/setup-other", "/api/sources/export.csv"])("guards the app route %s", (url) => {
     expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
   });
 
@@ -18,6 +18,9 @@ describe("proxy", () => {
     "/api/auth/callback/github",
     "/_next/static/chunks/app.js",
     "/favicon.ico",
+    "/robots.txt",
+    "/logo.svg",
+    "/images/logo.png",
   ])("lets %s through without a session", (url) => {
     expect(unstable_doesMiddlewareMatch({ config, url })).toBe(false);
   });
@@ -25,6 +28,12 @@ describe("proxy", () => {
   it("redirects a request without a session cookie to sign-in", () => {
     const response = proxy(new NextRequest("http://localhost:3000/"));
     expect(getRedirectUrl(response)).toBe("http://localhost:3000/sign-in");
+  });
+
+  it("answers an API call without a session cookie with a JSON 401", async () => {
+    const response = proxy(new NextRequest("http://localhost:3000/api/sources"));
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "Not signed in" });
   });
 
   it("passes a request with a session cookie on to the app", () => {
