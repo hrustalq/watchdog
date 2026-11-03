@@ -1,6 +1,7 @@
 // The one place that reads the environment. Every variable here is listed on the Configuration
 // page in Knowledge (docs/watchdog/architecture/configuration.md) and in .env.example.
 import { z } from "zod";
+import { parseEgressRule, type EgressRule } from "./egress/egress.ts";
 
 // A schema's own message would also replace "is required" for a missing variable.
 const invalid = (message: string) => (issue: { input: unknown }) =>
@@ -40,7 +41,21 @@ const schema = z
     TELEGRAM_API_HASH: z.string().optional(),
     OBSCURA_CDP_URL: z.url({ protocol: /^(wss?|https?)$/ }).optional(),
     OBSCURA_CDP_TOKEN: z.string().optional(),
-    EGRESS_ALLOWLIST: z.string().optional(),
+    // Comma-separated hosts, IP addresses and CIDRs, e.g. `ollama.local,192.168.1.0/24`.
+    EGRESS_ALLOWLIST: z
+      .string()
+      .optional()
+      .transform((value, ctx) => {
+        const rules: EgressRule[] = [];
+        for (const entry of value?.split(",").map((part) => part.trim()) ?? []) {
+          if (entry === "") continue;
+          const rule = parseEgressRule(entry);
+          const message = `"${entry}" is not a host, IP address or CIDR`;
+          if (rule) rules.push(rule);
+          else ctx.addIssue({ code: "custom", message });
+        }
+        return rules;
+      }),
     GLITCHTIP_DSN: z.url({ protocol: /^https?$/ }).optional(),
   })
   .refine((env) => env.WATCHDOG_MODE !== "hosted" || env.smtp !== undefined, {
@@ -79,7 +94,12 @@ const schema = z
 export type Config = z.output<typeof schema>;
 
 /** Parses the environment, or throws an error that names every invalid variable. */
-export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
+export function loadConfig(
+  env: Record<string, string | undefined> = process.env,
+  warn = (message: string): void => {
+    process.stderr.write(`${message}\n`);
+  },
+): Config {
   // Values are trimmed, and a blank one (`SMTP_HOST=` copied from .env.example) means unset.
   const set: Record<string, string> = {};
   for (const [name, value] of Object.entries(env)) {
@@ -96,7 +116,14 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   const result = schema.safeParse(input, {
     error: (issue) => (issue.input === undefined ? "is required" : undefined),
   });
-  if (result.success) return result.data;
+  if (result.success) {
+    if (result.data.mode === "hosted" && result.data.egressAllowlist.length > 0) {
+      warn(
+        "EGRESS_ALLOWLIST is ignored when WATCHDOG_MODE=hosted: the egress guard lets no private addresses through.",
+      );
+    }
+    return result.data;
+  }
 
   // A grouped variable's path is [group, name]; the variable's own name is what people set.
   const lines = result.error.issues.map((issue) => `  ${String(issue.path.at(-1))}: ${issue.message}`);

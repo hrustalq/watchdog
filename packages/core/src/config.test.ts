@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { parseEnv } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { loadConfig } from "./config.ts";
 
 const minimal = {
@@ -141,7 +141,7 @@ describe("loadConfig", () => {
       encryptionKey: "key",
       telegram: { botToken: "token", apiId: 12345, apiHash: "hash" },
       obscura: { cdpUrl: "ws://obscura:9222", cdpToken: "cdp-token" },
-      egressAllowlist: "10.0.0.5",
+      egressAllowlist: [{ type: "subnet", address: "10.0.0.5", prefix: 32, family: "ipv4" }],
       glitchtipDsn: "https://key@glitchtip.example.com/1",
     });
   });
@@ -154,5 +154,41 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...minimal, GLITCHTIP_DSN: "javascript:alert(1)" })).toThrow(
       /GLITCHTIP_DSN/,
     );
+  });
+
+  it("parses EGRESS_ALLOWLIST into hosts and subnets", () => {
+    expect(
+      loadConfig({ ...minimal, EGRESS_ALLOWLIST: "Ollama.local, 192.168.1.0/24,,fd00::1,10.0.0.0/8," })
+        .egressAllowlist,
+    ).toEqual([
+      { type: "host", host: "ollama.local" },
+      { type: "subnet", address: "192.168.1.0", prefix: 24, family: "ipv4" },
+      { type: "subnet", address: "fd00::1", prefix: 128, family: "ipv6" },
+      { type: "subnet", address: "10.0.0.0", prefix: 8, family: "ipv4" },
+    ]);
+    expect(loadConfig(minimal).egressAllowlist).toEqual([]);
+  });
+
+  it.each(["10.0.0.0/33", "fd00::/129", "10.0.0.0/", "10.0.0.0/8/8", "host/24", "host:11434", "a b"])(
+    "rejects the EGRESS_ALLOWLIST entry %j and names the variable",
+    (entry) => {
+      expect(() => loadConfig({ ...minimal, EGRESS_ALLOWLIST: `ollama.local,${entry}` })).toThrow(
+        /EGRESS_ALLOWLIST: ".*" is not a host, IP address or CIDR/,
+      );
+    },
+  );
+
+  it("warns at boot that hosted ignores EGRESS_ALLOWLIST", () => {
+    const warn = vi.fn();
+    const env = { ...minimal, ...smtp, WATCHDOG_MODE: "hosted", EGRESS_ALLOWLIST: "10.0.0.5" };
+    loadConfig(env, warn);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/EGRESS_ALLOWLIST is ignored/));
+  });
+
+  it("doesn't warn about EGRESS_ALLOWLIST on self-hosted or when it's unset", () => {
+    const warn = vi.fn();
+    loadConfig({ ...minimal, EGRESS_ALLOWLIST: "10.0.0.5" }, warn);
+    loadConfig({ ...minimal, ...smtp, WATCHDOG_MODE: "hosted" }, warn);
+    expect(warn).not.toHaveBeenCalled();
   });
 });
