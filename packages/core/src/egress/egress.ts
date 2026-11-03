@@ -41,6 +41,8 @@ const crossOriginHeaders = new Set([
   "accept-language",
   "content-language",
   "content-type",
+  "if-modified-since",
+  "if-none-match",
   "user-agent",
 ]);
 

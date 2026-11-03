@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Constructed, not recorded: a Google Alerts feed lives in a Google account, so this one follows
+     the shape of an Alerts "Deliver to: RSS feed" Atom feed by hand. The account and alert IDs are
+     made up. Titles and content are HTML with the matched term in <b>, links go through a
+     google.com/url redirect, and the author name is empty. -->
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:idx="urn:atom-extension:indexing">
+  <id>tag:google.com,2005:reader/user/00000000000000000000/state/com.google/alerts/1111111111111111111</id>
+  <title>Google Alert - postgres</title>
+  <link href="https://www.google.com/alerts/feeds/00000000000000000000/1111111111111111111" rel="self"></link>
+  <updated>2026-11-03T12:00:00Z</updated>
+  <entry>
+    <id>tag:google.com,2013:googlealerts/feed:2222222222222222201</id>
+    <title type="html">Scaling &lt;b&gt;Postgres&lt;/b&gt; to a billion rows</title>
+    <link href="https://www.google.com/url?rct=j&amp;sa=t&amp;url=https://engineering.example.com/scaling-postgres&amp;ct=ga&amp;cd=CAIyAA&amp;usg=AOvVaw0000000000000000000001"></link>
+    <published>2026-11-03T09:15:00Z</published>
+    <updated>2026-11-03T09:15:00Z</updated>
+    <content type="html">How we partitioned our &lt;b&gt;Postgres&lt;/b&gt; tables &amp;amp; kept p99 latency under 20&amp;nbsp;ms ...</content>
+    <author>
+      <name></name>
+    </author>
+  </entry>
+  <entry>
+    <id>tag:google.com,2013:googlealerts/feed:2222222222222222202</id>
+    <title type="html">&lt;b&gt;Postgres&lt;/b&gt; 19 beta: what&amp;#39;s new</title>
+    <link href="https://www.google.com/url?rct=j&amp;sa=t&amp;url=https://news.example.org/postgres-19-beta&amp;ct=ga&amp;cd=CAIyAQ&amp;usg=AOvVaw0000000000000000000002"></link>
+    <published>2026-11-02T18:40:00Z</published>
+    <updated>2026-11-02T18:40:00Z</updated>
+    <content type="html">The first beta of &lt;b&gt;Postgres&lt;/b&gt; 19 adds &lt;i&gt;asynchronous&lt;/i&gt; I/O for more operations ...</content>
+    <author>
+      <name></name>
+    </author>
+  </entry>
+</feed>

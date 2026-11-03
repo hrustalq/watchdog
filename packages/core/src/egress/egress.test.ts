@@ -245,11 +245,16 @@ describe("createEgressFetch", () => {
 
   it("keeps only headers without credentials on a redirect to another origin", async () => {
     const before = requests.length;
+    const validators = {
+      "if-none-match": '"v1"',
+      "if-modified-since": "Mon, 02 Nov 2026 00:00:00 GMT",
+    };
     const headers = { authorization: "Bearer secret", "x-api-key": "secret", accept: "text/xml" };
-    await open()(reach("/to-other"), { headers });
+    await open()(reach("/to-other"), { headers: { ...headers, ...validators } });
     const [first, second] = requests.slice(before).map((r) => r.headers);
     expect(first).toMatchObject(headers);
-    expect(second).toMatchObject({ accept: "text/xml" });
+    // Conditional-request validators carry no credentials, so a feed moved to https keeps its 304s.
+    expect(second).toMatchObject({ accept: "text/xml", ...validators });
     expect(second).not.toHaveProperty("authorization");
     expect(second).not.toHaveProperty("x-api-key");
   });
