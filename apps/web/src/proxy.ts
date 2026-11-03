@@ -1,6 +1,6 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextResponse, type NextRequest } from "next/server";
-import { pathHeader, signInPath } from "./lib/return-to.ts";
+import { pathHeader, returnTo, signInPath } from "./lib/return-to.ts";
 
 /**
  * Sends a visitor with no session cookie to sign-in, which returns them to the page they asked for,
@@ -18,7 +18,7 @@ export function proxy(request: NextRequest) {
   if (pathname.startsWith("/api/")) {
     return NextResponse.json({ error: "Not signed in" }, { status: 401 });
   }
-  return NextResponse.redirect(new URL(signInPath(`${pathname}${search}`), request.url));
+  return NextResponse.redirect(new URL(signInPath(returnTo(`${pathname}${search}`)), request.url));
 }
 
 // Every route needs a session except sign-in, setup, Better Auth's own endpoints, Next's build output

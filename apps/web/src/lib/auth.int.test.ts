@@ -37,12 +37,12 @@ describe("magic link sign-in", () => {
   }, 120_000);
 
   /** Asks for a magic link, as the sign-in action does, with the page to return to. */
-  async function requestLink(email: string, callbackURL = "/") {
+  async function requestLink(email: string, next = "/") {
     const request = await auth.handler(
       new Request(`${baseURL}/api/auth/sign-in/magic-link`, {
         method: "POST",
         headers: { "content-type": "application/json", origin: baseURL },
-        body: JSON.stringify({ email, callbackURL }),
+        body: JSON.stringify({ email, metadata: { next } }),
       }),
     );
     expect(request.status).toBe(200);

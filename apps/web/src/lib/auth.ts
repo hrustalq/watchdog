@@ -89,11 +89,11 @@ export function createAuth({ mode, baseURL, secret, db, mailer, oauth = {} }: Au
         expiresIn: linkLifetimeMinutes * 60,
         // Only a hash of the token is stored, so a database read can't be turned into a sign-in.
         storeToken: "hashed",
-        sendMagicLink: async ({ email, token, url: verifyURL }) => {
+        sendMagicLink: async ({ email, token, metadata }) => {
           const url = new URL(confirmPage, baseURL);
           url.searchParams.set("token", token);
-          // The page to return to, which sign-in passed as the callbackURL and Better Auth checked.
-          const next = new URL(verifyURL).searchParams.get("callbackURL") ?? "/";
+          // The page to return to, which the sign-in action passes as metadata.
+          const next = returnTo(metadata?.next);
           if (next !== "/") url.searchParams.set("next", next);
           await mailer.send({
             to: email,

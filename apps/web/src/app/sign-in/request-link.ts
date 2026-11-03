@@ -35,9 +35,9 @@ export async function requestMagicLink(
 
   const next = returnTo(formData.get("next"));
 
-  // The emailed link opens the confirm page, not this callbackURL. Its form sets where verify lands,
-  // from the link's `next`, which sendMagicLink copies from this.
-  const response = await postToAuth("/api/auth/sign-in/magic-link", { email, callbackURL: next });
+  // No callbackURL: the emailed link opens the confirm page, whose form sets where verify lands.
+  // sendMagicLink puts `next` on that link.
+  const response = await postToAuth("/api/auth/sign-in/magic-link", { email, metadata: { next } });
 
   const sent = new URLSearchParams({ email });
   if (from !== undefined) sent.set("from", from);

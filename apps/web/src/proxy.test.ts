@@ -36,6 +36,11 @@ describe("proxy", () => {
     expect(getRedirectUrl(response)).toBe("http://localhost:3000/sign-in?next=%2Fsome%2Fpage%3Fx%3D1");
   });
 
+  it("keeps nothing in next that would leave the site", () => {
+    const response = proxy(new NextRequest("http://localhost:3000//evil.example"));
+    expect(getRedirectUrl(response)).toBe("http://localhost:3000/sign-in");
+  });
+
   it("tells the page its own path, so its redirect for an expired session can keep it", () => {
     const request = new NextRequest("http://localhost:3000/settings?tab=1", {
       // A path the browser sent itself is replaced, never trusted.
