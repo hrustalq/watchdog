@@ -114,7 +114,8 @@ async function SourceList() {
                             at <Timestamp at={row.lastErrorAt} />
                           </>
                         )}
-                        : {row.lastError}
+                        : {/* The URL is on the line above; the error needn't repeat it. */}
+                        {row.lastError.replace(row.config.url, "the feed")}
                       </span>
                     </p>
                   )}

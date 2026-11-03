@@ -18,14 +18,15 @@ async function WorkspaceScreen() {
   const sources = await server().db.$count(source, eq(source.workspaceId, workspace.id));
   return (
     <div className="flex flex-1 flex-col">
-      <header className="flex h-12 items-center justify-between gap-4 border-b px-4">
+      <header className="flex h-12 items-center justify-between gap-2 border-b px-4 sm:gap-4">
         <p className="flex min-w-0 items-baseline gap-2">
-          <span className="text-xs font-medium tracking-[0.01em] text-muted-foreground">
+          {/* On a phone the name needs the room more than its label does. */}
+          <span className="hidden text-xs font-medium tracking-[0.01em] text-muted-foreground sm:inline">
             Workspace
           </span>
           <span className="truncate text-title">{workspace.name}</span>
         </p>
-        <div className="flex shrink-0 items-center gap-3">
+        <div className="flex shrink-0 items-center gap-1 sm:gap-3">
           <span className="hidden truncate text-sm text-muted-foreground sm:inline">
             {user.email}
           </span>

@@ -16,12 +16,6 @@ export interface SourceDeps {
   mode: Config["mode"];
 }
 
-export interface AddSourceInput {
-  url: string;
-  name: string;
-  schedule: string;
-}
-
 /**
  * Why a feed URL wasn't saved. A code rather than a sentence, so the form can carry it in its URL
  * without letting a crafted link put words on the page.
@@ -39,7 +33,7 @@ export const addProblems = [
 export type AddProblem = (typeof addProblems)[number];
 
 export type AddSourceResult =
-  | { source: { id: string; name: string } }
+  | { source: { id: string } }
   /** `status` is the HTTP status for "answered". */
   | { problem: AddProblem; status?: string };
 
@@ -61,7 +55,7 @@ export async function addRssSource(
   db: Db,
   deps: SourceDeps,
   workspaceId: string,
-  input: AddSourceInput,
+  input: { url: string; name: string; schedule: string },
 ): Promise<AddSourceResult> {
   const url = URL.parse(input.url.trim());
   if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) {
@@ -84,7 +78,7 @@ export async function addRssSource(
   const [saved] = await db
     .insert(source)
     .values({ workspaceId, type: "rss", name, config: { url: url.href }, schedule })
-    .returning({ id: source.id, name: source.name });
+    .returning({ id: source.id });
   if (saved === undefined) throw new Error("Inserting the Source returned no row");
   return { source: saved };
 }
