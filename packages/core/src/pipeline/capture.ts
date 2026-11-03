@@ -1,6 +1,6 @@
 // The capture stage: one poll of a Source turns new feed entries into Items
 // (docs: Processing pipeline, "Stages").
-import { type Db, eq, item, itemLog, source } from "@watchdog/db";
+import { and, type Db, eq, inArray, item, itemLog, source } from "@watchdog/db";
 import type { ItemDraft } from "../sources/item.ts";
 import { fetchFeed, type FetchFeedDeps } from "../sources/rss/fetch-feed.ts";
 import { detectLanguage } from "./language.ts";
@@ -35,7 +35,7 @@ export async function pollSource(
   try {
     fetched = await fetchFeed(found.config.url, found.fetchState, deps);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = describe(error);
     await db
       .update(source)
       .set({ lastError: message, lastErrorAt: fetchedAt })
@@ -48,35 +48,53 @@ export async function pollSource(
     return { captured: 0 };
   }
 
-  const entries = [...new Map(fetched.entries.map((entry) => [entry.externalId, entry])).values()];
+  const byId = new Map(fetched.entries.map(withoutNul).map((entry) => [entry.externalId, entry]));
+  const entries = [...byId.values()];
   // The row lock makes concurrent polls of one Source take turns, so only one takes the Backfill.
   return db.transaction(async (tx) => {
     const [locked] = await tx.select().from(source).where(eq(source.id, sourceId)).for("update");
     if (locked === undefined) return { captured: 0 };
 
     const { backfilledAt } = locked;
-    const isBackfill = backfilledAt === null;
     let capture: ItemDraft[];
     let backfill = {};
     if (backfilledAt === null) {
       const start = fetchedAt.getTime() - backfillWindow;
-      const recent = entries.filter((entry) => published(entry) >= start);
-      capture = recent
-        .filter((entry) => entry.publishedAt !== null)
+      capture = entries
+        .filter((entry) => entry.publishedAt !== null && published(entry) >= start)
         .sort((a, b) => published(b) - published(a))
         .slice(0, backfillMax);
-      // Entries older than the window stay out by date; the recent ones left out, by ID.
-      const skipped = recent.filter((entry) => !capture.includes(entry));
-      backfill = { backfilledAt: fetchedAt, backfillSkippedIds: skipped.map((e) => e.externalId) };
+      // Remembered by ID, not by date: an old Atom entry whose <updated> moves stays out.
+      const taken = new Set(capture);
+      const skipped = entries.filter((entry) => !taken.has(entry)).map((e) => e.externalId);
+      backfill = { backfilledAt: fetchedAt, backfillSkippedIds: skipped };
     } else {
+      const start = backfilledAt.getTime() - backfillWindow;
       const skipped = new Set(locked.backfillSkippedIds);
-      capture = entries.filter(
-        (entry) =>
-          !skipped.has(entry.externalId) &&
-          published(entry) >= backfilledAt.getTime() - backfillWindow,
+      const candidates = entries.filter(
+        (entry) => !skipped.has(entry.externalId) && published(entry) >= start,
       );
+      // Most of a feed is already captured: only new entries go on to language detection.
+      const stored =
+        candidates.length === 0
+          ? []
+          : await tx
+              .select({ externalId: item.externalId })
+              .from(item)
+              .where(
+                and(
+                  eq(item.sourceId, sourceId),
+                  inArray(
+                    item.externalId,
+                    candidates.map((entry) => entry.externalId),
+                  ),
+                ),
+              );
+      const known = new Set(stored.map((row) => row.externalId));
+      capture = candidates.filter((entry) => !known.has(entry.externalId));
     }
 
+    const isBackfill = backfilledAt === null;
     const inserted =
       capture.length === 0
         ? []
@@ -108,4 +126,32 @@ export async function pollSource(
       .where(eq(source.id, sourceId));
     return { captured: inserted.length };
   });
+}
+
+/** The error for the user. fetch's TypeError says only "fetch failed"; its cause says why. */
+function describe(error: unknown) {
+  if (!(error instanceof Error)) return String(error);
+  const { cause } = error;
+  return error instanceof TypeError && cause instanceof Error
+    ? `${error.message}: ${cause.message}`
+    : error.message;
+}
+
+/** The entry without U+0000, which a feed can carry but Postgres text and jsonb refuse. */
+function withoutNul(entry: ItemDraft): ItemDraft {
+  const strip = (text: string) => text.replaceAll("\0", "");
+  const raw: unknown = JSON.parse(
+    JSON.stringify(entry.raw, (_key, value: unknown) =>
+      typeof value === "string" ? strip(value) : value,
+    ),
+  );
+  return {
+    ...entry,
+    externalId: strip(entry.externalId),
+    url: entry.url === null ? null : strip(entry.url),
+    title: entry.title === null ? null : strip(entry.title),
+    author: entry.author === null ? null : strip(entry.author),
+    body: strip(entry.body),
+    raw: typeof raw === "object" && raw !== null ? raw : {},
+  };
 }

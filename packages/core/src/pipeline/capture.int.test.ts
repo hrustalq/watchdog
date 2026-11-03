@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { createDb, type Db, eq, item, migrate, source, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { loadConfig } from "../config.ts";
 import { createEgressFetch } from "../egress/egress.ts";
 import { pollSource, type PollSourceDeps } from "./capture.ts";
@@ -152,7 +154,11 @@ describe("pollSource", () => {
       { id: "new-2", published: new Date(now.getTime() + 120_000) },
       { id: "new-undated" },
     ];
-    serve(src.url, rss([...fresh, ...first]));
+    // An entry the Backfill left out by date comes back with a fresh date, as an Atom entry does
+    // when its <updated> moves: it still stays out.
+    const moved = { id: "old", published: new Date(now.getTime() + 180_000) };
+    const redated = first.map((e) => (e.id === "old" ? moved : e));
+    serve(src.url, rss([...fresh, ...redated]));
     expect(await pollSource(db, src.id, deps)).toEqual({ captured: 3 });
 
     const later = (await itemsOf(src.id)).filter((captured) => !captured.isBackfill);
@@ -228,27 +234,64 @@ describe("pollSource", () => {
     expect(after.lastPolledAt).toEqual(now);
   });
 
+  /** The egress guard's fetch, with every host resolving to `address`. */
+  const guardedFetch = (address: string, allowlist = "") => {
+    const env = {
+      DATABASE_URL: postgres.url,
+      BETTER_AUTH_SECRET: "a".repeat(32),
+      BETTER_AUTH_URL: "http://localhost:3000",
+      EGRESS_ALLOWLIST: allowlist,
+    };
+    const lookup = () => Promise.resolve([{ address, family: 4 }]);
+    return createEgressFetch(loadConfig(env, () => undefined), { lookup });
+  };
+
+  it("records why a connection failed, not only that it did", async () => {
+    const src = await newSource();
+    // A port that was just free and is now closed, on loopback, which the allowlist lets
+    // feeds.test reach.
+    const closed = createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+    const { port } = z.object({ port: z.number() }).parse(closed.address());
+    await new Promise((resolve) => closed.close(resolve));
+    await db
+      .update(source)
+      .set({ config: { url: `http://feeds.test:${String(port)}/feed.rss` } })
+      .where(eq(source.id, src.id));
+
+    const fetch = guardedFetch("127.0.0.1", "feeds.test");
+    const result = await pollSource(db, src.id, { ...deps, fetch });
+
+    const { lastError } = await reload(src.id);
+    expect(lastError).toMatch(/^fetch failed: .*ECONNREFUSED/);
+    expect(result).toEqual({ error: lastError });
+  });
+
   it("records an egress block as a failed poll", async () => {
-    const config = loadConfig(
-      {
-        DATABASE_URL: postgres.url,
-        BETTER_AUTH_SECRET: "a".repeat(32),
-        BETTER_AUTH_URL: "http://localhost:3000",
-      },
-      () => undefined,
-    );
-    // feeds.test resolves to a private address, which the guard refuses before connecting.
-    const guarded = createEgressFetch(config, {
-      lookup: () => Promise.resolve([{ address: "10.0.0.1", family: 4 }]),
-    });
     const src = await newSource();
 
-    const result = await pollSource(db, src.id, { ...deps, fetch: guarded });
+    // A private address, which the guard refuses before connecting.
+    const result = await pollSource(db, src.id, { ...deps, fetch: guardedFetch("10.0.0.1") });
 
     const { lastError } = await reload(src.id);
     expect(lastError).toContain("10.0.0.1");
     expect(result).toEqual({ error: lastError });
     expect(await itemsOf(src.id)).toEqual([]);
+  });
+
+  it("captures an entry holding a NUL, which Postgres text and jsonb refuse", async () => {
+    const src = await newSource();
+    const published = hoursAgo(1).toUTCString();
+    serve(
+      src.url,
+      `<?xml version="1.0"?><rss version="2.0"><channel><title>T</title><item><guid>nul</guid>` +
+        `<title>Null\u0000byte</title><description>A\u0000B</description>` +
+        `<pubDate>${published}</pubDate></item></channel></rss>`,
+    );
+
+    expect(await pollSource(db, src.id, deps)).toEqual({ captured: 1 });
+    const [captured] = await itemsOf(src.id);
+    expect([captured?.title, captured?.body]).toEqual(["Nullbyte", "AB"]);
   });
 
   it("treats a 304 as a successful poll that captures nothing", async () => {
