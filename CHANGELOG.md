@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.0](https://github.com/hrustalq/watchdog/compare/v0.2.0...v0.3.0) (2026-11-03)
+
+
+### Features
+
+* **web:** let static files and API calls through the sign-in proxy ([#39](https://github.com/hrustalq/watchdog/issues/39)) ([7b4cd9d](https://github.com/hrustalq/watchdog/commit/7b4cd9d6e19188e50dcb05885ddd6108b7744790))
+* **web:** return to the requested page after signing in ([#40](https://github.com/hrustalq/watchdog/issues/40)) ([0efb320](https://github.com/hrustalq/watchdog/commit/0efb320dd7a706e05ec27b3b04289cfc58e875d8))
+
+
+### Bug Fixes
+
+* **web:** keep magic links working when a mail scanner opens them first ([#37](https://github.com/hrustalq/watchdog/issues/37)) ([739c0cf](https://github.com/hrustalq/watchdog/commit/739c0cf3c20b1f222317702e50ea85da9b5a426a))
+
 ## [0.2.0](https://github.com/hrustalq/watchdog/compare/v0.1.0...v0.2.0) (2026-11-03)
 
 
