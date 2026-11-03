@@ -3,6 +3,7 @@
 // Security and privacy page and EGRESS_ALLOWLIST on the Configuration page in Knowledge.
 import { lookup as dnsLookup } from "node:dns/promises";
 import { BlockList, isIP, type LookupFunction } from "node:net";
+import { TransformStream } from "node:stream/web";
 import { Agent, fetch, Headers, type RequestInit, Response } from "undici";
 import type { Config } from "../config.ts";
 
