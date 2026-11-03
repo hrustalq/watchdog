@@ -29,7 +29,7 @@ Web and worker read their settings from the environment, and from the root `.env
 
 ## Run locally with Docker Compose
 
-`compose.yaml` runs the four containers of a standard install: web, worker, Postgres and Obscura. You need Docker with Compose v2.
+`compose.yaml` runs the five containers of a standard install: Caddy, web, worker, Postgres and Obscura. You need Docker with Compose v2.
 
 ```bash
 cp .env.example .env       # then set a real BETTER_AUTH_SECRET and OBSCURA_CDP_TOKEN
@@ -43,7 +43,9 @@ Then open http://localhost:3000. The containers start in this order:
 2. **Worker** applies the pending migrations, starts pg-boss and only then reports healthy. A restart applies nothing twice. On SIGTERM it stops pg-boss and logs `pg-boss stopped cleanly`.
 3. **Web** starts once the worker is healthy, so it never serves requests against an unmigrated database.
 
-**Obscura** starts beside them. Only web publishes a port (3000). Postgres and Obscura's CDP port are reachable only on the Compose network. Compose sets `DATABASE_URL` and `OBSCURA_CDP_URL` to its own containers, and the rest of `.env` is passed to web and worker as is.
+4. **Caddy** starts once web is healthy and is the only container that publishes a port (3000). It passes every request to web and sets `X-Forwarded-For` to the connection's address, whatever the client sent, because Better Auth's sign-in rate limit is keyed on that header (ADR 0020).
+
+**Obscura** starts beside them. Web, Postgres and Obscura's CDP port are reachable only on the Compose network. Compose sets `DATABASE_URL` and `OBSCURA_CDP_URL` to its own containers, and the rest of `.env` is passed to web and worker as is.
 
 The packages share `tsconfig.base.json`. `apps/worker`, `packages/core` and `packages/db` are ES modules that Node runs as TypeScript directly, without a build step. Mark type-only imports with `import type`, and give relative imports their `.ts` extension.
 
