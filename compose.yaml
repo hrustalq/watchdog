@@ -1,0 +1,96 @@
+# The four containers of a standard install. See "Run locally with Docker Compose" in README.md.
+# Only web publishes a port. The others are reachable only on this project's Compose network.
+name: watchdog
+
+# Web and worker read .env, and these override what must point inside the Compose network.
+x-app-environment: &app-environment
+  DATABASE_URL: postgres://watchdog:watchdog@postgres:5432/watchdog
+  OBSCURA_CDP_URL: ws://obscura:9222
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    env_file: .env
+    environment: *app-environment
+    ports:
+      - "3000:3000"
+    # The worker reports healthy only after it has applied the migrations.
+    depends_on:
+      worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/auth/ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    env_file: .env
+    environment: *app-environment
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # The worker writes this file once the migrations are applied and pg-boss is running.
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/watchdog-worker-ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+      start_interval: 1s
+    restart: unless-stopped
+
+  postgres:
+    # The same major version as the integration tests (packages/db/src/testing/postgres.ts).
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: watchdog
+      POSTGRES_PASSWORD: watchdog
+      POSTGRES_DB: watchdog
+    # Postgres 18 keeps its data under /var/lib/postgresql/18, so the volume sits one level up.
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "watchdog", "-d", "watchdog"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+    restart: unless-stopped
+
+  obscura:
+    # https://github.com/h4ckf0r0day/obscura (ADR 0010). It binds 0.0.0.0 inside the container and
+    # refuses to start without a token of at least 32 bytes, which CDP clients send as a Bearer.
+    image: h4ckf0r0day/obscura:0.2.6
+    environment:
+      OBSCURA_CDP_TOKEN: ${OBSCURA_CDP_TOKEN:?set OBSCURA_CDP_TOKEN in .env}
+    # The image has no shell, so its own binary checks the port. Any answer, even the 401 that a
+    # request without the token gets, means the CDP server is up.
+    healthcheck:
+      test:
+        - CMD
+        - /obscura
+        - fetch
+        - http://127.0.0.1:9222/json/version
+        - --dump
+        - original
+        - --allow-private-network
+        - --quiet
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+    restart: unless-stopped
+
+volumes:
+  postgres:
