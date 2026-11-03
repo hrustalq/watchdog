@@ -10,6 +10,7 @@ import {
   NotAFeedError,
 } from "@watchdog/core";
 import { and, type Db, eq, source } from "@watchdog/db";
+import { isUuid } from "./uuid.ts";
 
 export interface SourceDeps {
   /** The egress guard's fetch: a feed URL is user input. */
@@ -146,15 +147,12 @@ export function listSources(db: Db, workspaceId: string) {
   });
 }
 
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /**
  * Deletes the Source, and with it its Items and their Logs (both cascade). Returns false when the
  * Workspace has no Source with this id, which includes another Workspace's.
  */
 export async function removeSource(db: Db, workspaceId: string, sourceId: string) {
-  // Postgres refuses a malformed uuid with an error rather than matching nothing.
-  if (!uuid.test(sourceId)) return false;
+  if (!isUuid(sourceId)) return false;
   const removed = await db
     .delete(source)
     .where(and(eq(source.workspaceId, workspaceId), eq(source.id, sourceId)))
