@@ -30,6 +30,11 @@ export const source = pgTable(
     fetchState: jsonb("fetch_state").$type<Record<string, string>>().notNull().default({}),
     /** When the first successful fetch took the Backfill. Null until then. */
     backfilledAt: timestamp("backfilled_at", { withTimezone: true }),
+    /**
+     * Entries the Backfill fetch saw but didn't capture: undated ones, and those the cap of 50
+     * left out. Later polls never capture them (docs: Processing pipeline, "Stages").
+     */
+    backfillSkippedIds: text("backfill_skipped_ids").array().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
