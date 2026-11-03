@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { createDb, eq, migrate, source, user, workspace } from "@watchdog/db";
+import { closeDb, createDb, eq, migrate, source, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { readyFile } from "./ready.ts";
@@ -68,7 +68,7 @@ async function databaseState(url: string) {
     );
     return { applied: applied.rows, pgboss: pgboss.rows.length === 1 };
   } finally {
-    await db.$client.end();
+    await closeDb(db);
   }
 }
 
@@ -150,7 +150,7 @@ describe("worker", () => {
       expect(polled?.lastPolledAt?.getTime()).toBeGreaterThan(added.getTime());
       expect(polled?.nextPollAt.getTime()).toBeGreaterThan(Date.now());
     } finally {
-      await db.$client.end();
+      await closeDb(db);
       server.close();
     }
   }, 60_000);

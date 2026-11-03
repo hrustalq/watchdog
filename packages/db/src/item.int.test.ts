@@ -2,10 +2,9 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { eq, sql } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate as applyMigrations } from "drizzle-orm/node-postgres/migrator";
 import { beforeAll, describe, expect, it } from "vitest";
-import { createDb, type Db } from "./client.ts";
+import { closeDb, createDb, type Db } from "./client.ts";
 import { migrate } from "./migrate.ts";
 import { item, itemLog, source, user, workspace } from "./schema/index.ts";
 import { startPostgres, type TestPostgres } from "./testing/postgres.ts";
@@ -65,7 +64,7 @@ describe("Source, Item and Log tables", () => {
     await migrate(postgres.url);
     db = createDb(postgres.url);
     return async () => {
-      await db.$client.end();
+      await closeDb(db);
       await postgres.stop();
     };
   }, 120_000);
@@ -165,13 +164,13 @@ describe("Source, Item and Log tables", () => {
       const journal = await readFile(journalPath, "utf8");
       await writeFile(journalPath, JSON.stringify(JSON.parse(journal, firstThree)));
 
-      const old = drizzle(url.href);
+      const old = createDb(url.href);
       try {
         await applyMigrations(old, { migrationsFolder: migrationsAt0002 });
         await old.execute(sql`insert into "user" (id, name, email) values ('u', 'O', 'o@example.com')`);
         await old.execute(sql`insert into workspace (name, owner_user_id) values ('Workspace', 'u')`);
       } finally {
-        await old.$client.end();
+        await closeDb(old);
       }
     } finally {
       await rm(migrationsAt0002, { recursive: true, force: true });
@@ -185,7 +184,7 @@ describe("Source, Item and Log tables", () => {
       const src = only(await upgraded.insert(source).values(newSource(ws.id)).returning());
       expect(src.nextPollAt).toBeInstanceOf(Date);
     } finally {
-      await upgraded.$client.end();
+      await closeDb(upgraded);
     }
   }, 60_000);
 });

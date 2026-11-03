@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createEgressFetch, loadConfig } from "@watchdog/core";
 import {
+  closeDb,
   createDb,
   type Db,
   eq,
@@ -84,7 +85,7 @@ describe("Sources", () => {
     ours = a?.id ?? "";
     theirs = b?.id ?? "";
     return async () => {
-      await db.$client.end();
+      await closeDb(db);
       await postgres.stop();
       feeds.close();
     };

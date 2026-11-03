@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createEgressFetch, loadConfig, pollSource } from "@watchdog/core";
-import { createDb, type Db, item, itemLog, migrate, source, sql, user, workspace } from "@watchdog/db";
+import { closeDb, createDb, type Db, item, itemLog, migrate, source, sql, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { feedPage, feedPageSize, itemWithLog } from "./feed.ts";
@@ -41,7 +41,7 @@ describe("Feed", () => {
     await migrate(postgres.url);
     db = createDb(postgres.url);
     return async () => {
-      await db.$client.end();
+      await closeDb(db);
       await postgres.stop();
       feeds.close();
     };

@@ -1,5 +1,5 @@
 import type { PollSourceDeps } from "@watchdog/core";
-import { createDb, type Db, eq, migrate, source, user, workspace } from "@watchdog/db";
+import { closeDb, createDb, type Db, eq, migrate, source, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { PgBoss } from "pg-boss";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -45,7 +45,7 @@ describe("scheduler", () => {
     await startScheduler(db, boss, "hosted", deps);
     return async () => {
       await boss.stop();
-      await db.$client.end();
+      await closeDb(db);
       await postgres.stop();
     };
   }, 120_000);

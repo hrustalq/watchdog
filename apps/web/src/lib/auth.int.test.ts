@@ -1,5 +1,5 @@
 import type { MailMessage } from "@watchdog/core";
-import { createDb, eq, migrate, user, verification, workspace, type Db } from "@watchdog/db";
+import { closeDb, createDb, eq, migrate, user, verification, workspace, type Db } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "./auth.ts";
@@ -31,7 +31,7 @@ describe("magic link sign-in", () => {
       },
     });
     return async () => {
-      await db.$client.end();
+      await closeDb(db);
       await postgres.stop();
     };
   }, 120_000);

@@ -1,5 +1,5 @@
 import { loadConfig, type MailMessage } from "@watchdog/core";
-import { account, createDb, migrate, type Db } from "@watchdog/db";
+import { account, closeDb, createDb, migrate, type Db } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createAuth, enabledProviders, type ProviderId } from "./auth.ts";
@@ -105,7 +105,7 @@ describe("OAuth sign-in", () => {
     db = createDb(postgres.url);
     auth = authWith({ ...githubEnv, ...googleEnv });
     return async () => {
-      await db.$client.end();
+      await closeDb(db);
       await postgres.stop();
     };
   }, 120_000);

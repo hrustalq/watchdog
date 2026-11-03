@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { createDb, type Db, eq, item, migrate, source, user, workspace } from "@watchdog/db";
+import { closeDb, createDb, type Db, eq, item, migrate, source, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -77,7 +77,7 @@ describe("pollSource", () => {
       .returning();
     workspaceId = present(ws).id;
     return async () => {
-      await db.$client.end();
+      await closeDb(db);
       await postgres.stop();
     };
   }, 120_000);
