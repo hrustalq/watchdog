@@ -1,8 +1,6 @@
-import { index, jsonb, pgEnum, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { check, index, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspace } from "./workspace.ts";
-
-/** Source types. M1 has RSS/Atom only; M4 adds more with `alter type … add value`. */
-export const sourceType = pgEnum("source_type", ["rss"]);
 
 /** A place a Workspace watches for new Items. */
 export const source = pgTable(
@@ -12,7 +10,12 @@ export const source = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspace.id, { onDelete: "cascade" }),
-    type: sourceType("type").notNull(),
+    /**
+     * RSS/Atom only in M1. A text column with a check, not a Postgres enum: M4 widens the check,
+     * which works inside the one transaction Drizzle's migrator runs, where a new enum value can't
+     * be used until it commits.
+     */
+    type: text("type", { enum: ["rss"] }).notNull(),
     name: text("name").notNull(),
     /** The type's settings. RSS: the feed URL. */
     config: jsonb("config").$type<{ url: string }>().notNull(),
@@ -34,6 +37,7 @@ export const source = pgTable(
       .$onUpdate(() => new Date()),
   },
   (table) => [
+    check("source_type_check", sql`${table.type} in ('rss')`),
     index("source_next_poll_at_idx").on(table.nextPollAt),
     // Lists a Workspace's Sources, and lets item reference (workspace_id, id) so an Item's
     // denormalised workspace_id can only be its Source's.

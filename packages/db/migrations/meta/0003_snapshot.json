@@ -1,5 +1,5 @@
 {
-  "id": "885953fd-d2df-45a7-b71c-5eac57e864cc",
+  "id": "ff11b9db-f088-4506-8ef1-e333573ddff0",
   "prevId": "7385d51f-e6ae-49df-92cc-32072db55ed7",
   "version": "7",
   "dialect": "postgresql",
@@ -512,8 +512,7 @@
         },
         "type": {
           "name": "type",
-          "type": "source_type",
-          "typeSchema": "public",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -632,7 +631,12 @@
         }
       },
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "source_type_check": {
+          "name": "source_type_check",
+          "value": "\"source\".\"type\" in ('rss')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.item": {
@@ -744,9 +748,9 @@
               "nulls": "first"
             },
             {
-              "expression": "published_at",
-              "isExpression": false,
-              "asc": false,
+              "expression": "coalesce(\"published_at\", '-infinity') desc",
+              "asc": true,
+              "isExpression": true,
               "nulls": "last"
             },
             {
@@ -830,8 +834,7 @@
         },
         "stage": {
           "name": "stage",
-          "type": "log_stage",
-          "typeSchema": "public",
+          "type": "text",
           "primaryKey": false,
           "notNull": true
         },
@@ -890,26 +893,16 @@
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
       "policies": {},
-      "checkConstraints": {},
+      "checkConstraints": {
+        "item_log_stage_check": {
+          "name": "item_log_stage_check",
+          "value": "\"item_log\".\"stage\" in ('capture')"
+        }
+      },
       "isRLSEnabled": false
     }
   },
-  "enums": {
-    "public.source_type": {
-      "name": "source_type",
-      "schema": "public",
-      "values": [
-        "rss"
-      ]
-    },
-    "public.log_stage": {
-      "name": "log_stage",
-      "schema": "public",
-      "values": [
-        "capture"
-      ]
-    }
-  },
+  "enums": {},
   "schemas": {},
   "sequences": {},
   "roles": {},

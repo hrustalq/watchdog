@@ -12,7 +12,7 @@ import { startPostgres, type TestPostgres } from "./testing/postgres.ts";
 
 const migrationsDir = path.join(import.meta.dirname, "../migrations");
 
-/** The single row an insert returned. */
+/** The one row a query returned. */
 function only<T>(rows: T[]): T {
   const [row] = rows;
   if (row === undefined || rows.length > 1) throw new Error(`Expected one row, got ${String(rows.length)}`);
@@ -103,7 +103,7 @@ describe("Source, Item and Log tables", () => {
         body: "",
         raw: {},
       }),
-    ).rejects.toThrow();
+    ).rejects.toMatchObject({ cause: { code: "23503", constraint: "item_source_fk" } });
   });
 
   it("deleting a user removes their Workspace, Sources, Items and Log rows", async () => {
@@ -120,7 +120,7 @@ describe("Source, Item and Log tables", () => {
     expect(await db.select().from(itemLog).where(eq(itemLog.itemId, kept.item.id))).toHaveLength(1);
   });
 
-  it("serves a Feed page from item_feed_idx without sorting", async () => {
+  it("serves a keyset Feed page from item_feed_idx without sorting", async () => {
     const seeded = await seed(db);
 
     // Tiny tables make a seq scan cheapest, so forbid it to see which index the order can use.
@@ -129,7 +129,9 @@ describe("Source, Item and Log tables", () => {
       const result = await tx.execute<{ "QUERY PLAN": string }>(sql`
         explain select * from item
         where workspace_id = ${seeded.workspace.id}
-        order by captured_at desc, published_at desc nulls last, id desc
+          and (captured_at, coalesce(published_at, '-infinity'), id)
+            < (${seeded.item.capturedAt.toISOString()}::timestamptz, '-infinity', ${seeded.item.id}::uuid)
+        order by captured_at desc, coalesce(published_at, '-infinity') desc, id desc
         limit 50`);
       return result.rows.map((row) => row["QUERY PLAN"]).join("\n");
     });
@@ -148,44 +150,42 @@ describe("Source, Item and Log tables", () => {
 
     expect(loaded?.sources[0]?.items[0]?.log[0]?.message).toBe("Captured from Blog");
   });
-});
 
-describe("migration 0003", () => {
-  let postgres: TestPostgres;
-  let migrationsAt0002: string;
-
-  beforeAll(async () => {
-    postgres = await startPostgres();
+  it("applies migration 0003 on a database at 0002 and keeps its Workspaces", async () => {
+    await db.execute(sql`create database at_0002`);
+    const url = new URL(postgres.url);
+    url.pathname = "/at_0002";
     // A copy of migrations/ whose journal stops at 0002, to build a database as it stood then.
-    migrationsAt0002 = await mkdtemp(path.join(tmpdir(), "watchdog-migrations-"));
-    await cp(migrationsDir, migrationsAt0002, { recursive: true });
-    const journalPath = path.join(migrationsAt0002, "meta/_journal.json");
-    const journal = await readFile(journalPath, "utf8");
-    const firstThree = (key: string, value: unknown): unknown =>
-      key === "entries" && Array.isArray(value) ? value.slice(0, 3) : value;
-    await writeFile(journalPath, JSON.stringify(JSON.parse(journal, firstThree)));
-    return async () => {
-      await rm(migrationsAt0002, { recursive: true, force: true });
-      await postgres.stop();
-    };
-  }, 120_000);
-
-  it("applies on a database at 0002 and keeps its Workspaces", async () => {
-    const old = drizzle(postgres.url);
-    await applyMigrations(old, { migrationsFolder: migrationsAt0002 });
-    await old.execute(sql`insert into "user" (id, name, email) values ('u', 'Owner', 'o@example.com')`);
-    await old.execute(sql`insert into workspace (name, owner_user_id) values ('Workspace', 'u')`);
-    await old.$client.end();
-
-    await migrate(postgres.url);
-
-    const db = createDb(postgres.url);
+    const migrationsAt0002 = await mkdtemp(path.join(tmpdir(), "watchdog-migrations-"));
     try {
-      const ws = only(await db.select().from(workspace));
-      const src = only(await db.insert(source).values(newSource(ws.id)).returning());
+      await cp(migrationsDir, migrationsAt0002, { recursive: true });
+      const journalPath = path.join(migrationsAt0002, "meta/_journal.json");
+      const firstThree = (key: string, value: unknown): unknown =>
+        key === "entries" && Array.isArray(value) ? value.slice(0, 3) : value;
+      const journal = await readFile(journalPath, "utf8");
+      await writeFile(journalPath, JSON.stringify(JSON.parse(journal, firstThree)));
+
+      const old = drizzle(url.href);
+      try {
+        await applyMigrations(old, { migrationsFolder: migrationsAt0002 });
+        await old.execute(sql`insert into "user" (id, name, email) values ('u', 'O', 'o@example.com')`);
+        await old.execute(sql`insert into workspace (name, owner_user_id) values ('Workspace', 'u')`);
+      } finally {
+        await old.$client.end();
+      }
+    } finally {
+      await rm(migrationsAt0002, { recursive: true, force: true });
+    }
+
+    await migrate(url.href);
+
+    const upgraded = createDb(url.href);
+    try {
+      const ws = only(await upgraded.select().from(workspace));
+      const src = only(await upgraded.insert(source).values(newSource(ws.id)).returning());
       expect(src.nextPollAt).toBeInstanceOf(Date);
     } finally {
-      await db.$client.end();
+      await upgraded.$client.end();
     }
   }, 60_000);
 });

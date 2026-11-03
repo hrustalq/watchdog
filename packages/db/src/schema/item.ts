@@ -1,10 +1,11 @@
+import { sql } from "drizzle-orm";
 import {
   bigint,
+  check,
   boolean,
   foreignKey,
   index,
   jsonb,
-  pgEnum,
   pgTable,
   text,
   timestamp,
@@ -52,20 +53,17 @@ export const item = pgTable(
     }).onDelete("cascade"),
     // The dedup key: a re-fetch, or two polls racing, can't create a second Item.
     unique("item_source_id_external_id_key").on(table.sourceId, table.externalId),
-    // The Feed's Latest order within one Workspace, for keyset pagination:
-    // order by captured_at desc, published_at desc nulls last, id desc. Postgres matches an index
-    // to an order by its nulls placement too, so the not-null columns keep plain desc (nulls first).
+    // The Feed's Latest order within one Workspace: newest captured first, then newest published
+    // (undated last), then id. Every key is non-null and plain desc, so a keyset cursor is one row
+    // comparison: (captured_at, coalesce(published_at, '-infinity'), id) < ($1, $2, $3).
     index("item_feed_idx").on(
       table.workspaceId,
       table.capturedAt.desc().nullsFirst(),
-      table.publishedAt.desc().nullsLast(),
+      sql`coalesce(${table.publishedAt}, '-infinity') desc`,
       table.id.desc().nullsFirst(),
     ),
   ],
 );
-
-/** Log stages. M2 adds classify, extract and rate; M3 adds act. */
-export const logStage = pgEnum("log_stage", ["capture"]);
 
 /** An Item's Log: one append-only row per thing that happened to it, for the user to read. */
 export const itemLog = pgTable(
@@ -76,10 +74,14 @@ export const itemLog = pgTable(
       .notNull()
       .references(() => item.id, { onDelete: "cascade" }),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
-    stage: logStage("stage").notNull(),
+    /** capture in M1. M2 adds classify, extract and rate; M3 adds act (a check, as on source.type). */
+    stage: text("stage", { enum: ["capture"] }).notNull(),
     /** The sentence the user reads, such as "Captured from Hacker News". */
     message: text("message").notNull(),
     data: jsonb("data").notNull().default({}),
   },
-  (table) => [index("item_log_item_id_at_idx").on(table.itemId, table.at)],
+  (table) => [
+    check("item_log_stage_check", sql`${table.stage} in ('capture')`),
+    index("item_log_item_id_at_idx").on(table.itemId, table.at),
+  ],
 );
