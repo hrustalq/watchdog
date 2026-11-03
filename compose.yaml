@@ -61,6 +61,8 @@ services:
     # Node as PID 1 ignores SIGTERM until it installs a handler, e.g. while the worker migrates.
     # An init process forwards the signal, so `docker compose stop` never waits for SIGKILL.
     init: true
+    # On SIGTERM pg-boss waits up to 30 s for running polls, so Compose mustn't SIGKILL at 10 s.
+    stop_grace_period: 40s
     depends_on:
       postgres:
         condition: service_healthy

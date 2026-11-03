@@ -142,6 +142,9 @@ importers:
       '@watchdog/db':
         specifier: workspace:*
         version: link:../db
+      cron-parser:
+        specifier: ^5.10.3
+        version: 5.10.3
       entities:
         specifier: ^7.0.1
         version: 7.0.1

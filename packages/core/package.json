@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@watchdog/db": "workspace:*",
+    "cron-parser": "^5.10.3",
     "entities": "^7.0.1",
     "feedsmith": "^3.0.1",
     "nodemailer": "^10.3.1",
