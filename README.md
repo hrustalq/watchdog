@@ -48,6 +48,12 @@ Then open http://localhost:3000. The containers start in this order:
 
 The packages share `tsconfig.base.json`. `apps/worker`, `packages/core` and `packages/db` are ES modules that Node runs as TypeScript directly, without a build step. Mark type-only imports with `import type`, and give relative imports their `.ts` extension.
 
+## Changing the database schema
+
+Edit the Drizzle schema in `packages/db/src/schema/`, then run `pnpm --filter @watchdog/db db:generate` to write a migration into `packages/db/migrations/` and commit both. The worker applies pending migrations at boot, and `pnpm --filter @watchdog/db db:migrate` applies them by hand.
+
+Never use `drizzle-kit push`. drizzle-kit 0.31 misreads the column order of a multi-column unique key, so push drops and re-creates `source_workspace_id_id_key` and `item_source_id_external_id_key` even when nothing changed. Postgres refuses one of the drops, drizzle-kit still exits 0, and the statements before it stay applied, which can leave Items without their dedup key. See the Knowledge gotcha [drizzle-kit push mangles composite unique keys, so the public schema changes through migrations only](https://knowledge.hrustalq.dev/documents/3fd6c345-3360-493e-815f-2dd44bc0ecf9).
+
 ## Running checks locally
 
 ```bash
