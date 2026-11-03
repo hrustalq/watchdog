@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 
 async function webLog() {
-  const { stdout } = await run("docker", ["compose", "logs", "--no-log-prefix", "--no-color", "web"]);
+  const { stdout } = await run("docker", ["compose", "logs", "--no-log-prefix", "web"]);
   return stdout;
 }
 

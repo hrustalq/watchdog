@@ -10,7 +10,7 @@ if docker compose up --detach --build --wait && playwright test; then
 else
   status=$?
   # CI keeps this file with the trace. The stack stays up to look at.
-  docker compose logs --no-color > compose.log
+  docker compose logs > compose.log
   echo "Smoke test failed. The $COMPOSE_PROJECT_NAME stack is still up, and its logs are in apps/e2e/compose.log." >&2
   exit "$status"
 fi

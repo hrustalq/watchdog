@@ -1,4 +1,9 @@
 import { base } from "@watchdog/eslint-config/base";
-import { defineConfig } from "eslint/config";
+import { defineConfig, globalIgnores } from "eslint/config";
 
-export default defineConfig(base(import.meta.dirname));
+export default defineConfig([
+  ...base(import.meta.dirname),
+
+  // What a smoke run writes: the HTML report and the traces.
+  globalIgnores(["playwright-report/", "test-results/"]),
+]);
