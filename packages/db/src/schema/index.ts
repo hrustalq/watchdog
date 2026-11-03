@@ -3,3 +3,6 @@
 export * from "./auth.ts";
 export * from "./workspace.ts";
 export * from "./instance.ts";
+export * from "./source.ts";
+export * from "./item.ts";
+export * from "./relations.ts";
