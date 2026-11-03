@@ -23,6 +23,7 @@ import {
   problemMessage,
   removeSource,
   type SourceDeps,
+  watchedSourceName,
 } from "./sources.ts";
 
 const feed =
@@ -36,11 +37,22 @@ const pages: Record<string, { status: number; type: string; body: string }> = {
   "/page.html": { status: 200, type: "text/html", body: "<!doctype html><p>A page</p>" },
 };
 const feeds = createServer((request, response) => {
-  const page = pages[request.url ?? ""] ?? { status: 404, type: "text/plain", body: "" };
+  // The query string is ignored, so every test can add a feed URL of its own.
+  const page = pages[new URL(request.url ?? "/", "http://feeds.test").pathname] ?? {
+    status: 404,
+    type: "text/plain",
+    body: "",
+  };
   response.writeHead(page.status, { "content-type": page.type }).end(page.body);
 });
 let base = "";
 const at = (path: string) => `${base}${path}`;
+let feedCount = 0;
+/** A feed URL no Workspace watches yet. */
+const newFeed = () => {
+  feedCount += 1;
+  return at(`/news.rss?feed=${String(feedCount)}`);
+};
 
 // feeds.test is the server above, intranet.test a private address, and nothing else resolves.
 const addresses: Record<string, string> = { "feeds.test": "127.0.0.1", "intranet.test": "10.0.0.1" };
@@ -106,14 +118,15 @@ describe("Sources", () => {
 
   it("saves a valid feed URL as a Source the worker's next tick polls", async () => {
     const before = new Date();
-    const { id } = await added(ours, { url: at("/news.rss") });
+    const url = newFeed();
+    const { id } = await added(ours, { url });
 
     const [saved] = await db.select().from(source).where(eq(source.id, id));
     expect(saved).toMatchObject({
       workspaceId: ours,
       type: "rss",
       name: "Release notes",
-      config: { url: at("/news.rss") },
+      config: { url },
       schedule: "*/15 * * * *",
       lastPolledAt: null,
     });
@@ -125,13 +138,13 @@ describe("Sources", () => {
   });
 
   it("keeps the name the user gave, on one line and without NUL", async () => {
-    const { id } = await added(ours, { url: at("/news.rss"), name: "  Our\n  rel\u0000eases " });
+    const { id } = await added(ours, { url: newFeed(), name: "  Our\n  rel\u0000eases " });
     const [saved] = await db.select().from(source).where(eq(source.id, id));
     expect(saved?.name).toBe("Our releases");
   });
 
   it("caps a long name at 200 characters", async () => {
-    const { id } = await added(ours, { url: at("/news.rss"), name: "x".repeat(1000) });
+    const { id } = await added(ours, { url: newFeed(), name: "x".repeat(1000) });
     const [saved] = await db.select().from(source).where(eq(source.id, id));
     expect(saved?.name).toHaveLength(200);
   });
@@ -178,8 +191,8 @@ describe("Sources", () => {
   });
 
   it("lists only the Workspace's own Sources", async () => {
-    const mine = await added(ours, { url: at("/news.rss"), name: "Mine" });
-    const other = await added(theirs, { url: at("/news.rss"), name: "Other" });
+    const mine = await added(ours, { url: newFeed(), name: "Mine" });
+    const other = await added(theirs, { url: newFeed(), name: "Other" });
 
     const listed = (await listSources(db, ours)).map((row) => row.id);
     expect(listed).toContain(mine.id);
@@ -187,7 +200,7 @@ describe("Sources", () => {
   });
 
   it("removes a Source with its Items and their Logs", async () => {
-    const { id } = await added(ours, { url: at("/news.rss"), name: "Doomed" });
+    const { id } = await added(ours, { url: newFeed(), name: "Doomed" });
     const [captured] = await db
       .insert(item)
       .values({ workspaceId: ours, sourceId: id, externalId: "one", body: "An entry.", raw: {} })
@@ -201,8 +214,72 @@ describe("Sources", () => {
     expect(await db.select().from(itemLog).where(eq(itemLog.itemId, captured?.id ?? ""))).toEqual([]);
   });
 
+  it("refuses a feed URL the Workspace already watches, in any host case, before fetching", async () => {
+    const url = newFeed();
+    await added(ours, { url, name: "Release notes" });
+    let fetched = false;
+    const counting: SourceDeps = {
+      mode: "self-hosted",
+      fetch: (...args) => {
+        fetched = true;
+        return guarded(...args);
+      },
+    };
+    const before = (await sourcesIn(ours)).length;
+    const again = url.replace("feeds.test", "Feeds.TEST");
+
+    const result = await addRssSource(db, counting, ours, { url: again, name: "", schedule: "*/15 * * * *" });
+
+    expect(result).toEqual({ problem: "duplicate" });
+    expect(problemField("duplicate")).toBe("url");
+    expect(fetched).toBe(false);
+    expect(await sourcesIn(ours)).toHaveLength(before);
+    const watching = await watchedSourceName(db, ours, again);
+    expect(watching).toBe("Release notes");
+    const shown = { url: again, status: "", mode: "self-hosted" as const, source: watching };
+    expect(problemMessage("duplicate", shown)).toBe(
+      "This Workspace already watches that feed as the Source “Release notes”.",
+    );
+  });
+
+  it("keeps one Source when the same feed URL is added twice at once", async () => {
+    const url = newFeed();
+    const input = { url, name: "", schedule: "*/15 * * * *" };
+    // Each fetch waits for the other, so both adds pass the check before either inserts.
+    const waiting: (() => void)[] = [];
+    const together: SourceDeps = {
+      mode: "self-hosted",
+      fetch: async (...args) => {
+        await new Promise<void>((resolve) => {
+          waiting.push(resolve);
+          if (waiting.length === 2) for (const go of waiting) go();
+        });
+        return guarded(...args);
+      },
+    };
+
+    const results = await Promise.all([
+      addRssSource(db, together, ours, input),
+      addRssSource(db, together, ours, input),
+    ]);
+
+    expect(results.filter((result) => "source" in result)).toHaveLength(1);
+    expect(results).toContainEqual({ problem: "duplicate" });
+    const saved = (await sourcesIn(ours)).filter((row) => row.config.url === url);
+    expect(saved).toHaveLength(1);
+  });
+
+  it("lets another Workspace add a feed URL this one watches", async () => {
+    const url = newFeed();
+    await added(ours, { url });
+
+    const theirsToo = await added(theirs, { url });
+
+    expect((await sourcesIn(theirs)).map((row) => row.id)).toContain(theirsToo.id);
+  });
+
   it("treats another Workspace's Source, or an id that isn't one, as missing", async () => {
-    const other = await added(theirs, { url: at("/news.rss"), name: "Not ours" });
+    const other = await added(theirs, { url: newFeed(), name: "Not ours" });
 
     expect(await removeSource(db, ours, other.id)).toBe(false);
     expect(await removeSource(db, ours, "not-a-uuid")).toBe(false);

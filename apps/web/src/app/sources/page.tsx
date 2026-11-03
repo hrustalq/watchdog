@@ -9,6 +9,7 @@ import {
   problemField,
   problemMessage,
   schedules,
+  watchedSourceName,
 } from "@/lib/sources";
 import { SubmitButton } from "../sign-in/submit-button";
 import { removeSourceAction } from "./actions";
@@ -62,7 +63,13 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
   const problem = addProblems.find((known) => known === param("error"));
   if (problem === undefined) return <AddSourceForm />;
   const values = { url: param("url"), name: param("name"), schedule: param("schedule") };
-  const shown = { url: values.url, status: param("status"), mode: server().mode };
+  const { db, mode } = server();
+  // Only the code travels in the URL, so the Source the feed is already watched as is looked up.
+  const watching =
+    problem === "duplicate"
+      ? await watchedSourceName(db, (await requireWorkspace()).workspace.id, values.url)
+      : undefined;
+  const shown = { url: values.url, status: param("status"), mode, source: watching };
   return (
     <AddSourceForm
       values={values}
