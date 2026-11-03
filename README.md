@@ -29,7 +29,7 @@ Web and worker read their settings from the environment, and from the root `.env
 
 ## Run locally with Docker Compose
 
-`compose.yaml` runs the four containers of a standard install: web, worker, Postgres and Obscura. You need Docker with Compose v2.
+`compose.yaml` runs the five containers of a standard install: Caddy, web, worker, Postgres and Obscura. You need Docker with Compose v2.
 
 ```bash
 cp .env.example .env       # then set a real BETTER_AUTH_SECRET and OBSCURA_CDP_TOKEN
@@ -42,8 +42,9 @@ Then open http://localhost:3000. The containers start in this order:
 1. **Postgres** keeps its data in the `postgres` volume, so `docker compose down` and `up` keep every user and Workspace. `docker compose down -v` deletes the volume.
 2. **Worker** applies the pending migrations, starts pg-boss and only then reports healthy. A restart applies nothing twice. On SIGTERM it stops pg-boss and logs `pg-boss stopped cleanly`.
 3. **Web** starts once the worker is healthy, so it never serves requests against an unmigrated database.
+4. **Caddy** starts once web is healthy and is the only container that publishes a port (3000). It passes every request to web and sets `X-Forwarded-For` to the connection's address, whatever the client sent, because Better Auth's sign-in rate limit is keyed on that header (ADR 0020).
 
-**Obscura** starts beside them. Only web publishes a port (3000). Postgres and Obscura's CDP port are reachable only on the Compose network. Compose sets `DATABASE_URL` and `OBSCURA_CDP_URL` to its own containers, and the rest of `.env` is passed to web and worker as is.
+**Obscura** starts beside them. Web, Postgres and Obscura's CDP port are reachable only on the Compose network. Compose sets `DATABASE_URL` and `OBSCURA_CDP_URL` to its own containers, and the rest of `.env` is passed to web and worker as is.
 
 The packages share `tsconfig.base.json`. `apps/worker`, `packages/core` and `packages/db` are ES modules that Node runs as TypeScript directly, without a build step. Mark type-only imports with `import type`, and give relative imports their `.ts` extension.
 
@@ -58,7 +59,7 @@ pnpm turbo run test:unit # unit tests only, no Docker
 
 Tests are Vitest. A file named `*.int.test.ts` is an integration test: it may start Postgres with `startPostgres()` from `@watchdog/db/testing` (testcontainers). Every other `*.test.ts` is a unit test and must run without Docker or network access.
 
-`pnpm smoke` runs the Playwright smoke test: on a fresh Compose stack it claims the install with the setup link, signs in with the magic link and checks the empty Workspace, reading both links from the web container's log. It needs Docker, port 3000 free, a `.env` with the SMTP variables empty, and Chromium, installed once with `pnpm --filter @watchdog/e2e exec playwright install chromium`. The stack runs as the Compose project `watchdog-smoke`, apart from the one `docker compose up` starts, so its volume is wiped without touching yours. A passing run removes the stack. A failing one leaves it up and keeps the trace in `apps/e2e/test-results/` and the container logs in `apps/e2e/compose.log`. CI runs it on every push to `main`, not on pull requests.
+`pnpm smoke` runs the Playwright smoke test: on a fresh Compose stack it claims the install with the setup link, signs in with the magic link and checks the empty Workspace, reading both links from the web container's log. Then it checks that six sign-in requests, each with a different `X-Forwarded-For`, still hit the rate limit, so signing in by hand on that stack waits a minute afterwards. It needs Docker, port 3000 free, a `.env` with the SMTP variables empty, and Chromium, installed once with `pnpm --filter @watchdog/e2e exec playwright install chromium`. The stack runs as the Compose project `watchdog-smoke`, apart from the one `docker compose up` starts, so its volume is wiped without touching yours. A passing run removes the stack. A failing one leaves it up and keeps the trace in `apps/e2e/test-results/` and the container logs in `apps/e2e/compose.log`. CI runs it on every push to `main`, not on pull requests.
 
 `pnpm install` installs two git hooks (husky):
 

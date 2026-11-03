@@ -1,5 +1,5 @@
-# The four containers of a standard install. See "Run locally with Docker Compose" in README.md.
-# Only web publishes a port. The others are reachable only on this project's Compose network.
+# The five containers of a standard install. See "Run locally with Docker Compose" in README.md.
+# Only Caddy publishes a port. The others are reachable only on this project's Compose network.
 name: watchdog
 
 # Web and worker read .env, and these override what must point inside the Compose network. The
@@ -10,6 +10,27 @@ x-app-environment: &app-environment
   OBSCURA_CDP_TOKEN: ${OBSCURA_CDP_TOKEN:?set OBSCURA_CDP_TOKEN in .env}
 
 services:
+  # Better Auth keys its sign-in rate limit on X-Forwarded-For. Caddy ignores the value a client
+  # sends and sets it to the connection's address, so a client can't choose its own key (ADR 0020).
+  caddy:
+    image: caddy:2.11.7-alpine
+    command: caddy reverse-proxy --from :3000 --to web:3000
+    # The image declares volumes for certificates and state. Plain HTTP keeps nothing worth saving,
+    # and tmpfs stops each `up` after a `down` from leaving two anonymous volumes behind.
+    tmpfs: [/data, /config]
+    ports:
+      - "3000:3000"
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/auth/ok"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      start_interval: 1s
+    restart: unless-stopped
+
   web:
     build:
       context: .
@@ -19,8 +40,6 @@ services:
     # Node as PID 1 ignores SIGTERM until it installs a handler, e.g. while the worker migrates.
     # An init process forwards the signal, so `docker compose stop` never waits for SIGKILL.
     init: true
-    ports:
-      - "3000:3000"
     # The worker reports healthy only after it has applied the migrations.
     depends_on:
       worker:
