@@ -11,6 +11,8 @@ const published = sql`coalesce(${item.publishedAt}, '-infinity')`;
 const latestKey = sql`(${item.capturedAt}, ${published}, ${item.id})`;
 
 // A cursor timestamp: UTC, every microsecond kept, and nothing a URL has to escape.
+// node-postgres can't write a year past 9999. A BC date (a feed's bad date) loses its era here, which
+// can only repeat such Items among themselves.
 const stamp = (column: typeof item.capturedAt | typeof item.publishedAt) =>
   sql`to_char(${column} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 const stampPattern = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\.\d{6}Z$/;

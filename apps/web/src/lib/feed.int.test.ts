@@ -96,6 +96,8 @@ describe("Feed", () => {
       const page = await feedPage(db, workspaceId, parseCursor(before));
       pages.push(page.items.map((row) => row.id));
       before = page.older ?? undefined;
+      // A cursor parseCursor rejects would load the newest page again, forever.
+      if (before !== undefined) expect(parseCursor(before)).toBeDefined();
     } while (before !== undefined);
     return pages;
   }
@@ -187,8 +189,10 @@ describe("Feed", () => {
     const theirs = await seed();
     const [mine] = await insertItems(ours, [{ capturedAt: hoursAgo(2) }]);
     await insertItems(theirs, [{ capturedAt: hoursAgo(1) }]);
+    const later = parseCursor(`2999-01-01T00:00:00.000000Z_-infinity_${crypto.randomUUID()}`);
 
     expect((await feedPage(db, ours.workspaceId)).items.map((row) => row.id)).toEqual([mine]);
+    expect((await feedPage(db, ours.workspaceId, later)).items.map((row) => row.id)).toEqual([mine]);
   });
 
   it("shows the newest page for a malformed cursor", async () => {
