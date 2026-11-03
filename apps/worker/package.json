@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@watchdog/core": "workspace:*",
-    "@watchdog/db": "workspace:*"
+    "@watchdog/db": "workspace:*",
+    "pg-boss": "^12.38.0"
   },
   "devDependencies": {
     "@types/node": "^26",

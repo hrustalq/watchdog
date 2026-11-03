@@ -1,0 +1,12 @@
+**/node_modules
+**/.next
+**/.turbo
+**/.vitest
+**/*.tsbuildinfo
+.git
+docs
+.claude
+.impeccable
+# Secrets reach the containers through compose.yaml, never through an image layer.
+.env*
+!.env.example
