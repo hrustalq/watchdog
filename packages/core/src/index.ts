@@ -5,6 +5,7 @@ export {
   EgressLimitError,
   type EgressRule,
 } from "./egress/egress.ts";
+export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/capture.ts";
 export type { ItemDraft } from "./sources/item.ts";
 export {
   fetchFeed,
