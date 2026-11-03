@@ -63,6 +63,17 @@ describe("source", () => {
     expect(urls.rows.map((row) => row.workspace_id).sort()).toEqual([a, b].sort());
   });
 
+  it("holds a feed URL too long for a btree entry", async () => {
+    const [a = ""] = await twoWorkspaces(db);
+    // Random hex compresses poorly, so the stored text stays over btree's ~2.7 KB entry limit.
+    const query = Array.from({ length: 200 }, () => crypto.randomUUID()).join("");
+    const url = `https://example.com/feed.xml?${query}`;
+
+    await db.insert(source).values(rss(a, "Long", url));
+
+    await expect(db.insert(source).values(rss(a, "Long again", url))).rejects.toThrow();
+  });
+
   it("applies migration 0005 to a database with duplicate Sources, keeping the oldest copy", async () => {
     await db.execute(sql`create database at_0004`);
     const url = new URL(postgres.url);

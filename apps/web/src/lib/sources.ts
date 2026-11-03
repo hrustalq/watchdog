@@ -79,8 +79,10 @@ export async function addRssSource(
   }
 
   const name = cleanName(input.name) || cleanName(feedTitle ?? "") || url.hostname;
-  // Another add of the same URL can finish between the check above and this insert. The unique
-  // key on (workspace_id, url) is the only one an insert can hit, so a skipped row is that add.
+  // Another add of the same URL can finish between the check above and this insert, and then the
+  // unique key on (workspace_id, url) skips this row. Its other unique keys are on a random id, so
+  // that key is the only one an insert can hit. Drizzle 0.45 takes only columns as a conflict
+  // target, which can't name an expression index.
   const [saved] = await db
     .insert(source)
     .values({ workspaceId, type: "rss", name, config: { url: url.href }, schedule })

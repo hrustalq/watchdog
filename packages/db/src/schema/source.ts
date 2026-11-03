@@ -49,7 +49,7 @@ export const source = pgTable(
     // denormalised workspace_id can only be its Source's.
     unique("source_workspace_id_id_key").on(table.workspaceId, table.id),
     // A Workspace watches a feed URL once, compared as saved (URL.href). Another Workspace can
-    // watch the same URL.
-    uniqueIndex("source_workspace_id_url_key").on(table.workspaceId, sql`(${table.config}->>'url')`),
+    // watch the same URL. The URL is hashed, since a btree entry can't hold a very long one.
+    uniqueIndex("source_workspace_id_url_key").on(table.workspaceId, sql`md5(${table.config}->>'url')`),
   ],
 );
