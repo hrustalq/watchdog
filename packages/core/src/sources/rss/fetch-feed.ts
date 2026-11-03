@@ -29,8 +29,10 @@ export async function fetchFeed(
 ): Promise<FetchFeedResult> {
   const headers: Record<string, string> = {
     "user-agent": userAgent,
-    accept:
-      "application/rss+xml, application/atom+xml, application/rdf+xml, application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8",
+    accept: [
+      "application/rss+xml, application/atom+xml, application/rdf+xml",
+      "application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8",
+    ].join(", "),
   };
   if (fetchState.etag !== undefined) headers["if-none-match"] = fetchState.etag;
   if (fetchState.lastModified !== undefined) headers["if-modified-since"] = fetchState.lastModified;
@@ -44,7 +46,8 @@ export async function fetchFeed(
     await response.body?.cancel();
     throw new Error(`${url} answered ${String(response.status)} ${response.statusText}`.trim());
   }
-  const text = await response.text();
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const text = decode(bytes, response.headers.get("content-type"));
 
   let parsed;
   try {
@@ -64,7 +67,7 @@ export async function fetchFeed(
       break;
     case "atom":
       entries = (parsed.feed.entries ?? []).map((entry) => fromAtom(entry, base));
-      feedTitle = parsed.feed.title && atomText(parsed.feed.title);
+      feedTitle = atomText(parsed.feed.title);
       break;
     case "json":
       throw new Error(`${url} is not an RSS or Atom feed`);
@@ -93,7 +96,7 @@ function fromRss(
   return {
     externalId,
     url,
-    title: orNull(item.title?.replace(/\s+/g, " ").trim()),
+    title: orNull(collapse(item.title ?? "")),
     author: orNull(item.dc?.creators?.[0] ?? person?.name ?? person?.email),
     body: capBody(htmlToText(html)),
     publishedAt: date(rss.pubDate ?? item.dc?.dates?.[0]),
@@ -102,40 +105,61 @@ function fromRss(
 }
 
 function fromAtom(entry: AtomFeed.Entry<string>, base: string): ItemDraft | undefined {
-  const link =
-    entry.links?.find((candidate) => (candidate.rel ?? "alternate") === "alternate") ??
-    entry.links?.[0];
+  // Only the alternate link is the entry itself; self, edit, enclosure and replies aren't.
+  const link = entry.links?.find((candidate) => (candidate.rel ?? "alternate") === "alternate");
   const url = resolve(link?.href, base);
   const externalId = orNull(entry.id) ?? url;
   if (externalId === null) return undefined;
-  const body = entry.content?.value ?? entry.summary?.value ?? "";
   return {
     externalId,
     url,
-    title: entry.title ? orNull(atomText(entry.title)) : null,
+    title: orNull(atomText(entry.title)),
     author: orNull(entry.authors?.[0]?.name),
-    body: capBody(htmlToText(body)),
+    body: capBody(atomText(entry.content ?? entry.summary)),
     publishedAt: date(entry.published ?? entry.updated),
     raw: entry,
   };
 }
 
-/** An Atom text construct as plain text: "html" and "xhtml" carry markup, "text" doesn't. */
-function atomText(text: AtomFeed.Text) {
-  return text.type === "html" || text.type === "xhtml"
-    ? htmlToText(text.value)
-    : text.value.replace(/\s+/g, " ").trim();
+/** Atom text as plain text: "html" and "xhtml" carry markup, "text" (the default) doesn't. */
+function atomText(text: { value?: string; type?: string } | undefined) {
+  if (text?.value === undefined) return "";
+  const markup = text.type === "html" || text.type === "xhtml";
+  return markup ? htmlToText(text.value) : collapse(text.value);
 }
 
+function collapse(text: string) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** An absolute http or https URL, or null: a feed can't hand the Feed a javascript: link. */
 function resolve(href: string | undefined, base: string) {
-  return href === undefined ? null : (URL.parse(href.trim(), base)?.href ?? null);
+  const url = href === undefined ? null : URL.parse(href.trim(), base);
+  return url?.protocol === "http:" || url?.protocol === "https:" ? url.href : null;
 }
 
 function date(value: string | undefined) {
-  const parsed = value === undefined ? Number.NaN : Date.parse(value);
+  if (value === undefined) return null;
+  // A date-time with no offset would otherwise be read in the worker's own time zone.
+  const parsed = Date.parse(/^\d{4}-\d{2}-\d{2}T[\d:.]+$/.test(value) ? `${value}Z` : value);
   return Number.isNaN(parsed) ? null : new Date(parsed);
 }
 
 function orNull(value: string | undefined) {
   return value === undefined || value.trim() === "" ? null : value;
+}
+
+/** Decodes the body in the charset the response or the XML declaration names, UTF-8 otherwise. */
+function decode(bytes: Uint8Array, contentType: string | null) {
+  const declared =
+    /charset="?([\w.:-]+)/i.exec(contentType ?? "")?.[1] ??
+    /^\s*<\?xml[^>]*encoding=["']([\w.:-]+)/.exec(
+      new TextDecoder("latin1").decode(bytes.subarray(0, 200)),
+    )?.[1];
+  try {
+    return new TextDecoder(declared ?? "utf-8").decode(bytes);
+  } catch {
+    // An unknown charset label.
+    return new TextDecoder().decode(bytes);
+  }
 }

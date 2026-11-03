@@ -46,10 +46,30 @@ const inline: Record<string, string> = {
     `<item><title>No guid or link</title><description>Skipped</description></item>` +
       `<item><title>Link only</title><link>https://feeds.test/posts/2</link></item>`,
   ),
-  "/feed.json": JSON.stringify({ version: "https://jsonfeed.org/version/1.1", title: "J", items: [] }),
+  "/feed.json": JSON.stringify({ version: "https://jsonfeed.org/version/1.1", items: [] }),
+  "/unsafe-link.rss": rss(
+    `<item><guid>a</guid><link>javascript:alert(1)</link></item>` +
+      `<item><guid>b</guid><link>data:text/html,hi</link></item>`,
+  ),
+  "/text-content.atom":
+    `<feed xmlns="http://www.w3.org/2005/Atom"><title>T</title><id>t</id><entry><id>e1</id>` +
+    `<title>Plain</title><content type="text">Use the &amp;lt;details&amp;gt; element</content>` +
+    `<link rel="enclosure" href="https://feeds.test/ep1.mp3"/>` +
+    `<updated>2026-11-02T10:00:00</updated></entry></feed>`,
   // 40 000 two-byte characters: 80 000 bytes, and any cut at an odd byte splits a character.
-  "/huge.rss": rss(`<item><guid>huge</guid><description>${"é".repeat(40_000)}</description></item>`),
+  "/huge.rss": rss(
+    `<item><guid>huge</guid><description>${"é".repeat(40_000)}</description></item>`,
+  ),
 };
+
+// windows-1251, as many Russian sites still serve their feeds: "Привет" is CF F0 E8 E2 E5 F2.
+const cp1251 = Buffer.concat([
+  Buffer.from(`<?xml version="1.0" encoding="windows-1251"?><rss version="2.0"><channel><title>`),
+  Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]),
+  Buffer.from(`</title><item><guid>1</guid><title>`),
+  Buffer.from([0xcf, 0xf0, 0xe8, 0xe2, 0xe5, 0xf2]),
+  Buffer.from(`</title></item></channel></rss>`),
+]);
 
 beforeAll(async () => {
   server = createServer((req, res) => {
@@ -63,6 +83,10 @@ beforeAll(async () => {
         res.writeHead(200, { etag: '"v1"', "last-modified": "Mon, 02 Nov 2026 00:00:00 GMT" });
         res.end(fixture("postgresql-news.rss"));
       }
+    } else if (path === "/cp1251.rss") res.end(cp1251);
+    else if (path === "/cp1251-header.rss") {
+      res.writeHead(200, { "content-type": "application/rss+xml; charset=windows-1251" });
+      res.end(cp1251.toString("latin1").replace(` encoding="windows-1251"`, ""), "latin1");
     } else if (body === undefined) res.writeHead(404).end();
     else res.end(body);
   });
@@ -149,7 +173,8 @@ describe("fetchFeed", () => {
       publishedAt: "2026-09-12T00:00:00.000Z",
       bodyStart: "The Debian project is pleased to announce the seventh update of its stable",
     },
-  ])("maps $fixture entries to the Item envelope", async ({ fixture: name, bodyStart, ...first }) => {
+  ])("maps $fixture entries to the Item envelope", async (expected) => {
+    const { fixture: name, bodyStart, ...first } = expected;
     const entries = await entriesOf(`/fixtures/${name}`);
 
     expect(entries.length).toBeGreaterThanOrEqual(2);

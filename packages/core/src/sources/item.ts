@@ -18,16 +18,22 @@ export interface ItemDraft {
 export const maxBodyBytes = 32 * 1024;
 
 // Tags that break a line, so the words on either side of them don't run together.
-const blockTag =
-  /<\/?(?:address|article|aside|blockquote|br|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|hr|img|li|main|nav|ol|p|pre|section|table|td|th|tr|ul)\b[^>]*>/gi;
+const blockElements = [
+  ...["address", "article", "aside", "blockquote", "br", "dd", "div", "dl", "dt", "figcaption"],
+  ...["figure", "footer", "h[1-6]", "header", "hr", "img", "li", "main", "nav", "ol", "p", "pre"],
+  ...["section", "table", "td", "th", "tr", "ul"],
+];
+const blockTag = new RegExp(String.raw`<\/?(?:${blockElements.join("|")})\b[^<>]*>`, "gi");
 
 /** Plain text from an HTML fragment: tags stripped, entities decoded, whitespace collapsed. */
 export function htmlToText(html: string) {
+  // Every pattern stays linear on hostile input: an unclosed comment or script runs to the end
+  // instead of being retried from each opener, and a tag can't span another "<".
   const text = html
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, "")
+    .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
+    .replace(/<(script|style)\b[^<>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "")
     .replace(blockTag, " ")
-    .replace(/<\/?[a-z][^>]*>/gi, "");
+    .replace(/<\/?[a-z][^<>]*>/gi, "");
   return decodeHTML(text).replace(/\s+/g, " ").trim();
 }
 
