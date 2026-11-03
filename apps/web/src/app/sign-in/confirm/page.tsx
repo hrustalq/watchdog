@@ -2,7 +2,12 @@ import type { Metadata } from "next";
 import { verifyForm } from "@/lib/auth";
 import { ConfirmForm } from "./confirm-form";
 
-export const metadata: Metadata = { title: "Finish signing in · Watchdog" };
+// The URL holds a live token: keep it out of search indexes and out of any Referer header.
+export const metadata: Metadata = {
+  title: "Finish signing in · Watchdog",
+  robots: { index: false, follow: false },
+  referrer: "no-referrer",
+};
 
 // The page waits for the token instead of streaming it in after a static shell, so the form is
 // in the first HTML and works without JavaScript. It's only ever opened from an email, never

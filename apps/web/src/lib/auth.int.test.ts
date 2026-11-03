@@ -1,5 +1,5 @@
 import type { MailMessage } from "@watchdog/core";
-import { createDb, migrate, user, verification, workspace, type Db } from "@watchdog/db";
+import { createDb, eq, migrate, user, verification, workspace, type Db } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { createAuth } from "./auth.ts";
@@ -42,7 +42,7 @@ describe("magic link sign-in", () => {
       new Request(`${baseURL}/api/auth/sign-in/magic-link`, {
         method: "POST",
         headers: { "content-type": "application/json", origin: baseURL },
-        body: JSON.stringify({ email, callbackURL: "/", errorCallbackURL: "/sign-in" }),
+        body: JSON.stringify({ email }),
       }),
     );
     expect(request.status).toBe(200);
@@ -52,6 +52,7 @@ describe("magic link sign-in", () => {
   /** Asks for a magic link, presses the confirm page's button, and returns the session cookie. */
   async function signIn(email: string) {
     await requestLink(email);
+    expect(emailedLink()).toMatch(new RegExp(`^${baseURL}/sign-in/confirm\\?token=[^&\\s]+$`));
     const verified = await pressSignIn(auth, emailedLink());
     expect(verified.status).toBe(302);
     expect(verified.headers.get("location")).toBe(`${baseURL}/`);
@@ -87,7 +88,7 @@ describe("magic link sign-in", () => {
     expect([second.user.id, third.user.id]).toEqual([first.user.id, first.user.id]);
     expect([second.workspace.id, third.workspace.id]).toEqual([first.workspace.id, first.workspace.id]);
     const owned = await db.query.workspace.findMany({
-      where: (table, { eq }) => eq(table.ownerUserId, first.user.id),
+      where: (table) => eq(table.ownerUserId, first.user.id),
     });
     expect(owned).toHaveLength(1);
   });
@@ -137,12 +138,17 @@ describe("magic link sign-in", () => {
   it("sends an expired link back to sign-in with an error the sign-in page explains", async () => {
     await requestLink("ivan@example.com");
     const link = emailedLink();
-    await db.update(verification).set({ expiresAt: new Date(Date.now() - 1000) });
+    const pending = await db.query.verification.findFirst({ orderBy: (table, { desc }) => desc(table.createdAt) });
+    await db
+      .update(verification)
+      .set({ expiresAt: new Date(Date.now() - 1000) })
+      .where(eq(verification.id, pending?.id ?? ""));
 
     const expired = await pressSignIn(auth, link);
 
     expect(expired.status).toBe(302);
-    expect(expired.headers.get("location")).toMatch(new RegExp(`^${baseURL}/sign-in\\?error=(INVALID|EXPIRED)_TOKEN$`));
+    // Better Auth's lookup skips expired rows, so an expired link reads as an unknown one.
+    expect(expired.headers.get("location")).toBe(`${baseURL}/sign-in?error=INVALID_TOKEN`);
   });
 
   it("stores only a hash of the magic link's token", async () => {

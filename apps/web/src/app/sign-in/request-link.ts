@@ -31,11 +31,8 @@ export async function requestMagicLink(
   const field = formData.get("email");
   const email = typeof field === "string" ? field.trim() : "";
 
-  const response = await postToAuth("/api/auth/sign-in/magic-link", {
-    email,
-    callbackURL: "/",
-    errorCallbackURL: "/sign-in",
-  });
+  // No callbackURL: the emailed link opens the confirm page, whose form sets where verify lands.
+  const response = await postToAuth("/api/auth/sign-in/magic-link", { email });
 
   const sent = new URLSearchParams({ email });
   if (from !== undefined) sent.set("from", from);
