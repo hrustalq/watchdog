@@ -18,6 +18,11 @@ This version has breaking changes — APIs, conventions, and file structure may 
 - To change docs, work in `docs/` on a new branch, commit, and `git push -o merge_request.create -o merge_request.title="…" origin HEAD:<branch>`. Never push to `main` or force-push. A person reviews the merge request. Keep each page's `knowledge-id:` frontmatter. A new `.md` file is a new page, and `git mv` moves a page.
 - After a docs merge request merges, run `git submodule update --remote docs` and commit the new pointer.
 
+## Database
+
+- Change the public schema only through migrations: edit `packages/db/src/schema/`, run `pnpm --filter @watchdog/db db:generate`, and commit the schema and the migration together.
+- Never run `drizzle-kit push`. drizzle-kit 0.31 misreads multi-column unique keys and tries to drop and re-create them, exits 0 when Postgres refuses, and can leave a key such as `item_source_id_external_id_key` dropped. See the README and the Knowledge gotcha [drizzle-kit push mangles composite unique keys](https://knowledge.hrustalq.dev/documents/3fd6c345-3360-493e-815f-2dd44bc0ecf9).
+
 ## Lint rules
 
 Lint is strict on purpose, and a warning fails it just like an error. These are blocked:
