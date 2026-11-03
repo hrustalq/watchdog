@@ -1,16 +1,21 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import { verifyForm } from "@/lib/auth";
 import { ConfirmForm } from "./confirm-form";
 
-export const metadata: Metadata = { title: "Sign in · Watchdog" };
+export const metadata: Metadata = { title: "Finish signing in · Watchdog" };
+
+// The page waits for the token instead of streaming it in after a static shell, so the form is
+// in the first HTML and works without JavaScript. It's only ever opened from an email, never
+// navigated to inside the app, so an instant shell would buy nothing.
+export const instant = false;
 
 /**
  * Where the emailed magic link lands. Loading it spends nothing, so a mail gateway that fetches the
  * link first leaves it working. The button GETs Better Auth's verify endpoint, which spends the
  * token, sets the session cookie and redirects: to the Workspace, or to sign-in's "expired" notice.
  */
-export default function ConfirmPage({ searchParams }: PageProps<"/sign-in/confirm">) {
+export default async function ConfirmPage({ searchParams }: PageProps<"/sign-in/confirm">) {
+  const { token } = await searchParams;
   return (
     <>
       <div className="flex flex-col gap-1">
@@ -20,21 +25,11 @@ export default function ConfirmPage({ searchParams }: PageProps<"/sign-in/confir
           can&apos;t use it up before you do.
         </p>
       </div>
-      {/* The button is in the static shell; the token, read from the URL, streams in over it. */}
-      <Suspense fallback={<ConfirmForm />}>
-        <ConfirmFormWithToken searchParams={searchParams} />
-      </Suspense>
+      {/* A missing token is sent anyway: Better Auth answers with the "expired" notice on sign-in. */}
+      <ConfirmForm
+        action={verifyForm.action}
+        fields={{ token: typeof token === "string" ? token : "", ...verifyForm.fields }}
+      />
     </>
-  );
-}
-
-async function ConfirmFormWithToken({ searchParams }: Pick<PageProps<"/sign-in/confirm">, "searchParams">) {
-  const { token } = await searchParams;
-  // A missing token is sent anyway: Better Auth answers with the "expired" notice on sign-in.
-  return (
-    <ConfirmForm
-      action={verifyForm.action}
-      fields={{ token: typeof token === "string" ? token : "", ...verifyForm.fields }}
-    />
   );
 }

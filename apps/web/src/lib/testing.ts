@@ -7,7 +7,6 @@ import { confirmPage, verifyForm, type createAuth } from "./auth.ts";
 export function pressSignIn(auth: Pick<ReturnType<typeof createAuth>, "handler">, link: string) {
   const emailed = new URL(link);
   if (emailed.pathname !== confirmPage) throw new Error(`Not a link to the confirm page: ${link}`);
-  const verify = new URL(verifyForm.action, emailed.origin);
-  verify.search = new URLSearchParams({ token: emailed.searchParams.get("token") ?? "", ...verifyForm.fields }).toString();
-  return auth.handler(new Request(verify));
+  const query = new URLSearchParams({ token: emailed.searchParams.get("token") ?? "", ...verifyForm.fields });
+  return auth.handler(new Request(new URL(`${verifyForm.action}?${query}`, emailed.origin)));
 }

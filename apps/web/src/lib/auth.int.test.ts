@@ -110,12 +110,6 @@ describe("magic link sign-in", () => {
     await expect(db.insert(workspace).values({ name: "second", ownerUserId: dave.id })).rejects.toThrow();
   });
 
-  it("emails a link to the confirm page, not to Better Auth's verify endpoint", async () => {
-    await requestLink("grace@example.com");
-
-    expect(emailedLink()).toMatch(new RegExp(`^${baseURL}/sign-in/confirm\\?token=[^&\\s]+$`));
-  });
-
   it("keeps the token when the emailed link is fetched before the button is pressed", async () => {
     await requestLink("grace@example.com");
     const link = emailedLink();
