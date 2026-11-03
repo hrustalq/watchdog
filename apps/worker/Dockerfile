@@ -11,7 +11,8 @@ RUN npm install --global "pnpm@$(node -p 'require("./package.json").packageManag
 # installing is cached until a dependency changes.
 FROM base AS prune
 COPY . .
-RUN pnpm dlx turbo@^2.11.10 prune @watchdog/worker --docker
+# The turbo version pnpm-lock.yaml resolves for the root, so builds don't drift.
+RUN pnpm dlx turbo@2.11.10 prune @watchdog/worker --docker
 
 FROM base AS install
 COPY --from=prune /repo/out/json/ ./

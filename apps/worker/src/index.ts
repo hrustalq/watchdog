@@ -17,8 +17,8 @@ const config = (() => {
 // A restarted container keeps its filesystem, so a file from the last run must not count.
 rmSync(readyFile, { force: true });
 
-// The worker is the only process that migrates, and web waits for it, so they never run twice
-// at once. A failure exits non-zero and Compose restarts the worker.
+// migrate() takes no lock. Compose runs one worker, the only process that migrates, and web waits
+// for it. A failure exits non-zero and Compose restarts the worker.
 await migrate(config.databaseUrl);
 console.log("Migrations applied");
 
@@ -29,13 +29,22 @@ boss.on("error", (error) => {
 });
 await boss.start();
 
+// The first SIGTERM or SIGINT stops pg-boss. A second signal while it stops is ignored.
+let stopping = false;
 const stop = async () => {
+  if (stopping) return;
+  stopping = true;
   rmSync(readyFile, { force: true });
-  await boss.stop();
-  console.log("Worker stopped: pg-boss stopped cleanly");
+  try {
+    await boss.stop();
+    console.log("Worker stopped: pg-boss stopped cleanly");
+  } catch (error) {
+    console.error("Worker stopped: pg-boss failed to stop:", error);
+    process.exitCode = 1;
+  }
 };
-process.once("SIGTERM", () => void stop());
-process.once("SIGINT", () => void stop());
+process.on("SIGTERM", () => void stop());
+process.on("SIGINT", () => void stop());
 
 writeFileSync(readyFile, "");
 console.log(`Worker ready (${config.mode}): pg-boss started`);

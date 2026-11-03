@@ -1,10 +1,22 @@
-import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { createDb } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { readyFile } from "./ready.ts";
+
+// Each worker gets its own temp dir, so its ready file can't collide with a local dev worker's.
+const tmp = mkdtempSync(path.join(tmpdir(), "worker-test-"));
+const ready = path.join(tmp, path.basename(readyFile));
+
+// A test that fails before stop() must not leave its worker running after Postgres is gone.
+const running = new Set<ChildProcess>();
+afterEach(() => {
+  for (const child of running) child.kill("SIGKILL");
+  running.clear();
+});
 
 /** Runs the worker the way its container does, until it logs that it's ready. */
 async function startWorker(databaseUrl: string) {
@@ -12,13 +24,14 @@ async function startWorker(databaseUrl: string) {
     // Only what the worker needs, so a developer's own environment can't leak in.
     env: {
       PATH: process.env.PATH,
-      // The ready file lives in the temp dir, which the test must find in the same place.
-      TMPDIR: process.env.TMPDIR,
+      TMPDIR: tmp,
       DATABASE_URL: databaseUrl,
       BETTER_AUTH_SECRET: "a-test-secret-of-at-least-32-characters",
       BETTER_AUTH_URL: "http://localhost:3000",
     },
   });
+  running.add(child);
+  child.once("exit", () => running.delete(child));
   let output = "";
   child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
   child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
@@ -69,11 +82,11 @@ describe("worker", () => {
     const state = await databaseState(postgres.url);
     expect(state.applied.length).toBeGreaterThan(0);
     expect(state.pgboss).toBe(true);
-    expect(existsSync(readyFile)).toBe(true);
+    expect(existsSync(ready)).toBe(true);
 
     expect(await worker.stop()).toBe(0);
     expect(worker.output()).toContain("pg-boss stopped");
-    expect(existsSync(readyFile)).toBe(false);
+    expect(existsSync(ready)).toBe(false);
   }, 60_000);
 
   it("doesn't re-run applied migrations when it starts again", async () => {
