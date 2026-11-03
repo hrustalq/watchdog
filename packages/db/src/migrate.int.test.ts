@@ -38,6 +38,14 @@ async function databaseState(url: string) {
   }
 }
 
+/** The pgboss schema's part of a database state. */
+function pgbossState({ columns, indexes }: Awaited<ReturnType<typeof databaseState>>) {
+  return {
+    columns: columns.filter((name) => name.startsWith("pgboss.")),
+    indexes: indexes.filter((definition) => definition.includes(" ON pgboss.")),
+  };
+}
+
 /** Runs pnpm in packages/db against the given database, the way a developer would. */
 async function pnpm(args: string[], databaseUrl: string) {
   return promisify(execFile)("pnpm", args, {
@@ -91,14 +99,17 @@ describe("drizzle-kit", () => {
     await boss.start();
     await boss.stop();
     const before = await databaseState(postgres.url);
-    expect(before.columns.some((name) => name.startsWith("pgboss."))).toBe(true);
+    expect(pgbossState(before).columns).not.toEqual([]);
+    expect(pgbossState(before).indexes).not.toEqual([]);
     const migrations = await readdir(migrationsDir, { recursive: true });
 
     await pnpm(["run", "db:generate"], postgres.url);
     expect(await readdir(migrationsDir, { recursive: true })).toEqual(migrations);
 
     // --force approves data loss without a prompt, so a push that wanted pgboss gone would drop it.
+    // Only pgboss is compared: drizzle-kit 0.31 misreads public's composite unique keys and
+    // re-creates them on push, which can leave one dropped. Public changes go through migrations.
     await pnpm(["exec", "drizzle-kit", "push", "--force"], postgres.url);
-    expect(await databaseState(postgres.url)).toEqual(before);
+    expect(pgbossState(await databaseState(postgres.url))).toEqual(pgbossState(before));
   }, 60_000);
 });
