@@ -59,7 +59,8 @@ export async function pollSource(
     let capture: ItemDraft[];
     let backfill = {};
     if (backfilledAt === null) {
-      const recent = entries.filter((entry) => published(entry) >= fetchedAt.getTime() - backfillWindow);
+      const start = fetchedAt.getTime() - backfillWindow;
+      const recent = entries.filter((entry) => published(entry) >= start);
       capture = recent
         .filter((entry) => entry.publishedAt !== null)
         .sort((a, b) => published(b) - published(a))
@@ -95,11 +96,12 @@ export async function pollSource(
     if (inserted.length > 0) {
       const message = `Captured from ${locked.name}${isBackfill ? " as part of the Backfill" : ""}`;
       const data = { sourceId, fetchedAt: fetchedAt.toISOString() };
-      await tx
-        .insert(itemLog)
-        .values(inserted.map(({ id }) => ({ itemId: id, stage: "capture" as const, message, data })));
+      const stage = "capture" as const;
+      const rows = inserted.map(({ id }) => ({ itemId: id, stage, message, data }));
+      await tx.insert(itemLog).values(rows);
     }
-    // FetchState is an interface, so it lacks the index signature the column's type has; a copy has one.
+    // FetchState is an interface, so it lacks the index signature the column's type has. A copy
+    // of it has one.
     await tx
       .update(source)
       .set({ ...succeeded, fetchState: { ...fetched.fetchState }, ...backfill })

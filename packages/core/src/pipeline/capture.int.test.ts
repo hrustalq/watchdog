@@ -95,7 +95,7 @@ describe("pollSource", () => {
   const reload = async (sourceId: string) =>
     present(await db.query.source.findFirst({ where: eq(source.id, sourceId) }));
 
-  it("captures a new Source's entries from the last 7 days as a Backfill with a capture Log", async () => {
+  it("captures the last 7 days of a new Source as a Backfill, with a capture Log", async () => {
     const src = await newSource();
     // 120 entries, one every 5.7 hours: the newest 30 are within 7 days.
     const entries = Array.from({ length: 120 }, (_, i) => ({
@@ -171,7 +171,10 @@ describe("pollSource", () => {
     expect(await pollSource(db, src.id, deps)).toEqual({ captured: 3 });
 
     const items = await itemsOf(src.id);
-    expect(items.every((captured) => captured.language === "en" && captured.url !== null)).toBe(true);
+    for (const captured of items) {
+      expect(captured.language).toBe("en");
+      expect(captured.url).toMatch(/^https:\/\//);
+    }
     expect(items[0]?.log[0]?.message).toBe("Captured from Hacker News as part of the Backfill");
     expect((await reload(src.id)).fetchState).toEqual({ etag: '"v1"' });
   });
@@ -195,7 +198,7 @@ describe("pollSource", () => {
     expect(items.every((captured) => captured.log.length === 1)).toBe(true);
   });
 
-  it("records a failed poll on the Source without throwing, and the next success clears it", async () => {
+  it("records a failed poll without throwing, and the next success clears it", async () => {
     const src = await newSource();
 
     // A network error: no response is set for this URL.
