@@ -24,7 +24,6 @@ services:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/auth/ok"]
       interval: 10s
       timeout: 5s
-      retries: 3
       start_period: 30s
       start_interval: 1s
     restart: unless-stopped
@@ -43,7 +42,6 @@ services:
       test: ["CMD", "test", "-f", "/tmp/watchdog-worker-ready"]
       interval: 10s
       timeout: 5s
-      retries: 3
       start_period: 60s
       start_interval: 1s
     restart: unless-stopped
@@ -62,7 +60,6 @@ services:
       test: ["CMD", "pg_isready", "-U", "watchdog", "-d", "watchdog"]
       interval: 10s
       timeout: 5s
-      retries: 3
       start_period: 30s
       start_interval: 1s
     restart: unless-stopped
@@ -76,18 +73,8 @@ services:
     # The image has no shell, so its own binary checks the port. Any answer, even the 401 that a
     # request without the token gets, means the CDP server is up.
     healthcheck:
-      test:
-        - CMD
-        - /obscura
-        - fetch
-        - http://127.0.0.1:9222/json/version
-        - --dump
-        - original
-        - --allow-private-network
-        - --quiet
-      interval: 30s
+      test: ["CMD", "/obscura", "fetch", "http://127.0.0.1:9222/json/version", "--dump", "original", "--allow-private-network"]
       timeout: 5s
-      retries: 3
       start_period: 30s
       start_interval: 1s
     restart: unless-stopped
