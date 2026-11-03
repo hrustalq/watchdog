@@ -5,6 +5,7 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { nextCookies } from "better-auth/next-js";
 import { magicLink } from "better-auth/plugins";
 import { signupRefusal } from "./instance.ts";
+import { returnTo, signInPath } from "./return-to.ts";
 
 export const linkLifetimeMinutes = 15;
 
@@ -15,11 +16,18 @@ export const linkLifetimeMinutes = 15;
  */
 export const confirmPage = "/sign-in/confirm";
 
-/** What the confirm page's button submits, with the token: a GET of Better Auth's verify endpoint. */
+/**
+ * What the confirm page's button submits, with the token: a GET of Better Auth's verify endpoint.
+ * `next` is the confirm link's own, so it's checked again here. A link that has stopped working
+ * goes back to sign-in, which still returns to that page.
+ */
 export const verifyForm = {
   action: "/api/auth/magic-link/verify",
-  fields: { callbackURL: "/", errorCallbackURL: "/sign-in" },
-} as const;
+  fields: (next: unknown) => {
+    const callbackURL = returnTo(next);
+    return { callbackURL, errorCallbackURL: signInPath(callbackURL) };
+  },
+};
 
 interface AuthDeps {
   /** Self-hosted installs gate sign-up on the first-run admin and the sign-up switch. */
@@ -81,9 +89,12 @@ export function createAuth({ mode, baseURL, secret, db, mailer, oauth = {} }: Au
         expiresIn: linkLifetimeMinutes * 60,
         // Only a hash of the token is stored, so a database read can't be turned into a sign-in.
         storeToken: "hashed",
-        sendMagicLink: async ({ email, token }) => {
+        sendMagicLink: async ({ email, token, url: verifyURL }) => {
           const url = new URL(confirmPage, baseURL);
           url.searchParams.set("token", token);
+          // The page to return to, which sign-in passed as the callbackURL and Better Auth checked.
+          const next = new URL(verifyURL).searchParams.get("callbackURL") ?? "/";
+          if (next !== "/") url.searchParams.set("next", next);
           await mailer.send({
             to: email,
             subject: "Sign in to Watchdog",

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { linkLifetimeMinutes } from "@/lib/auth";
+import { returnTo, signInPath } from "@/lib/return-to";
 import { server } from "@/lib/server";
 
 export const metadata: Metadata = { title: "Check your email · Watchdog" };
@@ -25,7 +26,7 @@ export default function CheckEmailPage({ searchParams }: PageProps<"/sign-in/che
  * the install. So after setup this points back to that link instead.
  */
 async function DifferentEmail({ searchParams }: Pick<PageProps<"/sign-in/check-email">, "searchParams">) {
-  const { from } = await searchParams;
+  const { from, next } = await searchParams;
   if (from === "setup") {
     return (
       <p className="text-sm text-muted-foreground">
@@ -36,7 +37,7 @@ async function DifferentEmail({ searchParams }: Pick<PageProps<"/sign-in/check-e
   }
   return (
     <Link
-      href="/sign-in"
+      href={signInPath(returnTo(next))}
       className="inline-flex h-8 items-center self-start rounded-sm text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
     >
       Use a different email
