@@ -169,7 +169,8 @@ describe("loadConfig", () => {
     expect(loadConfig(minimal).egressAllowlist).toEqual([]);
   });
 
-  it.each(["10.0.0.0/33", "fd00::/129", "10.0.0.0/", "10.0.0.0/8/8", "host/24", "host:11434", "a b"])(
+  const invalid = ["10.0.0.0/33", "fd00::/129", "10.0.0.0/", "10.0.0.0/8/8", "host/24", "host:11434"];
+  it.each([...invalid, "a b", "*.local", "[fd00::1]"])(
     "rejects the EGRESS_ALLOWLIST entry %j and names the variable",
     (entry) => {
       expect(() => loadConfig({ ...minimal, EGRESS_ALLOWLIST: `ollama.local,${entry}` })).toThrow(

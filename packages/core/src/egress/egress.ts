@@ -36,6 +36,13 @@ export interface EgressOptions {
 }
 
 const maxRedirects = 5;
+const crossOriginHeaders = new Set([
+  "accept",
+  "accept-language",
+  "content-language",
+  "content-type",
+  "user-agent",
+]);
 
 const family = (address: string) => (isIP(address) === 6 ? "ipv6" : "ipv4");
 
@@ -43,9 +50,8 @@ const family = (address: string) => (isIP(address) === 6 ? "ipv6" : "ipv4");
 const blocked = new BlockList();
 for (const [address, prefix] of [
   ["0.0.0.0", 8], // this network
-  ["::", 128], // this network
+  ["::", 96], // this network (::), loopback (::1) and the old IPv4-compatible form
   ["127.0.0.0", 8], // loopback
-  ["::1", 128], // loopback
   ["10.0.0.0", 8], // private
   ["172.16.0.0", 12], // private
   ["192.168.0.0", 16], // private
@@ -53,8 +59,27 @@ for (const [address, prefix] of [
   ["100.64.0.0", 10], // CGNAT
   ["169.254.0.0", 16], // link-local, with the 169.254.169.254 metadata address
   ["fe80::", 10], // link-local
+  ["192.0.0.0", 24], // IETF protocol assignments
+  ["198.18.0.0", 15], // benchmarking
+  ["224.0.0.0", 4], // multicast
+  ["ff00::", 8], // multicast
+  ["240.0.0.0", 4], // reserved, with the 255.255.255.255 broadcast address
+  ["64:ff9b:1::", 48], // local-use NAT64
+  ["2002::", 16], // 6to4, which tunnels to any IPv4 address
 ] as const) {
   blocked.addSubnet(address, prefix, family(address));
+}
+
+// A DNS64 resolver answers for an IPv4-only host with a NAT64 address that carries the IPv4
+// address in its last 32 bits. That IPv4 address is the one the gateway connects to.
+const nat64 = new BlockList();
+nat64.addSubnet("64:ff9b::", 96, "ipv6");
+function nat64Target(address: string) {
+  if (isIP(address) !== 6 || !nat64.check(address, "ipv6")) return undefined;
+  // The URL parser writes the address in hex groups, so the last two hold the IPv4 address.
+  const groups = (URL.parse(`http://[${address}]`)?.hostname ?? "").replace(/\]$/, "").split(":");
+  const [high = 0, low = 0] = groups.slice(-2).map((group) => Number.parseInt(`0${group}`, 16));
+  return [high >> 8, high & 255, low >> 8, low & 255].join(".");
 }
 
 /** Parses one EGRESS_ALLOWLIST entry, or returns undefined when it's no host, IP or CIDR. */
@@ -69,9 +94,10 @@ export function parseEgressRule(entry: string): EgressRule | undefined {
     return { type: "subnet", address, prefix, family: family(address) };
   }
   if (prefixText !== undefined) return undefined;
-  // The URL parser rejects what isn't a host name, and rewrites what it reads as an IP or a port.
+  // The URL parser rewrites what it reads as an IP or a port; wildcards and brackets never match.
   const host = URL.parse(`http://${entry}`)?.hostname;
-  return host === entry.toLowerCase() ? { type: "host", host } : undefined;
+  const valid = host === entry.toLowerCase() && /^[a-z0-9_.-]+$/.test(host);
+  return valid ? { type: "host", host } : undefined;
 }
 
 /**
@@ -86,10 +112,12 @@ export function egressPolicy(config: Pick<Config, "mode" | "egressAllowlist">) {
     if (rule.type === "host") hosts.add(rule.host);
     else allowed.addSubnet(rule.address, rule.prefix, rule.family);
   }
+  const matches = (list: BlockList, address: string) => {
+    const target = nat64Target(address);
+    return list.check(address, family(address)) || (target !== undefined && list.check(target));
+  };
   return (host: string, address: string) =>
-    !blocked.check(address, family(address)) ||
-    hosts.has(host.toLowerCase()) ||
-    allowed.check(address, family(address));
+    !matches(blocked, address) || hosts.has(host.toLowerCase()) || matches(allowed, address);
 }
 
 /**
@@ -168,16 +196,16 @@ export function createEgressFetch(
       const method = request.method?.toUpperCase();
       const toGet =
         status === 303 ? method !== "HEAD" : (status === 301 || status === 302) && method === "POST";
-      if (toGet) {
-        request = { ...request, method: "GET", body: null };
+      const headers = new Headers(request.headers);
+      for (const name of [...headers.keys()]) {
+        const bodyHeader = toGet && name.startsWith("content-");
+        // Credentials come in many headers (authorization, x-api-key, a webhook secret), so only
+        // headers known to carry none follow a request to another origin.
+        const credential = next.origin !== url.origin && !crossOriginHeaders.has(name);
+        if (bodyHeader || credential) headers.delete(name);
       }
-      // Credentials don't follow a request to another origin either.
-      if (next.origin !== url.origin) {
-        const headers = new Headers(request.headers);
-        headers.delete("authorization");
-        headers.delete("cookie");
-        request = { ...request, headers };
-      }
+      request = { ...request, headers };
+      if (toGet) request = { ...request, method: "GET", body: null };
       url = next;
     }
   };

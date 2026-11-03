@@ -114,6 +114,18 @@ const blocked = [
   ["IPv4-mapped private", "::ffff:10.0.0.1"],
   ["IPv4-mapped metadata", "::ffff:169.254.169.254"],
   ["IPv4-mapped CGNAT", "::ffff:100.64.0.1"],
+  ["IPv4-compatible loopback", "::7f00:1"],
+  ["NAT64 metadata", "64:ff9b::a9fe:a9fe"],
+  ["NAT64 loopback", "64:ff9b::7f00:1"],
+  ["NAT64 this network", "64:ff9b::"],
+  ["local-use NAT64", "64:ff9b:1::1"],
+  ["6to4", "2002:a9fe:a9fe::1"],
+  ["IETF protocol assignments", "192.0.0.1"],
+  ["benchmarking", "198.18.0.1"],
+  ["multicast", "224.0.0.1"],
+  ["multicast", "ff02::1"],
+  ["reserved", "240.0.0.1"],
+  ["broadcast", "255.255.255.255"],
 ] as const;
 
 describe("egressPolicy", () => {
@@ -122,7 +134,10 @@ describe("egressPolicy", () => {
     expect(egressPolicy(hosted())("host.test", address)).toBe(false);
   });
 
-  const publicAddresses = ["93.184.216.34", "8.8.8.8", "172.32.0.1", "100.128.0.1", "2606:4700::1"];
+  const publicAddresses = [
+    ...["93.184.216.34", "8.8.8.8", "172.32.0.1", "100.128.0.1", "198.20.0.1", "223.255.255.255"],
+    ...["2606:4700::1", "64:ff9b::808:808", "64:ff9b::5db8:d822"],
+  ];
   it.each(publicAddresses)(
     "lets the public address %s through",
     (address) => {
@@ -134,6 +149,10 @@ describe("egressPolicy", () => {
     expect(egressPolicy(selfHosted("192.168.1.0/24"))("192.168.1.10", "192.168.1.10")).toBe(true);
     expect(egressPolicy(selfHosted("192.168.1.0/24"))("192.168.2.10", "192.168.2.10")).toBe(false);
     expect(egressPolicy(hosted("192.168.1.0/24"))("192.168.1.10", "192.168.1.10")).toBe(false);
+  });
+
+  it("lets an allowlisted CIDR through behind NAT64 too", () => {
+    expect(egressPolicy(selfHosted("10.0.0.0/8"))("ollama.test", "64:ff9b::a00:5")).toBe(true);
   });
 
   it("lets an allowlisted host through whatever it resolves to, on self-hosted only", () => {
@@ -224,19 +243,25 @@ describe("createEgressFetch", () => {
     await expect(open()(reach("/to-ftp"))).rejects.toThrow(EgressBlockedError);
   });
 
-  it("drops credentials on a redirect to another origin", async () => {
+  it("keeps only headers without credentials on a redirect to another origin", async () => {
     const before = requests.length;
-    await open()(reach("/to-other"), { headers: { authorization: "Bearer secret" } });
-    expect(requests.slice(before).map((r) => r.headers.authorization)).toEqual([
-      "Bearer secret",
-      undefined,
-    ]);
+    const headers = { authorization: "Bearer secret", "x-api-key": "secret", accept: "text/xml" };
+    await open()(reach("/to-other"), { headers });
+    const [first, second] = requests.slice(before).map((r) => r.headers);
+    expect(first).toMatchObject(headers);
+    expect(second).toMatchObject({ accept: "text/xml" });
+    expect(second).not.toHaveProperty("authorization");
+    expect(second).not.toHaveProperty("x-api-key");
   });
 
-  it("turns a POST into a GET on a 303", async () => {
+  it("turns a POST into a GET without its body headers on a 303", async () => {
     const before = requests.length;
-    await open()(reach("/see-other"), { method: "POST", body: "payload" });
-    expect(requests.slice(before).map((r) => r.method)).toEqual(["POST", "GET"]);
+    const headers = { "content-type": "application/json", "x-trace": "1" };
+    await open()(reach("/see-other"), { method: "POST", body: "{}", headers });
+    const [post, get] = requests.slice(before);
+    expect([post?.method, get?.method]).toEqual(["POST", "GET"]);
+    expect(get?.headers).not.toHaveProperty("content-type");
+    expect(get?.headers).toMatchObject({ "x-trace": "1" });
   });
 
   it("fails a request with no response within the timeout", async () => {
