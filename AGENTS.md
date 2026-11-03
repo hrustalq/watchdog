@@ -34,3 +34,7 @@ A rule relaxed for some files goes in that package's `eslint.config.mjs`, scoped
 
 - Commit messages and PR titles follow Conventional Commits (see README). Start the subject with a lowercase imperative verb (`feat(web): sign in by magic link`), because commitlint's `subject-case` rejects a subject that starts with a capital, even a proper noun. Later words keep their case (`fix(web): handle GitHub sign-in errors`). Keep body lines to 100 characters or fewer.
 - Never push with `--no-verify`. When the pre-push hook fails, fix the cause.
+
+## Releases
+
+release-please owns `CHANGELOG.md`, the `version` in the root `package.json`, `.release-please-manifest.json` and the release PR (`chore(release): release X.Y.Z`). Agents never edit them by hand and never merge, edit or push to a release PR. A person cuts each release. See README.

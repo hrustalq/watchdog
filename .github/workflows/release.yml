@@ -1,0 +1,30 @@
+name: Release
+
+# Keeps one release PR open that bumps the version and adds the next CHANGELOG.md section.
+# A person merges it; then this run tags vX.Y.Z and publishes the GitHub Release.
+on:
+  push:
+    branches: [main]
+
+# release-please acts with RELEASE_PLEASE_TOKEN, so the default GITHUB_TOKEN needs nothing.
+permissions:
+  contents: read
+
+env:
+  HUSKY: 0
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Not GITHUB_TOKEN: this repo doesn't let Actions open PRs, and a PR opened with it would
+      # trigger no CI. RELEASE_PLEASE_TOKEN is a fine-grained PAT (or GitHub App token) with
+      # Contents, Issues (labels) and Pull requests write. Without it this run fails.
+      - uses: googleapis/release-please-action@v5
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}

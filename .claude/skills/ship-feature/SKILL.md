@@ -26,6 +26,7 @@ Run these in parallel:
 - **`next`:** take the open milestone that sorts first by title (`M0 …`, `M1 …`), and in it the lowest-numbered open issue with no assignee:
   `gh issue list --milestone "<title>" --state open --json number,title,assignees --jq 'map(select(.assignees|length==0))|sort_by(.number)|.[0]'`
   Get the milestones with `gh api 'repos/{owner}/{repo}/milestones?state=open' --jq 'sort_by(.title)|.[].title'`.
+- **Never the release PR.** release-please keeps one open PR titled `chore(release): release X.Y.Z` (on a `release-please--branches--main…` branch). It isn't an issue to ship. Don't edit, update or merge it, because a person cuts each release.
 
 Then check that the work can start:
 
@@ -70,6 +71,7 @@ While you work:
 - **A new or changed env var** goes into `.env.example` and onto the Configuration page in the same change (see step 7).
 - **When the code needs to differ from what a doc page says**, or the issue asks for a docs update, change the page (step 7). Don't let code and docs quietly drift apart.
 - **Stay in scope.** If you find adjacent work, write it down as a follow-up. Don't widen the PR. Smaller diffs are the reason one issue makes one PR.
+- **Never touch the release files.** release-please writes `CHANGELOG.md`, the `version` in the root `package.json` and `.release-please-manifest.json`. Don't edit them by hand. The squash commit's subject (the PR title, passed with `--subject` in step 9) decides the changelog entry (`feat` is a Feature, `fix` a Bug Fix, `!` a breaking change), so pick it with that in mind.
 - **Keep to the stack** in ADR 0011 (pnpm, Turborepo, Drizzle, Better Auth, pg-boss). A new dependency should earn its place, and `ponytail-review` will ask about it.
 
 ## 5. Quality gates
@@ -156,7 +158,7 @@ After the merge:
 
 - `git switch main && git pull --ff-only`, then delete the local branch.
 - `gh issue view N --json state` should say `CLOSED`, closed by `Closes #N`. If it doesn't, close it with a comment that links the PR.
-- Watch the run on `main` (`gh run list --branch main --limit 1`, then `gh run watch <id>`). The smoke test runs only there. If `main` goes red, say so right away and fix it forward on a new branch, because a red `main` blocks every later issue.
+- Watch the run on `main` (`gh run list --commit "$(git rev-parse HEAD)"`, then `gh run watch <id>` for each of CI, Commitlint and Release). The smoke test runs only there. Release updates the release PR. Leave that PR alone. If `main` goes red, say so right away and fix it forward on a new branch, because a red `main` blocks every later issue.
 - If the docs MR has merged by now, bump the submodule pointer through a small PR (`chore(docs): point submodule at Knowledge main`). If it hasn't, list it as pending.
 
 ## 10. Wrap up

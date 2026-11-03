@@ -68,3 +68,17 @@ Tests are Vitest. A file named `*.int.test.ts` is an integration test: it may st
 A new git worktree gets the hooks after its own `pnpm install`. `HUSKY=0` skips installing them, as CI does.
 
 Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope)!: subject`, e.g. `fix(db): close the pool on shutdown`. Scopes are `web`, `worker`, `core`, `db`, `docs`, `deps`, `ci` and `release`, and the scope is optional. PRs are squash-merged, so CI checks the PR title the same way.
+
+## Releases
+
+Watchdog has one product version, following [SemVer](https://semver.org/). It lives in the root `package.json` and `.release-please-manifest.json`. The packages under `apps/` and `packages/` are private and have no version of their own.
+
+[release-please](https://github.com/googleapis/release-please) cuts releases from the commit history (`.github/workflows/release.yml`, configured in `release-please-config.json`). On every push to `main` it updates one open release PR, `chore(release): release X.Y.Z`, which bumps the version and adds the next section to [`CHANGELOG.md`](CHANGELOG.md). The subjects of the commits on `main`, one per squash-merged PR, decide the bump:
+
+- `fix`, `perf` and `revert` are patch releases, listed under "Bug Fixes", "Performance" and "Reverts". `feat` is a minor release, under "Features".
+- A breaking change (`feat!:` or a `BREAKING CHANGE:` footer) is listed under "⚠ BREAKING CHANGES". While the version is `0.x` it bumps the minor version, so **any `0.x` minor release may break your install**: read its breaking changes before upgrading. From `1.0.0` on, a breaking change is a major release.
+- Every other type (`docs`, `test`, `ci`, `chore`, `style`, `refactor`, `build`) stays out of the changelog, and a push with only those opens no release.
+
+A person merges the release PR. That run tags the commit `vX.Y.Z` and publishes a [GitHub Release](https://github.com/hrustalq/watchdog/releases) with the same notes as its `CHANGELOG.md` section.
+
+The workflow acts with the `RELEASE_PLEASE_TOKEN` repo secret: a fine-grained personal access token (or GitHub App token) for this repo with Contents, Issues and Pull requests read and write. release-please labels its PR through the Issues API. The default `GITHUB_TOKEN` won't do, because a PR it opens triggers no workflows, so CI wouldn't run on the release PR. Without the secret the Release workflow fails.
