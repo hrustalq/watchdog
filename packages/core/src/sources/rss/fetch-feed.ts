@@ -20,7 +20,7 @@ export type FetchFeedResult =
   | { notModified: true }
   | { entries: ItemDraft[]; fetchState: FetchState; feedTitle: string | null };
 
-export const userAgent = `Watchdog/${rootPackage.version} (+https://github.com/hrustalq/watchdog)`;
+const userAgent = `Watchdog/${rootPackage.version} (+https://github.com/hrustalq/watchdog)`;
 
 export async function fetchFeed(
   url: string,
@@ -44,7 +44,7 @@ export async function fetchFeed(
     await response.body?.cancel();
     throw new Error(`${url} answered ${String(response.status)} ${response.statusText}`.trim());
   }
-  const text = decode(new Uint8Array(await response.arrayBuffer()), response.headers.get("content-type"));
+  const text = await response.text();
 
   let parsed;
   try {
@@ -58,9 +58,6 @@ export async function fetchFeed(
   let feedTitle: string | undefined;
   switch (parsed.format) {
     case "rss":
-      entries = (parsed.feed.items ?? []).map((item) => fromRss(item, base));
-      feedTitle = parsed.feed.title;
-      break;
     case "rdf":
       entries = (parsed.feed.items ?? []).map((item) => fromRss(item, base));
       feedTitle = parsed.feed.title;
@@ -73,14 +70,11 @@ export async function fetchFeed(
       throw new Error(`${url} is not an RSS or Atom feed`);
   }
 
-  const next: FetchState = {};
   const etag = response.headers.get("etag");
   const lastModified = response.headers.get("last-modified");
-  if (etag !== null) next.etag = etag;
-  if (lastModified !== null) next.lastModified = lastModified;
   return {
     entries: entries.filter((entry) => entry !== undefined),
-    fetchState: next,
+    fetchState: { ...(etag !== null && { etag }), ...(lastModified !== null && { lastModified }) },
     feedTitle: orNull(feedTitle),
   };
 }
@@ -144,19 +138,4 @@ function date(value: string | undefined) {
 
 function orNull(value: string | undefined) {
   return value === undefined || value.trim() === "" ? null : value;
-}
-
-/** Decodes the body in the charset the response or the XML declaration names, UTF-8 otherwise. */
-function decode(bytes: Uint8Array, contentType: string | null) {
-  const declared =
-    /charset="?([\w.:-]+)/i.exec(contentType ?? "")?.[1] ??
-    /^\s*<\?xml[^>]*encoding=["']([\w.:-]+)/.exec(
-      new TextDecoder("latin1").decode(bytes.subarray(0, 200)),
-    )?.[1];
-  try {
-    return new TextDecoder(declared ?? "utf-8").decode(bytes);
-  } catch {
-    // An unknown charset label.
-    return new TextDecoder().decode(bytes);
-  }
 }
