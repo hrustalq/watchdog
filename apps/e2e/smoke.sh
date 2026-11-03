@@ -5,6 +5,7 @@
 export COMPOSE_PROJECT_NAME=watchdog-smoke
 
 docker compose down --volumes || exit
+rm -f compose.log
 if docker compose up --detach --build --wait && playwright test; then
   docker compose down --volumes
 else

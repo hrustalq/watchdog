@@ -3,13 +3,15 @@ import { setTimeout } from "node:timers/promises";
 import { promisify } from "node:util";
 
 // With no mail server, a self-hosted Watchdog prints its setup link and every magic link to the
-// web container's log, so the smoke test reads its links from there. `pnpm smoke` sets
-// COMPOSE_PROJECT_NAME, so `docker compose` here reaches the stack it started.
+// web container's log, so the smoke test reads its links from there. The project is named outright,
+// as in smoke.sh, so a run without that script can't claim the install that `docker compose up`
+// started and make smoke@example.com its admin.
 
 const run = promisify(execFile);
 
 async function webLog() {
-  const { stdout } = await run("docker", ["compose", "logs", "--no-log-prefix", "web"]);
+  const args = ["compose", "--project-name", "watchdog-smoke", "logs", "--no-log-prefix", "web"];
+  const { stdout } = await run("docker", args);
   return stdout;
 }
 
@@ -30,7 +32,7 @@ export const setupLink = () =>
 
 /** The link in the last sign-in mail printed for `email`. */
 export const magicLink = (email: string) =>
-  linkFromWebLog(`magic link for ${email}`, (log) => {
+  linkFromWebLog(`magic link for ${email} (with SMTP set in .env, it was mailed instead)`, (log) => {
     const mail = log.lastIndexOf(`To: ${email}\n`);
     return mail === -1 ? undefined : /https?:\/\/\S+\/magic-link\/verify\?\S+/.exec(log.slice(mail))?.[0];
   });
