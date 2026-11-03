@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { returnTo } from "@/lib/return-to";
 import { server } from "@/lib/server";
 
 // Not a "use server" module: its exports take redirect targets, which a client must not choose.
@@ -20,9 +21,10 @@ export async function postToAuth(path: string, body: Record<string, unknown>) {
 }
 
 /**
- * Asks Better Auth for a magic link for the form's email, then goes to check-email. A failure goes
- * back to `errorPage` with an `error` code (and the email, when it was the problem). `from` tells
- * check-email which page sent the link.
+ * Asks Better Auth for a magic link for the form's email, then goes to check-email. Signing in with
+ * the link returns to the form's `next` page. A failure goes back to `errorPage` with an `error`
+ * code (and the email, when it was the problem), still holding `next`. `from` tells check-email
+ * which page sent the link.
  */
 export async function requestMagicLink(
   formData: FormData,
@@ -31,14 +33,19 @@ export async function requestMagicLink(
   const field = formData.get("email");
   const email = typeof field === "string" ? field.trim() : "";
 
+  const next = returnTo(formData.get("next"));
+
   // No callbackURL: the emailed link opens the confirm page, whose form sets where verify lands.
-  const response = await postToAuth("/api/auth/sign-in/magic-link", { email });
+  // sendMagicLink puts `next` on that link.
+  const response = await postToAuth("/api/auth/sign-in/magic-link", { email, metadata: { next } });
 
   const sent = new URLSearchParams({ email });
   if (from !== undefined) sent.set("from", from);
+  if (next !== "/") sent.set("next", next);
   if (response.ok) redirect(`/sign-in/check-email?${sent}`);
 
   const back = new URL(errorPage, "http://watchdog.invalid");
+  if (next !== "/") back.searchParams.set("next", next);
   // Better Auth rejects an address it can't parse with a 400. A failed send is logged by it.
   if (response.status === 400) {
     back.searchParams.set("error", "invalid-email");

@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createAuth, enabledProviders } from "./auth.ts";
 import { isInstanceAdmin } from "./instance.ts";
+import { pathHeader, returnTo, signInPath } from "./return-to.ts";
 import { workspaceFor } from "./workspace.ts";
 
 function start() {
@@ -42,13 +43,13 @@ export function server() {
 
 /**
  * The signed-in user, their Workspace, and whether they're the admin of this self-hosted install.
- * Without a valid session it redirects to sign-in.
+ * Without a valid session it redirects to sign-in, which returns to this page.
  */
 export async function requireWorkspace() {
   const requestHeaders = await headers();
   const { auth, db, mode } = server();
   const session = await auth.api.getSession({ headers: requestHeaders });
-  if (session === null) redirect("/sign-in");
+  if (session === null) redirect(signInPath(returnTo(requestHeaders.get(pathHeader))));
   const [workspace, admin] = await Promise.all([
     workspaceFor(db, session.user),
     mode === "self-hosted" && isInstanceAdmin(db, session.user),

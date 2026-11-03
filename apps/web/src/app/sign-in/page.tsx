@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { providerNames, type ProviderId } from "@/lib/auth";
+import { returnTo } from "@/lib/return-to";
 import { server } from "@/lib/server";
 import { signInWithProvider } from "./actions";
 import { SignInForm } from "./sign-in-form";
@@ -18,7 +19,8 @@ export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
           Enter your email and we&apos;ll send you a link that signs you in. No password needed.
         </p>
       </div>
-      {/* The form is in the static shell; an error, read from the URL, streams in over it. */}
+      {/* The form is in the static shell; an error and the page to return to, read from the URL,
+          stream in over it. */}
       <Suspense fallback={<SignInForm />}>
         <SignInFormWithError searchParams={searchParams} />
       </Suspense>
@@ -74,19 +76,21 @@ const unknownError =
   "Signing in didn't work. Try again. If it keeps failing, whoever runs this Watchdog can find the cause in its log.";
 
 async function SignInFormWithError({ searchParams }: Pick<PageProps<"/sign-in">, "searchParams">) {
-  const { error, email, via } = await searchParams;
-  if (typeof error !== "string") return <SignInForm />;
+  const { error, email, via, next } = await searchParams;
+  // The page to return to after signing in. The action checks it again, since a form can be forged.
+  const hidden = <input type="hidden" name="next" value={returnTo(next)} />;
+  if (typeof error !== "string") return <SignInForm hidden={hidden} />;
   if (error === "invalid-email") {
-    return <SignInForm email={typeof email === "string" ? email : ""} invalidEmail />;
+    return <SignInForm hidden={hidden} email={typeof email === "string" ? email : ""} invalidEmail />;
   }
   const providerNotice = lookup(providerNotices, error);
   if (providerNotice !== undefined) {
     const withProvider = isProvider(via) ? `with ${providerNames[via]}` : "with that provider";
-    return <SignInForm notice={providerNotice(withProvider)} />;
+    return <SignInForm hidden={hidden} notice={providerNotice(withProvider)} />;
   }
   const refusal = lookup(refusals, error);
-  if (refusal !== undefined) return <SignInForm notice={refusal} noticeTone="neutral" />;
-  return <SignInForm notice={lookup(notices, error) ?? unknownError} />;
+  if (refusal !== undefined) return <SignInForm hidden={hidden} notice={refusal} noticeTone="neutral" />;
+  return <SignInForm hidden={hidden} notice={lookup(notices, error) ?? unknownError} />;
 }
 
 /** Read per request: which providers are on comes from the runtime environment, not the build. */

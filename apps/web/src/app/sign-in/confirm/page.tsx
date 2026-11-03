@@ -17,10 +17,11 @@ export const instant = false;
 /**
  * Where the emailed magic link lands. Loading it spends nothing, so a mail gateway that fetches the
  * link first leaves it working. The button GETs Better Auth's verify endpoint, which spends the
- * token, sets the session cookie and redirects: to the Workspace, or to sign-in's "expired" notice.
+ * token, sets the session cookie and redirects: to the page sign-in was opened from, or to
+ * sign-in's "expired" notice.
  */
 export default async function ConfirmPage({ searchParams }: PageProps<"/sign-in/confirm">) {
-  const { token } = await searchParams;
+  const { token, next } = await searchParams;
   return (
     <>
       <div className="flex flex-col gap-1">
@@ -33,7 +34,7 @@ export default async function ConfirmPage({ searchParams }: PageProps<"/sign-in/
       {/* A missing token is sent anyway: Better Auth answers with the "expired" notice on sign-in. */}
       <ConfirmForm
         action={verifyForm.action}
-        fields={{ token: typeof token === "string" ? token : "", ...verifyForm.fields }}
+        fields={{ token: typeof token === "string" ? token : "", ...verifyForm.fields(next) }}
       />
     </>
   );

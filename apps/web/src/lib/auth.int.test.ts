@@ -36,13 +36,13 @@ describe("magic link sign-in", () => {
     };
   }, 120_000);
 
-  /** Asks for a magic link, as the sign-in page does. */
-  async function requestLink(email: string) {
+  /** Asks for a magic link, as the sign-in action does, with the page to return to. */
+  async function requestLink(email: string, next = "/") {
     const request = await auth.handler(
       new Request(`${baseURL}/api/auth/sign-in/magic-link`, {
         method: "POST",
         headers: { "content-type": "application/json", origin: baseURL },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, metadata: { next } }),
       }),
     );
     expect(request.status).toBe(200);
@@ -61,6 +61,8 @@ describe("magic link sign-in", () => {
       .map((cookie) => cookie.split(";")[0])
       .join("; ");
   }
+
+  const tokenOf = (link: string) => new URL(link).searchParams.get("token") ?? "";
 
   const emailedLink = () => /https?:\/\/\S+/.exec(mails.at(-1)?.text ?? "")?.[0] ?? "";
 
@@ -150,6 +152,37 @@ describe("magic link sign-in", () => {
     // Better Auth's lookup skips expired rows, so an expired link reads as an unknown one.
     expect(expired.headers.get("location")).toBe(`${baseURL}/sign-in?error=INVALID_TOKEN`);
   });
+
+  it("returns to the page sign-in was opened from", async () => {
+    await requestLink("judy@example.com", "/some/page?x=1");
+    expect(emailedLink()).toBe(`${baseURL}/sign-in/confirm?${new URLSearchParams({ token: tokenOf(emailedLink()), next: "/some/page?x=1" })}`);
+
+    const verified = await pressSignIn(auth, emailedLink());
+
+    expect(verified.headers.get("location")).toBe(`${baseURL}/some/page?x=1`);
+  });
+
+  it("keeps the page to return to when the link has stopped working", async () => {
+    await requestLink("kim@example.com", "/some/page?x=1");
+    await pressSignIn(auth, emailedLink());
+
+    const again = await pressSignIn(auth, emailedLink());
+
+    expect(again.headers.get("location")).toBe(`${baseURL}/sign-in?next=%2Fsome%2Fpage%3Fx%3D1&error=INVALID_TOKEN`);
+  });
+
+  it.each(["//evil.example", "https://evil.example", "/\\evil.example"])(
+    "returns to / instead of %s from a link that names it",
+    async (next) => {
+      await requestLink("leo@example.com");
+      const forged = new URL(emailedLink());
+      forged.searchParams.set("next", next);
+
+      const verified = await pressSignIn(auth, forged.toString());
+
+      expect(verified.headers.get("location")).toBe(`${baseURL}/`);
+    },
+  );
 
   it("stores only a hash of the magic link's token", async () => {
     await requestLink("frank@example.com");
