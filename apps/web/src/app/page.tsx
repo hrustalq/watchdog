@@ -141,7 +141,7 @@ function FeedList({ items }: { items: FeedItem[] }) {
             </p>
           </div>
           {row.excerpt === "" ? null : (
-            <p className="line-clamp-2 max-w-[70ch] text-sm break-words text-muted-foreground">
+            <p className="line-clamp-1 max-w-[70ch] text-sm break-words text-muted-foreground">
               {row.excerpt}
             </p>
           )}
