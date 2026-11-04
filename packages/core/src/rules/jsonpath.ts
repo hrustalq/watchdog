@@ -41,7 +41,7 @@ export function jsonPathError(path: string): string | undefined {
 /** What a validated path finds in `raw`, or undefined when `raw` nests too deeply to walk. */
 export function jsonPathValues(path: string, raw: unknown): unknown[] | undefined {
   try {
-    // `raw` came out of a jsonb column.
+    // eslint-disable-next-line @typescript-eslint/consistent-type-assertions -- it came out of a jsonb column
     return env.findAll(path, raw as JSONValue);
   } catch (error) {
     if (error instanceof JSONPathError) return undefined;

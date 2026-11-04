@@ -69,14 +69,15 @@ export function extractFields(fields: readonly Field[], source: ExtractionSource
     const target = field.type.startsWith("string") ? "string" : "integer";
     const convert: (value: unknown) => Value | undefined = target === "string" ? asString : asInteger;
     const converted = wanted.map(convert).filter((value) => value !== undefined);
+    const [first] = converted;
     // All of an array or none of it: a shorter list would look like a true one.
-    if (converted.length < wanted.length) {
+    if (first === undefined || converted.length < wanted.length) {
       const refused = wanted.find((value) => convert(value) === undefined);
       const reason = `it holds ${kindOf(refused)}, which can't convert to ${target}`;
       extraction.problems.push({ name, reason });
       continue;
     }
-    extraction.values.push({ name, value: isArray ? converted : (converted[0] as Value) });
+    extraction.values.push({ name, value: isArray ? converted : first });
   }
   return extraction;
 }
