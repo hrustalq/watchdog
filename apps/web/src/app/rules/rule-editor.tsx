@@ -15,6 +15,12 @@ import { appliesFromNow, modelLink } from "./words";
 
 const yamlBox = cn(textBox, dataBox, "min-h-80 py-2 leading-[1.5]");
 
+/** YAML with its comments and layout set aside, so only a change of value makes two differ. */
+function whatItSays(yaml: string) {
+  const read = readDraft(yaml);
+  return "draft" in read ? draftToYaml(read.draft) : yaml;
+}
+
 interface RuleEditorProps {
   target: RuleTarget | null;
   initialYaml: string;
@@ -52,7 +58,7 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
   const [yaml, setYaml] = useState(initialYaml);
   const [view, setView] = useState<"form" | "yaml">("draft" in first ? "form" : "yaml");
   const [unreadable, setUnreadable] = useState<string | null>(null);
-  const [sent, setSent] = useState(initialYaml);
+  const [sent, setSent] = useState(() => whatItSays(initialYaml));
   // The YAML view is the draft while it's open, so what it says now decides the notice below.
   const readYaml = view === "yaml" ? readDraft(yaml) : undefined;
   const current = readYaml !== undefined && "draft" in readYaml ? readYaml.draft : draft;
@@ -69,8 +75,8 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
       setUnreadable(read.error);
       return;
     }
-    // The problems are about the text that was sent, so edited YAML puts their places out of date.
-    if (yaml !== sent) setCleared(state);
+    // The problems are about the rule that was sent, so an edit in YAML puts their places out of date.
+    if (whatItSays(yaml) !== sent) setCleared(state);
     setDraft(read.draft);
     setUnreadable(null);
     setView("form");
@@ -90,7 +96,7 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
       onSubmit={(event) => {
         event.preventDefault();
         const data = new FormData(event.currentTarget);
-        setSent(view === "yaml" ? yaml : draftToYaml(draft));
+        setSent(whatItSays(view === "yaml" ? yaml : draftToYaml(draft)));
         startTransition(() => {
           formAction(data);
         });
