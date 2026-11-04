@@ -29,6 +29,7 @@ import {
 } from "./rules.ts";
 
 const unique = () => crypto.randomUUID();
+const containing = (text: string): unknown => expect.stringContaining(text);
 
 const classifierYaml = (name = unique()) => `classifier: ${name}
 when:
@@ -176,14 +177,14 @@ describe("Rules", () => {
     it("refuses a regex that doesn't compile, beside the regex", async () => {
       const yaml = `classifier: ${unique()}\nwhen:\n  all:\n    - { field: title, op: matches, value: "(" }\nassign: [x]\n`;
       expect(await problems(yaml)).toEqual([
-        { path: "when.all.0.value", message: expect.stringContaining("isn't a regular expression") },
+        { path: "when.all.0.value", message: containing("isn't a regular expression") },
       ]);
     });
 
     it("refuses a regex field with no capture group, beside it", async () => {
       const yaml = extractorYaml(unique()).replace("(CVE-\\d+-\\d+)", "CVE");
       expect(await problems(yaml)).toEqual([
-        { path: "fields.0.regex", message: expect.stringContaining("no capture group") },
+        { path: "fields.0.regex", message: containing("no capture group") },
       ]);
     });
 
@@ -192,13 +193,13 @@ describe("Rules", () => {
       ["extractor", `extractor: ${unique()}\nwhen: { field: severity, op: gte, value: 4 }\nfields: [{ name: a, type: string, jsonpath: "$" }]\n`],
     ])("refuses an out-of-stage field on a %s, beside the field", async (_, yaml) => {
       expect(await problems(yaml)).toEqual([
-        { path: "when.field", message: expect.stringContaining('"severity"') },
+        { path: "when.field", message: containing('"severity"') },
       ]);
     });
 
     it("refuses a Category test on a Classifier, naming the field", async () => {
       const yaml = `classifier: ${unique()}\nwhen: { field: category, op: is, value: x }\nassign: [x]\n`;
-      expect(await problems(yaml)).toEqual([{ path: "when.field", message: expect.stringContaining('"category"') }]);
+      expect(await problems(yaml)).toEqual([{ path: "when.field", message: containing('"category"') }]);
     });
 
     it.each([
@@ -219,20 +220,20 @@ describe("Rules", () => {
       ["a key it doesn't know", (yaml: string) => `${yaml}note: hi\n`, "", '"note"'],
     ])("says plainly what's wrong with %s", async (_, change, path, message) => {
       expect(await problems(change(classifierYaml()))).toEqual([
-        { path, message: expect.stringContaining(message) },
+        { path, message: containing(message) },
       ]);
     });
 
     it("says which types a field can have", async () => {
       const yaml = extractorYaml(unique()).replace("type: string", "type: date");
       expect(await problems(yaml)).toEqual([
-        { path: "fields.0.type", message: expect.stringContaining("string, integer") },
+        { path: "fields.0.type", message: containing("string, integer") },
       ]);
     });
 
     it("refuses a name over 200 characters, which the unique index couldn't hold", async () => {
       expect(await problems(classifierYaml("x".repeat(201)))).toEqual([
-        { path: "classifier", message: expect.stringContaining("200") },
+        { path: "classifier", message: containing("200") },
       ]);
       expect(await problems(classifierYaml("x".repeat(9000)))).toHaveLength(1);
     });
@@ -242,33 +243,33 @@ describe("Rules", () => {
       ["half a surrogate pair", String.raw`"a\uD800b"`],
     ])("refuses %s, which Postgres can't store", async (_, value) => {
       const yaml = `classifier: ${unique()}\nwhen: { field: title, op: contains, value: ${value} }\nassign: [x]\n`;
-      expect(await problems(yaml)).toEqual([{ path: "", message: expect.stringContaining("can't store") }]);
+      expect(await problems(yaml)).toEqual([{ path: "", message: containing("can't store") }]);
     });
 
     it("stores text that only looks like an escape of those", async () => {
       const yaml = `classifier: ${unique()}\nwhen: { field: title, op: contains, value: '\\u0000 \\ud800' }\nassign: [x]\n`;
-      await saved(ours, yaml);
+      expect(await saveRule(db, ours, null, yaml)).toHaveProperty("saved");
     });
 
     it("refuses a second rule of the same type with the same name, beside the name", async () => {
       const name = unique();
       await saved(ours, classifierYaml(name));
       expect(await problems(classifierYaml(name))).toEqual([
-        { path: "classifier", message: expect.stringContaining(name) },
+        { path: "classifier", message: containing(name) },
       ]);
     });
 
     it("lets a Classifier and an Extractor Rule share a name, and another Workspace use it", async () => {
       const name = unique();
       await saved(ours, classifierYaml(name));
-      await saved(ours, extractorYaml(unique(), name));
-      await saved(theirs, classifierYaml(name));
+      expect(await saveRule(db, ours, null, extractorYaml(unique(), name))).toHaveProperty("saved");
+      expect(await saveRule(db, theirs, null, classifierYaml(name))).toHaveProperty("saved");
     });
 
     it("refuses turning a saved Classifier into an Extractor Rule", async () => {
       const { type, id } = await saved(ours, classifierYaml());
       expect(await problems(extractorYaml(unique()), { type, id })).toEqual([
-        { path: "", message: expect.stringContaining("can't become") },
+        { path: "", message: containing("can't become") },
       ]);
     });
   });
@@ -281,7 +282,7 @@ describe("Rules", () => {
 
       const reply = await problems(extractorYaml(field));
 
-      expect(reply).toEqual([{ path: "fields.0.name", message: expect.stringContaining(other) }]);
+      expect(reply).toEqual([{ path: "fields.0.name", message: containing(other) }]);
       expect(reply[0]?.message).toContain(field);
     });
 
@@ -299,20 +300,20 @@ describe("Rules", () => {
     it("lets a rule keep its own field names through an edit", async () => {
       const field = unique();
       const target = await saved(ours, extractorYaml(field));
-      await saved(ours, extractorYaml(field), target);
+      expect(await saveRule(db, ours, target, extractorYaml(field))).toHaveProperty("saved");
     });
 
     it("frees a field name when the rule declaring it is deleted", async () => {
       const field = unique();
       const { id } = await saved(ours, extractorYaml(field));
       await removeRule(db, ours, "extractor", id);
-      await saved(ours, extractorYaml(field));
+      expect(await saveRule(db, ours, null, extractorYaml(field))).toHaveProperty("saved");
     });
 
     it("doesn't count another Workspace's rules", async () => {
       const field = unique();
       await saved(theirs, extractorYaml(field));
-      await saved(ours, extractorYaml(field));
+      expect(await saveRule(db, ours, null, extractorYaml(field))).toHaveProperty("saved");
     });
 
     it("lets only one of two concurrent saves declare a field", async () => {
@@ -331,7 +332,7 @@ describe("Rules", () => {
         kind: "deterministic",
         definition: { extractor: "old", fields: "not a list" },
       });
-      await saved(ours, extractorYaml(unique()));
+      expect(await saveRule(db, ours, null, extractorYaml(unique()))).toHaveProperty("saved");
     });
   });
 
@@ -341,7 +342,7 @@ describe("Rules", () => {
       await saved(ours, extractorYaml(field));
       const name = unique();
       expect(await problemsInDraft(db, ours, null, extractorYaml(field, name))).toEqual([
-        { path: "fields.0.name", message: expect.stringContaining(field) },
+        { path: "fields.0.name", message: containing(field) },
       ]);
       expect((await listRules(db, ours)).extractorRules.map((rule) => rule.name)).not.toContain(name);
     });
@@ -437,7 +438,7 @@ describe("Rules", () => {
       expect(await setRuleEnabled(db, ours, type, id, false)).toBe(false);
       expect(await removeRule(db, ours, type, id)).toBe(false);
       expect(await problems(classifierYaml(), { type, id })).toEqual([
-        { path: "", message: expect.stringContaining("doesn't exist") },
+        { path: "", message: containing("doesn't exist") },
       ]);
 
       expect(await getRule(db, theirs, type, id)).toMatchObject({ name, enabled: true });
@@ -449,7 +450,7 @@ describe("Rules", () => {
         expect(await setRuleEnabled(db, ours, "classifier", id, false)).toBe(false);
         expect(await removeRule(db, ours, "classifier", id)).toBe(false);
         expect(await problems(classifierYaml(), { type: "classifier", id })).toEqual([
-          { path: "", message: expect.stringContaining("doesn't exist") },
+          { path: "", message: containing("doesn't exist") },
         ]);
       }
     });

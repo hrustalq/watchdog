@@ -94,7 +94,12 @@ function issueMessage(issue: RuleIssue) {
       return `A rule has no ${issue.keys.map((key) => `"${key}"`).join(" or ")} here. Remove it.`;
     case "invalid_value":
       return `Use one of ${issue.values.join(", ")}.`;
-    default:
+    case "custom":
+    case "invalid_element":
+    case "invalid_format":
+    case "invalid_key":
+    case "invalid_union":
+    case "not_multiple_of":
       return issue.message;
   }
 }

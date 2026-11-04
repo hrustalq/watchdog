@@ -14,6 +14,12 @@ export interface RuleProblem {
   message: string;
 }
 
+/**
+ * The YAML field that only a browser without JavaScript posts, because it sits in a `<noscript>`.
+ * Its presence is how the action knows that returning its problems would leave a blank page.
+ */
+export const yamlWithoutScript = "yamlWithoutScript";
+
 export const pathKey = (path: Path) => path.join(".");
 
 export const isMap = (value: unknown): value is Record<string, unknown> =>
@@ -21,8 +27,14 @@ export const isMap = (value: unknown): value is Record<string, unknown> =>
 const isScalar = (value: unknown): value is string | number =>
   typeof value === "string" || typeof value === "number";
 const isScalarOrAbsent = (value: unknown) => value === undefined || isScalar(value);
+const isList = (value: unknown): value is unknown[] => Array.isArray(value);
 export const isScalarList = (value: unknown): value is (string | number)[] =>
-  Array.isArray(value) && value.every(isScalar);
+  isList(value) && value.every(isScalar);
+
+/** A value as a list, or no entries when it isn't one. */
+export const asList = (value: unknown) => (isList(value) ? value : []);
+/** A value as the text a control shows, or nothing when it isn't one the control can show. */
+export const textOf = (value: unknown) => (isScalar(value) ? String(value) : "");
 const onlyHas = (map: Record<string, unknown>, keys: string[]) =>
   Object.keys(map).every((key) => keys.includes(key));
 
@@ -53,18 +65,17 @@ const removed = Symbol("removed");
 
 function updated(value: unknown, [key, ...rest]: Path, next: unknown): unknown {
   if (key === undefined) return next;
-  if (Array.isArray(value)) {
-    const copy: unknown[] = [...value];
+  if (isList(value)) {
+    const copy = [...value];
     const child = updated(copy[Number(key)], rest, next);
     if (child === removed) copy.splice(Number(key), 1);
     else copy[Number(key)] = child;
     return copy;
   }
-  const copy = isMap(value) ? { ...value } : {};
-  const child = updated(copy[key], rest, next);
-  if (child === removed) delete copy[key];
-  else copy[key] = child;
-  return copy;
+  const map = isMap(value) ? value : {};
+  const child = updated(map[key], rest, next);
+  if (child === removed) return Object.fromEntries(Object.entries(map).filter(([name]) => name !== key));
+  return { ...map, [key]: child };
 }
 
 /** The draft with the value at `path` replaced, leaving the draft it was given alone. */
@@ -136,8 +147,8 @@ export function conditionPart(node: unknown): ConditionPart {
   if (!isMap(node) || tooBigToRender(node)) return "yaml-only";
   const keys = Object.keys(node);
   if (keys.length === 1) {
-    if (Array.isArray(node.all)) return "all";
-    if (Array.isArray(node.any)) return "any";
+    if (isList(node.all)) return "all";
+    if (isList(node.any)) return "any";
     if ("not" in node) return "not";
   }
   const showable =
@@ -172,8 +183,8 @@ export function addTest(node: unknown) {
 
 export function addPart(node: unknown, part: unknown) {
   if (isMap(node)) {
-    if (Array.isArray(node.all)) return { all: [...node.all, part] };
-    if (Array.isArray(node.any)) return { any: [...node.any, part] };
+    if (isList(node.all)) return { all: [...node.all, part] };
+    if (isList(node.any)) return { any: [...node.any, part] };
   }
   return { all: [node, part] };
 }
@@ -188,10 +199,10 @@ export function changeOp(predicate: Record<string, unknown>, op: string) {
   const { field, value } = predicate;
   if (op === "exists") return { field, op };
   if (op === "in") {
-    if (Array.isArray(value)) return { field, op, value };
+    if (isList(value)) return { field, op, value };
     return { field, op, value: value === undefined ? [] : [value] };
   }
-  if (Array.isArray(value)) return { field, op, value: value[0] ?? "" };
+  if (isList(value)) return { field, op, value: value[0] ?? "" };
   return { field, op, value: value ?? "" };
 }
 
@@ -216,24 +227,26 @@ export function fromLines(text: string, { tidy = false } = {}) {
   return tidy ? lines.map((line) => line.trim()).filter((line) => line !== "") : lines;
 }
 
+const formKeys: Record<RuleType, Record<RuleKind, string[]>> = {
+  classifier: {
+    deterministic: ["classifier", "when", "assign"],
+    agent: ["classifier", "prompt", "categories"],
+  },
+  extractor: {
+    deterministic: ["extractor", "when", "fields"],
+    agent: ["extractor", "when", "prompt", "fields"],
+  },
+};
+
 /** The rule's top-level keys the form has no control for. They stay in the draft. */
 export function formHides(draft: Draft) {
-  const type = ruleTypeOf(draft);
-  const agent = kindOf(draft) === "agent";
-  const shown =
-    type === "classifier"
-      ? agent
-        ? ["classifier", "prompt", "categories"]
-        : ["classifier", "when", "assign"]
-      : agent
-        ? ["extractor", "when", "prompt", "fields"]
-        : ["extractor", "when", "fields"];
+  const shown = formKeys[ruleTypeOf(draft)][kindOf(draft)];
   return Object.entries(draft)
     .filter(([key, value]) => {
       if (!shown.includes(key)) return true;
       if (key === "when") return false;
       if (key === "assign" || key === "categories") return !isScalarList(value);
-      if (key === "fields") return !Array.isArray(value);
+      if (key === "fields") return !isList(value);
       return !isScalar(value);
     })
     .map(([key]) => key);

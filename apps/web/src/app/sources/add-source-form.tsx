@@ -1,12 +1,8 @@
+import { field, fieldError, label } from "@/components/field-classes";
 import { schedules } from "@/lib/sources";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
 import { addSource } from "./actions";
-
-const field =
-  "h-8 w-full rounded-lg border border-input bg-transparent px-3 text-base transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/40 sm:text-sm";
-const label = "text-xs font-medium tracking-[0.01em]";
-const fieldError = "text-xs font-medium tracking-[0.01em] text-alarm";
 
 /**
  * Adds an RSS Source. The server fetches the feed before saving it, and a problem comes back on
