@@ -7,6 +7,7 @@ import {
   index,
   jsonb,
   pgTable,
+  smallint,
   text,
   timestamp,
   unique,
@@ -44,8 +45,21 @@ export const item = pgTable(
     raw: jsonb("raw").notNull(),
     /** Written by the Agent from M2. */
     summary: text("summary"),
+    /** The Rating, 1–5 on each axis. Null until rated. */
+    severity: smallint("severity"),
+    importance: smallint("importance"),
+    /** Set when the classify call succeeds, so a retry of the job doesn't call the model again. */
+    classifiedAt: timestamp("classified_at", { withTimezone: true }),
+    ratedAt: timestamp("rated_at", { withTimezone: true }),
+    /** A Correction sets these, and an Agent retry never overwrites what they guard. */
+    ratingCorrectedAt: timestamp("rating_corrected_at", { withTimezone: true }),
+    categoriesCorrectedAt: timestamp("categories_corrected_at", { withTimezone: true }),
+    /** Set when the pipeline has finished with the Item, even if it stays unrated. */
+    processedAt: timestamp("processed_at", { withTimezone: true }),
   },
   (table) => [
+    check("item_severity_check", sql`${table.severity} between 1 and 5`),
+    check("item_importance_check", sql`${table.importance} between 1 and 5`),
     foreignKey({
       name: "item_source_fk",
       columns: [table.workspaceId, table.sourceId],
@@ -74,14 +88,14 @@ export const itemLog = pgTable(
       .notNull()
       .references(() => item.id, { onDelete: "cascade" }),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
-    /** capture in M1. M2 adds classify, extract and rate; M3 adds act (a check, as on source.type). */
-    stage: text("stage", { enum: ["capture"] }).notNull(),
+    /** M3 adds act (a check, as on source.type). */
+    stage: text("stage", { enum: ["capture", "classify", "extract", "rate", "correct"] }).notNull(),
     /** The sentence the user reads, such as "Captured from Hacker News". */
     message: text("message").notNull(),
     data: jsonb("data").notNull().default({}),
   },
   (table) => [
-    check("item_log_stage_check", sql`${table.stage} in ('capture')`),
+    check("item_log_stage_check", sql`${table.stage} in ('capture', 'classify', 'extract', 'rate', 'correct')`),
     index("item_log_item_id_at_idx").on(table.itemId, table.at),
   ],
 );

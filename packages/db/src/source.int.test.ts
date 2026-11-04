@@ -1,15 +1,9 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { sql } from "drizzle-orm";
-import { migrate as applyMigrations } from "drizzle-orm/node-postgres/migrator";
 import { beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, type Db } from "./client.ts";
 import { migrate } from "./migrate.ts";
 import { source, user, workspace } from "./schema/index.ts";
-import { startPostgres, type TestPostgres } from "./testing/postgres.ts";
-
-const migrationsDir = path.join(import.meta.dirname, "../migrations");
+import { migrateFirst, startPostgres, type TestPostgres } from "./testing/postgres.ts";
 
 const rss = (workspaceId: string, name: string, url: string) => ({
   workspaceId,
@@ -78,38 +72,25 @@ describe("source", () => {
     await db.execute(sql`create database at_0004`);
     const url = new URL(postgres.url);
     url.pathname = "/at_0004";
-    // A copy of migrations/ whose journal stops at 0004, to build a database as it stood then.
-    const migrationsAt0004 = await mkdtemp(path.join(tmpdir(), "watchdog-migrations-"));
+    await migrateFirst(url.href, 5);
     let oldest: string | undefined;
+    const old = createDb(url.href);
     try {
-      await cp(migrationsDir, migrationsAt0004, { recursive: true });
-      const journalPath = path.join(migrationsAt0004, "meta/_journal.json");
-      const firstFive = (key: string, value: unknown): unknown =>
-        key === "entries" && Array.isArray(value) ? value.slice(0, 5) : value;
-      const journal = await readFile(journalPath, "utf8");
-      await writeFile(journalPath, JSON.stringify(JSON.parse(journal, firstFive)));
-
-      const old = createDb(url.href);
-      try {
-        await applyMigrations(old, { migrationsFolder: migrationsAt0004 });
-        const [a = "", b = ""] = await twoWorkspaces(old);
-        const feed = "https://example.com/feed.xml";
-        const [first] = await old
-          .insert(source)
-          .values({ ...rss(a, "Oldest", feed), createdAt: new Date("2026-01-01T00:00:00Z") })
-          .returning({ id: source.id });
-        oldest = first?.id;
-        await old.insert(source).values([
-          { ...rss(a, "Newer", feed), createdAt: new Date("2026-02-01T00:00:00Z") },
-          { ...rss(a, "Newest", feed), createdAt: new Date("2026-03-01T00:00:00Z") },
-          rss(a, "Other feed", "https://example.com/other.xml"),
-          rss(b, "Theirs", feed),
-        ]);
-      } finally {
-        await closeDb(old);
-      }
+      const [a = "", b = ""] = await twoWorkspaces(old);
+      const feed = "https://example.com/feed.xml";
+      const [first] = await old
+        .insert(source)
+        .values({ ...rss(a, "Oldest", feed), createdAt: new Date("2026-01-01T00:00:00Z") })
+        .returning({ id: source.id });
+      oldest = first?.id;
+      await old.insert(source).values([
+        { ...rss(a, "Newer", feed), createdAt: new Date("2026-02-01T00:00:00Z") },
+        { ...rss(a, "Newest", feed), createdAt: new Date("2026-03-01T00:00:00Z") },
+        rss(a, "Other feed", "https://example.com/other.xml"),
+        rss(b, "Theirs", feed),
+      ]);
     } finally {
-      await rm(migrationsAt0004, { recursive: true, force: true });
+      await closeDb(old);
     }
 
     await migrate(url.href);
