@@ -6,7 +6,6 @@ import { field as fieldClass, fieldError, label, textBox } from "@/components/fi
 import { Button } from "@/components/ui/button";
 import {
   addPart,
-  addTest,
   asList,
   blankField,
   blankTest,
@@ -95,16 +94,11 @@ function useEditing() {
 const isUnder = (problem: RuleProblem, key: string) =>
   problem.path === key || problem.path.startsWith(`${key}.`);
 
-/** The problems at this path and below it. */
-function useProblems(path: Path) {
-  const { problems } = useEditing();
-  const key = pathKey(path);
-  return problems.filter((problem) => isUnder(problem, key));
-}
-
 /** What a control says about the problems at its path, which the `Problems` block at `shownAt` holds. */
 function useInvalid(path: Path, shownAt: Path = path) {
-  const invalid = useProblems(path).length > 0;
+  const { problems } = useEditing();
+  const key = pathKey(path);
+  const invalid = problems.some((problem) => isUnder(problem, key));
   return { "aria-invalid": invalid, "aria-describedby": invalid ? `problems-${pathKey(shownAt)}` : undefined };
 }
 
@@ -434,16 +428,21 @@ function PredicateValue({ path, node }: { path: Path; node: Record<string, unkno
 }
 
 /** What can be done to any part of a Condition. */
-function PartActions({ path, node, onRemove }: Pick<PartProps, "path" | "onRemove"> & { node: unknown }) {
+function PartActions({
+  path,
+  node,
+  onRemove,
+  children,
+}: Pick<PartProps, "path" | "onRemove"> & { node: unknown; children?: React.ReactNode }) {
   const { reshape } = useEditing();
+  const part = conditionPart(node);
+  // A test inside a group is added from the group.
+  const addsTest = part === "all" || part === "any" || (part === "predicate" && onRemove === undefined);
   return (
     <div className="flex flex-wrap items-center gap-1">
-      {onRemove === undefined && conditionPart(node) === "predicate" ? (
-        <SmallButton onClick={() => { reshape(path, addTest(node)); }}>Add a test</SmallButton>
-      ) : null}
-      <SmallButton onClick={() => { reshape(path, negate(node)); }}>
-        {conditionPart(node) === "not" ? "Remove not" : "Not"}
-      </SmallButton>
+      {addsTest ? <SmallButton onClick={() => { reshape(path, addPart(node)); }}>Add a test</SmallButton> : null}
+      {children}
+      <SmallButton onClick={() => { reshape(path, negate(node)); }}>{part === "not" ? "Remove not" : "Not"}</SmallButton>
       {onRemove === undefined ? null : <SmallButton onClick={onRemove}>Remove</SmallButton>}
     </div>
   );
@@ -483,12 +482,9 @@ function GroupPart({ path, node, part, type, onRemove }: PartProps & { node: unk
         // Entries have no ids, and every control here is controlled, so an index is a safe key.
         return <ConditionPart key={pathKey(childPath)} path={childPath} type={type} onRemove={() => { remove(childPath); }} />;
       })}
-      <div className="flex flex-wrap items-center gap-1">
-        <SmallButton onClick={() => { reshape(path, addTest(node)); }}>Add a test</SmallButton>
+      <PartActions path={path} node={node} onRemove={onRemove}>
         <SmallButton onClick={() => { reshape(path, addPart(node, { any: [blankTest] })); }}>Add a group</SmallButton>
-        <SmallButton onClick={() => { reshape(path, negate(node)); }}>Not</SmallButton>
-        {onRemove === undefined ? null : <SmallButton onClick={onRemove}>Remove</SmallButton>}
-      </div>
+      </PartActions>
     </div>
   );
 }

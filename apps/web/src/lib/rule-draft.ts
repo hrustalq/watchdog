@@ -26,7 +26,6 @@ export const isMap = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const isScalar = (value: unknown): value is string | number =>
   typeof value === "string" || typeof value === "number";
-const isScalarOrAbsent = (value: unknown) => value === undefined || isScalar(value);
 const isList = (value: unknown): value is unknown[] => Array.isArray(value);
 export const isScalarList = (value: unknown): value is (string | number)[] =>
   isList(value) && value.every(isScalar);
@@ -155,7 +154,7 @@ export function conditionPart(node: unknown): ConditionPart {
     onlyHas(node, ["field", "op", "value"]) &&
     typeof node.field === "string" &&
     typeof node.op === "string" &&
-    (isScalarOrAbsent(node.value) || isScalarList(node.value));
+    (node.value === undefined || isScalar(node.value) || isScalarList(node.value));
   return showable ? "predicate" : "yaml-only";
 }
 
@@ -176,12 +175,8 @@ export function fieldReading(field: Record<string, unknown>, part: "regex" | "js
   return { name, type: type === "integer" ? type : "string", from: "title", regex: "" };
 }
 
-/** The Condition with one more test: added to a group, or grouped with a lone part. */
-export function addTest(node: unknown) {
-  return addPart(node, blankTest);
-}
-
-export function addPart(node: unknown, part: unknown) {
+/** The Condition with one more part, by default a test: added to a group, or grouped with a lone part. */
+export function addPart(node: unknown, part: unknown = blankTest) {
   if (isMap(node)) {
     if (isList(node.all)) return { all: [...node.all, part] };
     if (isList(node.any)) return { any: [...node.any, part] };

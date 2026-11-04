@@ -1,7 +1,7 @@
 import { draftToYaml } from "@watchdog/core/rules/draft";
 import { describe, expect, it } from "vitest";
 import {
-  addTest,
+  addPart,
   blankRule,
   changeOp,
   conditionPart,
@@ -151,15 +151,15 @@ describe("fieldPart", () => {
   });
 });
 
-describe("addTest and negate", () => {
+describe("addPart and negate", () => {
   const test = { field: "title", op: "contains", value: "x" };
 
   it("adds a test beside a lone predicate by grouping them", () => {
-    expect(addTest(test)).toEqual({ all: [test, { field: "title", op: "contains", value: "" }] });
+    expect(addPart(test)).toEqual({ all: [test, { field: "title", op: "contains", value: "" }] });
   });
 
   it("adds a test to a group", () => {
-    expect(addTest({ any: [test] })).toEqual({ any: [test, { field: "title", op: "contains", value: "" }] });
+    expect(addPart({ any: [test] })).toEqual({ any: [test, { field: "title", op: "contains", value: "" }] });
   });
 
   it("negates a part, and undoes a negation", () => {
