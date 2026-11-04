@@ -220,6 +220,16 @@ describe("the Model screen", () => {
 
       expect(await rows(workspaceId)).toHaveLength(1);
     });
+
+    it.each(["https://llm.test/v1?", "https://llm.test/v1#", "https://llm.test/v1/?"])(
+      "stores %s without the empty part the SDK would append its path to",
+      async (baseUrl) => {
+        const workspaceId = await newWorkspace();
+        await save(workspaceId, { baseUrl });
+
+        expect((await active(workspaceId)).baseUrl).toBe("https://llm.test/v1");
+      },
+    );
   });
 
   describe("changing what ran", () => {
@@ -312,6 +322,27 @@ describe("the Model screen", () => {
       expect(await getModel(db, workspaceId)).toBeUndefined();
       expect(await hasActiveModel(db, workspaceId)).toBe(false);
       expect(await db.select().from(agentCall).where(eq(agentCall.modelConfigId, old.id))).toHaveLength(1);
+    });
+
+    it("waits for a save in progress, which could otherwise put a key back on the archived row", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      let removed = false;
+
+      const removal = await db.transaction(async (tx) => {
+        // What a save holds while it reads the current row and updates it.
+        await tx.select({ id: workspace.id }).from(workspace).where(eq(workspace.id, workspaceId)).for("no key update");
+        const started = removeModel(db, workspaceId).then(() => {
+          removed = true;
+        });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        expect(removed).toBe(false);
+        return { started };
+      });
+
+      await removal.started;
+      expect(removed).toBe(true);
+      expect((await rows(workspaceId))[0]?.apiKeyCiphertext).toBeNull();
     });
 
     it("returns false with no model to remove", async () => {
@@ -479,19 +510,38 @@ describe("the Model screen", () => {
 
   describe("going back to the form after a refusal", () => {
     it("keeps what was entered, and never the key", () => {
-      const query = modelFormQuery("base-url", input({ apiKey, baseUrl: "nope", structured: true, inputPrice: "2" }));
+      const query = modelFormQuery("model-name", input({ apiKey, structured: true, inputPrice: "2" }));
 
       expect(query.toString()).not.toContain(apiKey);
       expect(Object.fromEntries(query)).toEqual({
-        error: "base-url",
+        error: "model-name",
         providerType: "openai-compatible",
-        baseUrl: "nope",
+        baseUrl: "https://llm.test/v1",
         modelName: "fake-model",
         structured: "1",
         inputPrice: "2",
         outputPrice: "",
         keyTyped: "1",
       });
+    });
+
+    it.each([
+      ["a user name and password", "https://user:sk-sentinel@llm.test/v1", "https://llm.test/v1"],
+      ["a query", "https://llm.test/v1beta?key=sk-sentinel", "https://llm.test/v1beta"],
+      ["a fragment", "https://llm.test/v1#sk-sentinel", "https://llm.test/v1"],
+      ["no address at all", "sk-sentinel", ""],
+      ["another scheme", "ftp://sk-sentinel@llm.test/v1", ""],
+    ])("doesn't put a secret in the URL when a base URL holds %s", (_what, baseUrl, kept) => {
+      const query = modelFormQuery("base-url", input({ baseUrl }));
+
+      expect(query.toString()).not.toContain("sk-sentinel");
+      expect(query.get("baseUrl")).toBe(kept);
+    });
+
+    it("leaves out a base URL too long to go in a URL", () => {
+      const query = modelFormQuery("base-url", input({ baseUrl: `https://llm.test/${"x".repeat(3000)}` }));
+
+      expect(query.get("baseUrl")).toBe("");
     });
 
     it("says nothing about a key that wasn't typed", () => {

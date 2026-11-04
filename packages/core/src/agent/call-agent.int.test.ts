@@ -508,6 +508,19 @@ describe("callAgent", () => {
       expect(row?.errorMessage).toMatch(/^The model provider answered 500: Nul and half a pair �, then long/);
       expect(row?.errorMessage?.length).toBeLessThanOrEqual(1000);
     });
+
+    it("doesn't cut a character in half to fit", async () => {
+      const seeded = await seed("openai-compatible");
+      const prefix = "The model provider answered 500: ";
+      // The emoji's two halves land either side of the 1,000th character.
+      const message = `${"x".repeat(999 - prefix.length)}😀 and more`;
+
+      await call(seeded, fakeLlm("openai-compatible", [{ status: 500, message }]).fetch);
+
+      const [row] = await rows(seeded);
+      expect(row?.errorMessage?.isWellFormed()).toBe(true);
+      expect(row?.errorMessage?.endsWith("�")).toBe(true);
+    });
   });
 
   describe("testModelConnection", () => {

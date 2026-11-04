@@ -1,5 +1,5 @@
 {
-  "id": "2c5ef02c-2a31-455d-9472-d61860dc2e95",
+  "id": "0dc6f114-e222-4628-8524-2f5f46383897",
   "prevId": "fe3dfa29-3d97-4785-9e47-c71a366d16bf",
   "version": "7",
   "dialect": "postgresql",
@@ -1645,6 +1645,28 @@
             }
           ],
           "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "agent_call_failures_idx": {
+          "name": "agent_call_failures_idx",
+          "columns": [
+            {
+              "expression": "model_config_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"agent_call\".\"status\" <> 'ok'",
           "concurrently": false,
           "method": "btree",
           "with": {}

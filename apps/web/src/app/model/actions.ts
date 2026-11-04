@@ -4,8 +4,7 @@ import { redirect } from "next/navigation";
 import { type ModelInput, modelFormQuery, removeModel, saveModel, testConnection } from "@/lib/model";
 import { requireWorkspace, server } from "@/lib/server";
 
-// Every action ends in a redirect. Without JavaScript that's a 303 to a page the browser renders;
-// an action that only returned would leave it a blank page.
+// Every action ends in a redirect, as on Sources, and the page reads the outcome from the URL.
 
 const text = (formData: FormData, name: string) => {
   const value = formData.get(name);

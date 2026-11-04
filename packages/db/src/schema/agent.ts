@@ -98,5 +98,10 @@ export const agentCall = pgTable(
     // Deleting an Item sets item_id null here. Without this, deleting a Source with many Items scans
     // the whole table once per Item.
     index("agent_call_item_id_idx").on(table.itemId),
+    // The Model screen's most recent failed call. Failures are rare, so without this a healthy
+    // Workspace would walk its whole history to find there are none.
+    index("agent_call_failures_idx")
+      .on(table.modelConfigId, table.createdAt)
+      .where(sql`${table.status} <> 'ok'`),
   ],
 );

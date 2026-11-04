@@ -1,7 +1,7 @@
 // A Workspace's model, as the Model screen reads and changes it (ADR 0005). Every query is scoped to
 // the Workspace, and nothing here returns the key or its ciphertext to the page.
 import { type AgentFetch, decryptSecret, encryptSecret, testModelConnection } from "@watchdog/core";
-import { agentCall, and, type Db, desc, eq, isNull, modelConfig, ne, sql, workspace } from "@watchdog/db";
+import { agentCall, and, type Db, desc, eq, isNull, modelConfig, type SQL, sql, type Tx, workspace } from "@watchdog/db";
 
 export const providerTypes = [
   { value: "openai-compatible", label: "OpenAI-compatible", baseUrl: "https://api.openai.com/v1" },
@@ -47,12 +47,28 @@ export const modelProblemMessage: Record<ModelProblem, string> = {
   "output-price": "Enter a price per million tokens as a number, such as 2.50, or leave it blank.",
 };
 
-/** The form's URL after a refusal. The key never goes in a URL, so the form asks for it again. */
+const webUrl = (text: string) => {
+  const url = URL.parse(text.trim());
+  return url !== null && (url.protocol === "http:" || url.protocol === "https:") ? url : undefined;
+};
+
+/** Without a trailing slash, an address has one spelling to compare. */
+const address = (url: URL) => `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+
+/** A URL this long is safe through Caddy and Node, whose limit on all the headers is 16 KB. */
+const maxBaseUrlInUrl = 2000;
+
+/**
+ * The form's URL after a refusal. The key never goes in a URL, so the form asks for it again. Nor
+ * does anything else that can hold one: people paste keys into a base URL's user name or query.
+ */
 export function modelFormQuery(problem: ModelProblem, input: ModelInput) {
+  const url = webUrl(input.baseUrl);
+  const baseUrl = url === undefined ? "" : address(url);
   const query = new URLSearchParams({
     error: problem,
     providerType: input.providerType,
-    baseUrl: input.baseUrl,
+    baseUrl: baseUrl.length > maxBaseUrlInUrl ? "" : baseUrl,
     modelName: input.modelName,
     inputPrice: input.inputPrice,
     outputPrice: input.outputPrice,
@@ -64,18 +80,13 @@ export function modelFormQuery(problem: ModelProblem, input: ModelInput) {
 
 /**
  * The SDKs append their own path, so a query would end up in the middle of the URL, and fetch
- * refuses a URL with credentials. Without a trailing slash, an address has one spelling to compare.
+ * refuses a URL with credentials. An empty `?` or `#` isn't refused: `search` and `hash` don't show
+ * it, and `address` drops it.
  */
 function cleanBaseUrl(text: string) {
-  const url = URL.parse(text.trim());
-  const usable =
-    url !== null &&
-    (url.protocol === "http:" || url.protocol === "https:") &&
-    url.username === "" &&
-    url.password === "" &&
-    url.search === "" &&
-    url.hash === "";
-  return usable ? url.href.replace(/\/+$/, "") : undefined;
+  const url = webUrl(text);
+  const usable = url?.username === "" && url.password === "" && url.search === "" && url.hash === "";
+  return usable ? address(url) : undefined;
 }
 
 /** Null for a blank price, undefined for one that isn't a price. */
@@ -106,6 +117,13 @@ function parseModel(input: ModelInput) {
 }
 
 /**
+ * Changes to a Workspace's model take turns. Otherwise two saves could both replace the same row,
+ * and a save could put a key back on a row a removal just archived.
+ */
+const takeTurns = (tx: Pick<Tx, "select">, workspaceId: string) =>
+  tx.select({ id: workspace.id }).from(workspace).where(eq(workspace.id, workspaceId)).for("no key update");
+
+/**
  * Creates the Workspace's model or changes it. A new provider, base URL or model name is a new row,
  * and the old one is archived, so Usage history keeps pointing at what ran. Prices, the flag and the
  * key change in place.
@@ -130,8 +148,7 @@ export async function saveModel(
   };
 
   return db.transaction(async (tx) => {
-    // Two saves take turns, or both could find the same row and try to replace it.
-    await tx.select({ id: workspace.id }).from(workspace).where(eq(workspace.id, workspaceId)).for("no key update");
+    await takeTurns(tx, workspaceId);
     const [current] = await tx
       .select()
       .from(modelConfig)
@@ -180,7 +197,11 @@ async function archiveModel(db: Pick<Db, "update">, workspaceId: string) {
  * Archives the model, so Agent stages stop and Items stay unrated, while deterministic rules keep
  * running (Processing pipeline, "Without a model").
  */
-export const removeModel = (db: Db, workspaceId: string) => archiveModel(db, workspaceId);
+export const removeModel = (db: Db, workspaceId: string) =>
+  db.transaction(async (tx) => {
+    await takeTurns(tx, workspaceId);
+    return archiveModel(tx, workspaceId);
+  });
 
 /** The Workspace's model as the screen shows it, or undefined. */
 export async function getModel(db: Db, workspaceId: string) {
@@ -204,16 +225,19 @@ export async function getModel(db: Db, workspaceId: string) {
  * since, so the failure is history rather than something to fix.
  */
 export async function lastFailedCall(db: Db, workspaceId: string) {
-  const newest = (onlyFailures: boolean) =>
+  const newest = (filter?: SQL) =>
     db
       .select({ at: agentCall.createdAt, status: agentCall.status, errorMessage: agentCall.errorMessage })
       .from(agentCall)
       .innerJoin(modelConfig, and(eq(agentCall.modelConfigId, modelConfig.id), isNull(modelConfig.archivedAt)))
-      .where(and(eq(agentCall.workspaceId, workspaceId), onlyFailures ? ne(agentCall.status, "ok") : undefined))
+      .where(and(eq(agentCall.workspaceId, workspaceId), filter))
       .orderBy(desc(agentCall.createdAt))
       .limit(1);
-  const [[failed], [latest]] = await Promise.all([newest(true), newest(false)]);
+  // A literal, to match agent_call_failures_idx. A healthy model's history is never walked: without
+  // a failure there's no second query, and with one this model's calls are near the newest.
+  const [failed] = await newest(sql`${agentCall.status} <> 'ok'`);
   if (failed === undefined) return undefined;
+  const [latest] = await newest();
   return {
     at: failed.at,
     reason: failed.errorMessage ?? "No reason was recorded.",

@@ -35,7 +35,8 @@ export default function ModelPage({ searchParams }: PageProps<"/model">) {
       </nav>
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
         <h1 className="text-headline">Model</h1>
-        {/* The form shows the saved model, so an empty one in the static shell could replace it. */}
+        {/* The form shows the saved model, so an empty one in the static shell could replace it. This
+            screen therefore needs JavaScript, unlike the form on Sources. */}
         <Suspense fallback={<div aria-busy="true" className="h-96 rounded-lg bg-muted" />}>
           <ModelScreen searchParams={searchParams} />
         </Suspense>
@@ -128,7 +129,8 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
               {model.hasKey ? "API key set" : "No API key"}
             </p>
           </div>
-          <TestResult test={test} modelName={model.modelName} />
+          {/* The URL can outlive the test: "Connected" mustn't sit above a newer failure. */}
+          <TestResult test={test === "ok" && failure?.recovered === false ? undefined : test} modelName={model.modelName} />
           {failure === undefined ? null : (
             <FailedCall
               failure={failure}
@@ -145,7 +147,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
                 </SubmitButton>
               </form>
               <p className="text-xs text-muted-foreground">
-                One small call to the saved model, which costs a few tokens.
+                One small call to the saved model, which your provider bills as usual.
               </p>
             </div>
             <RemoveModel name={model.modelName} />
@@ -240,7 +242,7 @@ function FailedCall({
   );
 }
 
-/** A disclosure works without JavaScript, unlike a confirm() dialog. */
+/** Remove, then a confirmation in the page that says what goes with it, as on Sources. */
 function RemoveModel({ name }: { name: string }) {
   return (
     <details className="group shrink-0 sm:max-w-64">
