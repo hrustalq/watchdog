@@ -13,6 +13,7 @@ const minimal = {
   DATABASE_URL: "postgres://watchdog:watchdog@localhost:5432/watchdog",
   BETTER_AUTH_SECRET: "a".repeat(32),
   BETTER_AUTH_URL: "http://localhost:3000",
+  WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
 };
 const smtp = {
   SMTP_HOST: "smtp.example.com",

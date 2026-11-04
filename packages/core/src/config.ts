@@ -23,7 +23,13 @@ const schema = z
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, error: invalid("must be a postgres:// URL") }),
     BETTER_AUTH_SECRET: z.string().min(32, "must be at least 32 characters"),
     BETTER_AUTH_URL: z.url({ protocol: /^https?$/, error: invalid("must be an http(s) URL") }),
-    WATCHDOG_ENCRYPTION_KEY: z.string().optional(),
+    // Decoding alone accepts stray characters and base64url, so the key must re-encode to itself.
+    WATCHDOG_ENCRYPTION_KEY: z.string().transform((value, ctx) => {
+      const key = Buffer.from(value, "base64");
+      if (key.length === 32 && key.toString("base64") === value) return key;
+      ctx.addIssue({ code: "custom", message: "must be 32 bytes, base64-encoded" });
+      return z.NEVER;
+    }),
     smtp: z
       .object({
         SMTP_HOST: z.string(),

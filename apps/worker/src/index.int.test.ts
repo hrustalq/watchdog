@@ -29,6 +29,7 @@ async function startWorker(databaseUrl: string) {
       DATABASE_URL: databaseUrl,
       BETTER_AUTH_SECRET: "a-test-secret-of-at-least-32-characters",
       BETTER_AUTH_URL: "http://localhost:3000",
+      WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
       // The test's feed server listens on loopback, which the egress guard blocks by default.
       EGRESS_ALLOWLIST: "127.0.0.1",
     },

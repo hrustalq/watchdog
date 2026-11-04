@@ -240,6 +240,7 @@ describe("pollSource", () => {
       DATABASE_URL: postgres.url,
       BETTER_AUTH_SECRET: "a".repeat(32),
       BETTER_AUTH_URL: "http://localhost:3000",
+      WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
       EGRESS_ALLOWLIST: allowlist,
     };
     const lookup = () => Promise.resolve([{ address, family: 4 }]);

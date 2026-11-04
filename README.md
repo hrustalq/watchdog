@@ -18,7 +18,7 @@ You need the Node version in `.nvmrc` (`nvm use`) and pnpm, at the version pinne
 
 ```bash
 pnpm install
-cp .env.example .env       # then set a real BETTER_AUTH_SECRET
+cp .env.example .env       # then set real BETTER_AUTH_SECRET and WATCHDOG_ENCRYPTION_KEY values
 pnpm --filter web dev      # http://localhost:3000
 pnpm --filter worker start
 ```
@@ -32,7 +32,7 @@ Web and worker read their settings from the environment, and from the root `.env
 `compose.yaml` runs the five containers of a standard install: Caddy, web, worker, Postgres and Obscura. You need Docker with Compose v2.
 
 ```bash
-cp .env.example .env       # then set a real BETTER_AUTH_SECRET and OBSCURA_CDP_TOKEN
+cp .env.example .env       # then set real BETTER_AUTH_SECRET, WATCHDOG_ENCRYPTION_KEY and OBSCURA_CDP_TOKEN values
 docker compose up -d --build --wait
 docker compose logs web    # the setup link on first run, and magic links when SMTP isn't set
 ```
