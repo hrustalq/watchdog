@@ -2,6 +2,7 @@
 // process-item queue calls this once per captured Item.
 import { type Db, eq, item, source } from "@watchdog/db";
 import { runDeterministicClassifiers } from "./classify.ts";
+import { runDeterministicExtractorRules } from "./extract.ts";
 
 export interface ProcessItemDeps {
   now?: () => Date;
@@ -22,7 +23,9 @@ export async function processItem(db: Db, itemId: string, deps: ProcessItemDeps)
       .for("update", { of: item });
     if (row?.item.processedAt !== null) return;
 
-    await runDeterministicClassifiers(tx, itemId, { ...row.item, sourceType: row.sourceType });
+    const target = { ...row.item, sourceType: row.sourceType };
+    await runDeterministicClassifiers(tx, itemId, target);
+    await runDeterministicExtractorRules(tx, itemId, target);
 
     await tx
       .update(item)

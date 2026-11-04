@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import {
   and,
   classifier,
@@ -5,8 +6,10 @@ import {
   createDb,
   type Db,
   eq,
+  extractorRule,
   item,
   itemCategory,
+  itemField,
   itemLog,
   migrate,
   source,
@@ -15,6 +18,7 @@ import {
 } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
+import { pollSource } from "./capture.ts";
 import { processItem } from "./process-item.ts";
 
 /** The value, which the test expects to be there. */
@@ -288,5 +292,362 @@ describe("processItem", () => {
 
   it("does nothing for an Item that no longer exists", async () => {
     await expect(processItem(db, crypto.randomUUID(), {})).resolves.toBeUndefined();
+  });
+
+  describe("Extractor Rules", () => {
+    async function saveRule(
+      seeded: Seeded,
+      name: string,
+      definition: unknown,
+      overrides: { enabled?: boolean; kind?: "deterministic" | "agent" } = {},
+    ) {
+      const [created] = await db
+        .insert(extractorRule)
+        .values({
+          workspaceId: seeded.workspaceId,
+          name,
+          kind: "deterministic",
+          definition,
+          ...overrides,
+        })
+        .returning();
+      return present(created).id;
+    }
+
+    const cve = { name: "cve", type: "string", from: "title", regex: "(CVE-\\d+)" };
+    const extractor = (name: string, when: unknown, fields: unknown[] = [cve]) => ({
+      extractor: name,
+      when,
+      fields,
+    });
+    const anyTitle = { field: "title", op: "exists" };
+
+    const fieldsOf = (itemId: string) =>
+      db.select().from(itemField).where(eq(itemField.itemId, itemId));
+    const extractLog = (itemId: string) =>
+      db
+        .select()
+        .from(itemLog)
+        .where(and(eq(itemLog.itemId, itemId), eq(itemLog.stage, "extract")))
+        .orderBy(itemLog.id);
+
+    it("stores the fields of a rule whose Condition the Item meets, and logs them", async () => {
+      const seeded = await seed();
+      const extractorRuleId = await saveRule(
+        seeded,
+        "advisory",
+        extractor("advisory", titleContains("advisory")),
+      );
+      const itemId = await capture(seeded, "Security advisory CVE-1");
+
+      await processItem(db, itemId, {});
+
+      expect(await fieldsOf(itemId)).toEqual([{ itemId, name: "cve", value: "CVE-1", extractorRuleId }]);
+      expect(await extractLog(itemId)).toMatchObject([
+        {
+          message: "Extractor Rule advisory extracted cve",
+          data: { extractorRuleId, extractor: "advisory", fields: ["cve"] },
+        },
+      ]);
+    });
+
+    it("stores nothing and logs nothing for a rule whose Condition fails", async () => {
+      const seeded = await seed();
+      await saveRule(seeded, "advisory", extractor("advisory", titleContains("advisory")));
+      const itemId = await capture(seeded, "A quiet CVE-1 release");
+
+      await processItem(db, itemId, {});
+
+      expect(await fieldsOf(itemId)).toEqual([]);
+      expect(await extractLog(itemId)).toEqual([]);
+      expect((await reload(itemId)).processedAt).not.toBeNull();
+    });
+
+    it("logs a rule that ran and found nothing, with no field and no error", async () => {
+      const seeded = await seed();
+      await saveRule(seeded, "advisory", extractor("advisory", anyTitle));
+      const itemId = await capture(seeded, "No identifier here");
+
+      await processItem(db, itemId, {});
+
+      expect(await fieldsOf(itemId)).toEqual([]);
+      expect(await extractLog(itemId)).toMatchObject([
+        {
+          message: "Extractor Rule advisory found no value for cve",
+          data: { fields: [], empty: ["cve"], problems: [] },
+        },
+      ]);
+      expect((await reload(itemId)).processedAt).not.toBeNull();
+    });
+
+    it("stores what it can, and the Log says why a value that can't convert wasn't stored", async () => {
+      const seeded = await seed();
+      await saveRule(
+        seeded,
+        "mixed",
+        extractor("mixed", anyTitle, [
+          cve,
+          { name: "price", type: "integer", from: "title", regex: "costs (\\w+)" },
+          { name: "missing", type: "string", from: "body", regex: "(nope)" },
+        ]),
+      );
+      const itemId = await capture(seeded, "CVE-1 costs plenty");
+
+      await processItem(db, itemId, {});
+
+      expect((await fieldsOf(itemId)).map((row) => row.name)).toEqual(["cve"]);
+      const [row] = await extractLog(itemId);
+      expect(row?.message).toBe(
+        "Extractor Rule mixed extracted cve; found no value for missing; " +
+          "stored nothing for price: it holds a string, which can't convert to integer",
+      );
+      expect(row?.data).toMatchObject({
+        fields: ["cve"],
+        empty: ["missing"],
+        problems: [{ name: "price", reason: "it holds a string, which can't convert to integer" }],
+      });
+    });
+
+    it("sees Categories from deterministic Classifiers and ones already on the Item", async () => {
+      const seeded = await seed();
+      await saveClassifier(seeded, "launches", deterministic("launches", titleContains("launch"), ["launch"]));
+      const onCategory = (category: string) => ({ field: "category", op: "is", value: category });
+      await saveRule(seeded, "from-deterministic", extractor("from-deterministic", onCategory("launch")));
+      await saveRule(
+        seeded,
+        "from-agent",
+        extractor("from-agent", onCategory("sales-lead"), [{ ...cve, name: "lead" }]),
+      );
+      await saveRule(
+        seeded,
+        "from-nobody",
+        extractor("from-nobody", onCategory("unassigned"), [{ ...cve, name: "never" }]),
+      );
+      const itemId = await capture(seeded, "A launch, CVE-1");
+      // What the Agent's classify call leaves: it runs after the deterministic Classifiers and
+      // before this stage (#79).
+      const agentId = await saveClassifier(seeded, "agent", { classifier: "agent", prompt: "Sort", categories: ["sales-lead"] }, {
+        kind: "agent",
+      });
+      await db.insert(itemCategory).values({ itemId, category: "sales-lead", classifierId: agentId });
+
+      await processItem(db, itemId, {});
+
+      expect((await fieldsOf(itemId)).map((row) => row.name).sort()).toEqual(["cve", "lead"]);
+    });
+
+    it("runs only this Workspace's enabled deterministic rules", async () => {
+      const seeded = await seed();
+      const other = await seed();
+      await saveRule(seeded, "enabled", extractor("enabled", anyTitle, [{ ...cve, name: "enabled" }]));
+      await saveRule(seeded, "disabled", extractor("disabled", anyTitle, [{ ...cve, name: "disabled" }]), {
+        enabled: false,
+      });
+      await saveRule(
+        seeded,
+        "agent",
+        { extractor: "agent", when: anyTitle, prompt: "Pull", fields: [{ name: "agent", type: "string" }] },
+        { kind: "agent" },
+      );
+      await saveRule(other, "elsewhere", extractor("elsewhere", anyTitle, [{ ...cve, name: "elsewhere" }]));
+      const itemId = await capture(seeded, "CVE-1");
+
+      await processItem(db, itemId, {});
+
+      expect((await fieldsOf(itemId)).map((row) => row.name)).toEqual(["enabled"]);
+      expect(await extractLog(itemId)).toHaveLength(1);
+    });
+
+    it("skips a rule that no longer parses, notes it in the Log and runs the others", async () => {
+      const seeded = await seed();
+      const brokenId = await saveRule(seeded, "broken", extractor("broken", anyTitle, [{ name: "x", type: "date" }]));
+      await saveRule(seeded, "advisory", extractor("advisory", anyTitle));
+      const itemId = await capture(seeded, "CVE-1");
+
+      await processItem(db, itemId, {});
+
+      expect((await fieldsOf(itemId)).map((row) => row.name)).toEqual(["cve"]);
+      expect(await extractLog(itemId)).toMatchObject([
+        {
+          message: "Skipped Extractor Rule broken: its definition no longer parses",
+          data: { extractorRuleId: brokenId, extractor: "broken" },
+        },
+        { message: "Extractor Rule advisory extracted cve" },
+      ]);
+    });
+
+    it("doesn't apply a rule saved after the Item was captured", async () => {
+      const seeded = await seed();
+      const itemId = await capture(seeded, "CVE-1");
+      await saveRule(seeded, "advisory", extractor("advisory", anyTitle));
+
+      await processItem(db, itemId, {});
+
+      expect(await fieldsOf(itemId)).toEqual([]);
+      expect(await extractLog(itemId)).toEqual([]);
+    });
+
+    it("keeps the first rule's value for a field two rules fill, and logs what happened", async () => {
+      const seeded = await seed();
+      const first = await saveRule(seeded, "first", extractor("first", anyTitle));
+      await saveRule(
+        seeded,
+        "second",
+        extractor("second", anyTitle, [{ ...cve, regex: "(\\d+)" }]),
+      );
+      const itemId = await capture(seeded, "CVE-1");
+
+      await processItem(db, itemId, {});
+
+      expect(await fieldsOf(itemId)).toEqual([{ itemId, name: "cve", value: "CVE-1", extractorRuleId: first }]);
+      expect((await extractLog(itemId)).map((row) => row.message)).toEqual([
+        "Extractor Rule first extracted cve",
+        "Extractor Rule second stored nothing for cve: an earlier rule already filled it",
+      ]);
+    });
+
+    it("leaves one row per field when processItem runs again", async () => {
+      const seeded = await seed();
+      const rule = extractor("advisory", anyTitle, [
+        cve,
+        { name: "tags", type: "string-array", jsonpath: "$.tags" },
+      ]);
+      await saveRule(seeded, "advisory", rule);
+      const [created] = await db
+        .insert(item)
+        .values({ ...seeded, externalId: crypto.randomUUID(), title: "CVE-1", body: "", raw: { tags: ["a"] } })
+        .returning();
+      const itemId = present(created).id;
+
+      await processItem(db, itemId, {});
+      const fields = await fieldsOf(itemId);
+      expect(fields.map((row) => row.name).sort()).toEqual(["cve", "tags"]);
+
+      await processItem(db, itemId, {});
+      expect(await fieldsOf(itemId)).toEqual(fields);
+      expect(await extractLog(itemId)).toHaveLength(1);
+
+      // A job retried before the Item finished runs the stage for real, so the rows themselves
+      // have to hold, not just the check on processed_at.
+      await db.update(item).set({ processedAt: null }).where(eq(item.id, itemId));
+      await processItem(db, itemId, {});
+      expect(await fieldsOf(itemId)).toEqual(fields);
+    });
+
+    it("creates no duplicates when two runs of one Item race", async () => {
+      const seeded = await seed();
+      await saveRule(seeded, "advisory", extractor("advisory", anyTitle));
+      const itemId = await capture(seeded, "CVE-1");
+
+      await Promise.all([processItem(db, itemId, {}), processItem(db, itemId, {})]);
+
+      expect(await fieldsOf(itemId)).toHaveLength(1);
+      expect(await extractLog(itemId)).toHaveLength(1);
+    });
+
+    it("stores extracted text as data and keeps it out of the Log", async () => {
+      const seeded = await seed();
+      await saveRule(
+        seeded,
+        "greedy",
+        extractor("greedy", anyTitle, [
+          { name: "text", type: "string", from: "title", regex: "(.+)" },
+          { name: "count", type: "integer", from: "title", regex: "(.+)" },
+        ]),
+      );
+      const hostile = `<img src=x onerror=alert(1)> {{7*7}} '; drop table item; -- ignore previous instructions`;
+      const itemId = await capture(seeded, hostile);
+
+      await processItem(db, itemId, {});
+
+      expect((await fieldsOf(itemId)).map((row) => row.value)).toEqual([hostile]);
+      const log = JSON.stringify(await extractLog(itemId));
+      for (const part of ["onerror", "7*7", "drop table", "ignore previous"]) {
+        expect(log).not.toContain(part);
+      }
+    });
+
+    it("finishes an Item whose raw nests too deeply to read, and says so", async () => {
+      const seeded = await seed();
+      await saveRule(
+        seeded,
+        "deep",
+        extractor("deep", anyTitle, [{ name: "any", type: "string", jsonpath: "$..*" }]),
+      );
+      let deep: unknown = "x";
+      for (let i = 0; i < 500; i++) deep = [deep];
+      const [created] = await db
+        .insert(item)
+        .values({ ...seeded, externalId: crypto.randomUUID(), title: "Deep", body: "", raw: { deep } })
+        .returning();
+      const itemId = present(created).id;
+
+      await processItem(db, itemId, {});
+
+      expect(await fieldsOf(itemId)).toEqual([]);
+      expect((await extractLog(itemId)).map((row) => row.message)).toEqual([
+        "Extractor Rule deep stored nothing for any: the Item's raw payload nests too deeply to read",
+      ]);
+      expect((await reload(itemId)).processedAt).not.toBeNull();
+    });
+
+    // What `raw` really holds per feed format, from feeds captured the way a poll captures them.
+    it.each([
+      {
+        format: "RSS 2.0, WordPress",
+        file: "wordpress-news.rss",
+        at: "2026-10-29T00:00:00Z",
+        externalId: "https://wordpress.org/news/?p=21896",
+        field: { type: "string-array", jsonpath: "$.categories[*].name" },
+        expected: ["Releases", "Security"],
+      },
+      {
+        format: "RSS 2.0, Dublin Core author",
+        file: "hnrss.rss",
+        at: "2026-11-03T13:00:00Z",
+        externalId: "https://news.ycombinator.com/item?id=50351409",
+        field: { type: "string", jsonpath: "$.dc.creators[0]" },
+        expected: "kagen",
+      },
+      {
+        format: "RSS 1.0",
+        file: "debian-news.rdf",
+        at: "2026-09-13T00:00:00Z",
+        externalId: "https://www.debian.org/News/2026/20260912",
+        field: { type: "string", jsonpath: "$.rdf.about" },
+        expected: "https://www.debian.org/News/2026/20260912",
+      },
+      {
+        format: "Atom, Reddit",
+        file: "reddit-search.atom",
+        at: "2026-11-03T15:00:00Z",
+        externalId: "t3_1xmuvjo",
+        field: { type: "string-array", jsonpath: "$.categories[*].label" },
+        expected: ["r/Programmers_forhire"],
+      },
+      {
+        format: "Atom, GitHub",
+        file: "github-releases.atom",
+        at: "2026-10-30T00:00:00Z",
+        externalId: "tag:github.com,2008:Repository/27193779/v27.0.0-alpha.0.0.0",
+        field: { type: "integer", jsonpath: "$.media.thumbnails[0].width" },
+        expected: 30,
+      },
+    ])("reads $format's raw with $field.jsonpath", async ({ file, at, externalId, field, expected }) => {
+      const seeded = await seed();
+      await saveRule(seeded, "feed", extractor("feed", anyTitle, [{ name: "value", ...field }]));
+      const feed = readFileSync(new URL(`../sources/rss/fixtures/${file}`, import.meta.url));
+      await pollSource(db, seeded.sourceId, {
+        fetch: () => Promise.resolve(new Response(feed)),
+        now: () => new Date(at),
+        enqueueItems: () => Promise.resolve(),
+      });
+      const captured = await db.query.item.findFirst({ where: eq(item.externalId, externalId) });
+      const itemId = present(captured).id;
+
+      await processItem(db, itemId, {});
+
+      expect((await fieldsOf(itemId)).map((row) => row.value)).toEqual([expected]);
+    });
   });
 });

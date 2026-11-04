@@ -1,6 +1,7 @@
 // The canonical rule model (docs: Rule model; ADR 0007). The form and YAML are views of these shapes,
 // so the schemas are strict: a key they don't know would otherwise vanish on the way through.
 import { z } from "zod";
+import { jsonPathError } from "./jsonpath.ts";
 import { captureRegexError, regexError } from "./regex.ts";
 
 const sourceAndContent = ["source", "source.type", "title", "body", "author", "url", "language"];
@@ -206,7 +207,7 @@ const regexFieldSchema = z.strictObject({
 const jsonPathFieldSchema = z.strictObject({
   name,
   type: anyType,
-  jsonpath: z.string().startsWith("$", 'A JSONPath starts at the root, "$".'),
+  jsonpath: refusedBy(jsonPathError),
 });
 
 type RegexField = z.infer<typeof regexFieldSchema>;

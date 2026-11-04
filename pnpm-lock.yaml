@@ -151,6 +151,9 @@ importers:
       feedsmith:
         specifier: ^3.0.1
         version: 3.0.1
+      json-p3:
+        specifier: ^3.0.2
+        version: 3.0.2
       nodemailer:
         specifier: ^10.3.1
         version: 10.3.1
@@ -3258,6 +3261,9 @@ packages:
     resolution: {integrity: sha512-t2v0rkILYv9WXmSL7TpAaU3HXgaFYOPUcH3QHgwQ++gpJuH3bqyMy4Fvt/DJCTKwzH3Cf+bAp5W/mFL39KPLzA==}
     engines: {node: '>= 12'}
 
+  iregexp-check@0.1.2:
+    resolution: {integrity: sha512-RCcV2SFO5JKh+DdmWiY7yVyiZzzk6XZiHEJvTKbzVs8Z0u404gnoSqDtFqg6C5qJBEG4QseWBQz9zhI68zskEQ==}
+
   is-array-buffer@3.0.5:
     resolution: {integrity: sha512-DDfANUiiG2wC1qawP66qlTugJeL5HyzMpfr8lLK+jMQirGzNod0B12cFB/9q838Ru27sBwfw78/rdoU7RERz6A==}
     engines: {node: '>= 0.4'}
@@ -3476,6 +3482,9 @@ packages:
     resolution: {integrity: sha512-/sM3dO2FOzXjKQhJuo0Q173wf2KOo8t4I8vHy6lF9poUp7bKT0/NHE8fPX23PwfhnykfqnC2xRxOnVw5XuGIaA==}
     engines: {node: '>=6'}
     hasBin: true
+
+  json-p3@3.0.2:
+    resolution: {integrity: sha512-v/VibozM0WYk1OZeSyUZkiF2LIt++TKJ+j1rd3XuJHeNHLYwUFFAJZmXbj9RHNCN6glWeIcazT38ZSGzcz2+fw==}
 
   json-parse-even-better-errors@2.3.1:
     resolution: {integrity: sha512-xyFwyhro/JEof6Ghe2iz2NcXoj2sloNsWr/XsERDK/oiPCfaNhl5ONfp+jQdAZRQQ0IJWNzH9zIZF7li91kh2w==}
@@ -7701,6 +7710,8 @@ snapshots:
 
   ip-address@10.7.5: {}
 
+  iregexp-check@0.1.2: {}
+
   is-array-buffer@3.0.5:
     dependencies:
       call-bind: 1.0.9
@@ -7893,6 +7904,10 @@ snapshots:
       argparse: 2.0.1
 
   jsesc@3.1.0: {}
+
+  json-p3@3.0.2:
+    dependencies:
+      iregexp-check: 0.1.2
 
   json-parse-even-better-errors@2.3.1: {}
 

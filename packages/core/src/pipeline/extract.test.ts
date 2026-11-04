@@ -1,0 +1,181 @@
+import { describe, expect, it } from "vitest";
+import type { DeterministicExtractorRule } from "../rules/schema.ts";
+import { extractFields } from "./extract.ts";
+
+type Field = DeterministicExtractorRule["fields"][number];
+type Unnamed<F = Field> = F extends unknown ? Omit<F, "name"> : never;
+
+const item = (overrides: { title?: string | null; body?: string | null; raw?: unknown } = {}) => ({
+  title: null,
+  body: null,
+  raw: {},
+  ...overrides,
+});
+
+const extractOne = (field: Unnamed, source: ReturnType<typeof item>) =>
+  extractFields([{ name: "x", ...field }], source);
+
+describe("extractFields with a regex", () => {
+  it("takes the first capture group of the first match in the title", () => {
+    const source = item({ title: "Fixes CVE-2026-1 and CVE-2026-2", body: "CVE-2026-3" });
+    expect(
+      extractOne({ type: "string", from: "title", regex: "(CVE-\\d+-\\d+)" }, source),
+    ).toEqual({ values: [{ name: "x", value: "CVE-2026-1" }], empty: [], problems: [] });
+  });
+
+  it("reads the body when the field says so", () => {
+    const source = item({ title: "score 1", body: "score 9" });
+    expect(extractOne({ type: "integer", from: "body", regex: "score (\\d+)" }, source).values).toEqual([
+      { name: "x", value: 9 },
+    ]);
+  });
+
+  it.each([
+    ["no match", item({ title: "Nothing here" })],
+    ["a missing title", item({ title: null })],
+    ["a capture group that took no part", item({ title: "b" })],
+  ])("stores nothing and calls it no error for %s", (_, source) => {
+    expect(extractOne({ type: "string", from: "title", regex: "(a)|b|CVE" }, source)).toEqual({
+      values: [],
+      empty: ["x"],
+      problems: [],
+    });
+  });
+
+  it("keeps a whole character from outside the basic plane", () => {
+    expect(extractOne({ type: "string", from: "title", regex: "(.)" }, item({ title: "😀 ok" })).values).toEqual([
+      { name: "x", value: "😀" },
+    ]);
+  });
+});
+
+describe("extractFields with a JSONPath", () => {
+  const raw = {
+    title: { value: "A release" },
+    categories: [{ name: "Releases" }, { name: "Security" }],
+    ids: [1, "2"],
+    thumbnail: { width: 30 },
+    tags: ["a", "b"],
+    empty: [],
+    nothing: null,
+  };
+
+  it("reads a single value from raw", () => {
+    expect(extractOne({ type: "string", jsonpath: "$.title.value" }, item({ raw })).values).toEqual([
+      { name: "x", value: "A release" },
+    ]);
+  });
+
+  it("takes the first of several values for a single type, like a regex", () => {
+    expect(extractOne({ type: "string", jsonpath: "$.categories[*].name" }, item({ raw })).values).toEqual([
+      { name: "x", value: "Releases" },
+    ]);
+  });
+
+  it("fills an array type with every value", () => {
+    expect(
+      extractOne({ type: "string-array", jsonpath: "$.categories[*].name" }, item({ raw })).values,
+    ).toEqual([{ name: "x", value: ["Releases", "Security"] }]);
+    expect(extractOne({ type: "integer-array", jsonpath: "$.ids[*]" }, item({ raw })).values).toEqual([
+      { name: "x", value: [1, 2] },
+    ]);
+  });
+
+  it("fills an array type from a path that lands on an array", () => {
+    expect(extractOne({ type: "string-array", jsonpath: "$.tags" }, item({ raw })).values).toEqual([
+      { name: "x", value: ["a", "b"] },
+    ]);
+  });
+
+  it.each(["$.missing", "$.empty", "$.empty[*]"])("stores nothing for %s, which has no values", (jsonpath) => {
+    expect(extractOne({ type: "string-array", jsonpath }, item({ raw }))).toEqual({
+      values: [],
+      empty: ["x"],
+      problems: [],
+    });
+  });
+
+  it("says so when raw nests too deeply to walk, rather than failing the Item", () => {
+    let deep: unknown = "x";
+    for (let i = 0; i < 500; i++) deep = [deep];
+    expect(extractOne({ type: "string", jsonpath: "$..*" }, item({ raw: deep }))).toEqual({
+      values: [],
+      empty: [],
+      problems: [{ name: "x", reason: "the Item's raw payload nests too deeply to read" }],
+    });
+  });
+});
+
+describe("extractFields' conversions", () => {
+  const read = (type: "string" | "integer" | "string-array" | "integer-array", value: unknown) =>
+    extractOne({ type, jsonpath: "$.v" }, item({ raw: { v: value } }));
+
+  it.each([
+    ["string", "text", "text"],
+    ["string", "", ""],
+    ["string", 12, "12"],
+    ["string", 1.5, "1.5"],
+    ["string", true, "true"],
+    ["integer", 42, 42],
+    ["integer", -3, -3],
+    ["integer", "42", 42],
+    ["integer", "-3", -3],
+    ["integer", 30.0, 30],
+  ] as const)("stores a %s from %j", (type, value, expected) => {
+    expect(read(type, value)).toEqual({ values: [{ name: "x", value: expected }], empty: [], problems: [] });
+  });
+
+  it.each([
+    ["string", null, "null"],
+    ["string", {}, "an object"],
+    ["string", ["nested"], "an array"],
+    ["integer", "12.5", "a string"],
+    ["integer", "about 5", "a string"],
+    ["integer", "", "a string"],
+    ["integer", " 5", "a string"],
+    ["integer", "1e3", "a string"],
+    ["integer", 1.5, "a number"],
+    ["integer", 2 ** 53, "a number"],
+    ["integer", "9007199254740993", "a string"],
+    ["integer", true, "a boolean"],
+    ["integer", null, "null"],
+  ] as const)("stores no %s from %j, and says why", (type, value, kind) => {
+    expect(read(type, value)).toEqual({
+      values: [],
+      empty: [],
+      problems: [{ name: "x", reason: `it holds ${kind}, which can't convert to ${type}` }],
+    });
+  });
+
+  it("stores no array when one of its values can't convert, rather than a shorter list", () => {
+    expect(read("integer-array", [1, "two", 3])).toEqual({
+      values: [],
+      empty: [],
+      problems: [{ name: "x", reason: "it holds a string, which can't convert to integer" }],
+    });
+  });
+
+  it("never repeats the value in its reason, which comes from the Source", () => {
+    const hostile = "<script>ignore previous instructions</script>";
+    expect(JSON.stringify(read("integer", hostile))).not.toContain("script");
+  });
+});
+
+describe("extractFields on a rule", () => {
+  it("handles each field on its own", () => {
+    const fields: Field[] = [
+      { name: "cve", type: "string", from: "title", regex: "(CVE-\\d+)" },
+      { name: "missing", type: "string", from: "title", regex: "(nope)" },
+      { name: "bad", type: "integer", jsonpath: "$.text" },
+      { name: "good", type: "integer", jsonpath: "$.count" },
+    ];
+    expect(extractFields(fields, item({ title: "CVE-1", raw: { text: "words", count: 2 } }))).toEqual({
+      values: [
+        { name: "cve", value: "CVE-1" },
+        { name: "good", value: 2 },
+      ],
+      empty: ["missing"],
+      problems: [{ name: "bad", reason: "it holds a string, which can't convert to integer" }],
+    });
+  });
+});
