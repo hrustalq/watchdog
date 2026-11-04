@@ -59,7 +59,7 @@ const inline: Record<string, string> = {
   "/text-lines.atom":
     `<feed xmlns="http://www.w3.org/2005/Atom"><title>T</title><id>t</id><entry><id>e1</id>` +
     `<title type="text">Two\n  lines</title>` +
-    `<content type="text">  First line  \n Second line\n\n\n\nNew para </content></entry></feed>`,
+    `<content type="text">  First\tline  \r\n Second line\n\n\n\nNew para </content></entry></feed>`,
   // 40 000 two-byte characters: 80 000 bytes, and any cut at an odd byte splits a character.
   "/huge.rss": rss(
     `<item><guid>huge</guid><description>${"é".repeat(40_000)}</description></item>`,

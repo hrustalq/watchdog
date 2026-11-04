@@ -139,10 +139,7 @@ function fromAtom(entry: AtomFeed.Entry<string>, base: string): ItemDraft | unde
   };
 }
 
-/**
- * Atom text as plain text with its line breaks: "html" and "xhtml" carry markup, "text" (the
- * default) doesn't, and its line breaks are the author's own.
- */
+/** Atom text as plain text: "html" and "xhtml" carry markup, "text" keeps the author's lines. */
 function atomText(text: { value?: string; type?: string } | undefined) {
   if (text?.value === undefined) return "";
   const markup = text.type === "html" || text.type === "xhtml";

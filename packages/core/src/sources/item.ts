@@ -18,13 +18,15 @@ export interface ItemDraft {
 export const maxBodyBytes = 32 * 1024;
 
 // Tags that end a paragraph, a line or a word, so the text on either side doesn't run together.
+// The name ends at a space, "/" or ">", so a custom element such as <p-note> isn't a <p>.
 const tags = (names: string[]) =>
-  new RegExp(String.raw`<\/?(?:${names.join("|")})\b[^<>]*>`, "gi");
+  new RegExp(String.raw`<\/?(?:${names.join("|")})(?=[\s/>])[^<>]*>`, "gi");
 const paragraphTag = tags([
-  ...["address", "article", "aside", "blockquote", "dl", "figcaption", "figure", "footer"],
-  ...["h[1-6]", "header", "hr", "main", "nav", "ol", "p", "pre", "section", "table", "ul"],
+  ...["address", "article", "aside", "blockquote", "details", "dl", "figcaption", "figure"],
+  ...["footer", "h[1-6]", "header", "hr", "main", "nav", "ol", "p", "pre", "section", "table"],
+  "ul",
 ]);
-const lineTag = tags(["br", "dd", "div", "dt", "li", "tr"]);
+const lineTag = tags(["br", "caption", "dd", "div", "dt", "li", "summary", "tr"]);
 const wordTag = tags(["img", "td", "th"]);
 
 /** Plain text from an HTML fragment: tags stripped, entities decoded, a line per block. */

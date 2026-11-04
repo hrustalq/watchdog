@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { htmlToText, tidyText } from "./item.ts";
+import { htmlToText } from "./item.ts";
 
 describe("htmlToText", () => {
   it("stays linear on openers that never close", () => {
@@ -35,15 +35,19 @@ describe("htmlToText", () => {
       "Use npm now, please",
     );
     expect(htmlToText("<p>a&nbsp;&nbsp;b</p>")).toBe("a b");
+    expect(htmlToText("<p-note>a</p-note><li-item>b</li-item>")).toBe("ab");
+  });
+
+  it("breaks around details, summary and caption", () => {
+    expect(htmlToText("<details><summary>Commits</summary>a</details>b")).toBe(
+      "Commits\na\n\nb",
+    );
+    expect(htmlToText("<table><caption>Versions</caption><tr><td>1</td></tr></table>")).toBe(
+      "Versions\n1",
+    );
   });
 
   it("keeps at most one blank line in a row", () => {
     expect(htmlToText("<p>a</p><p></p><div> </div><p>&nbsp;</p><p>b</p>")).toBe("a\n\nb");
-  });
-});
-
-describe("tidyText", () => {
-  it("keeps line breaks, trims lines and collapses blank runs", () => {
-    expect(tidyText("  one \t two \r\n  three\n\n\n\nfour  ")).toBe("one two\nthree\n\nfour");
   });
 });
