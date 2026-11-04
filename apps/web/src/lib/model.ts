@@ -1,0 +1,260 @@
+// A Workspace's model, as the Model screen reads and changes it (ADR 0005). Every query is scoped to
+// the Workspace, and nothing here returns the key or its ciphertext to the page.
+import { type AgentFetch, decryptSecret, encryptSecret, testModelConnection } from "@watchdog/core";
+import { agentCall, and, type Db, desc, eq, isNull, modelConfig, ne, sql, workspace } from "@watchdog/db";
+
+export const providerTypes = [
+  { value: "openai-compatible", label: "OpenAI-compatible", baseUrl: "https://api.openai.com/v1" },
+  { value: "anthropic", label: "Anthropic", baseUrl: "https://api.anthropic.com/v1" },
+  { value: "google", label: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta" },
+] as const;
+
+export interface ModelDeps {
+  /** From `createAgentFetch`. */
+  fetch: AgentFetch;
+  encryptionKey: Buffer;
+}
+
+/** What the form posts, as text. */
+export interface ModelInput {
+  providerType: string;
+  baseUrl: string;
+  modelName: string;
+  /** Blank keeps the current key, for as long as the model stays on the same provider and origin. */
+  apiKey: string;
+  structured: boolean;
+  inputPrice: string;
+  outputPrice: string;
+}
+
+/** Why a model wasn't saved, as a code the form can carry in its URL. Each names the field it's about. */
+export const modelProblems = [
+  "provider",
+  "base-url",
+  "model-name",
+  "api-key",
+  "input-price",
+  "output-price",
+] as const;
+export type ModelProblem = (typeof modelProblems)[number];
+
+export const modelProblemMessage: Record<ModelProblem, string> = {
+  provider: "Choose one of the provider types in the list.",
+  "base-url": "Enter the full base URL, starting with https://, with no user name or query.",
+  "model-name": "Enter the model's name as the provider spells it, in at most 200 characters.",
+  "api-key": "An API key is one line of letters, digits and symbols. Paste it again.",
+  "input-price": "Enter a price per million tokens as a number, such as 2.50, or leave it blank.",
+  "output-price": "Enter a price per million tokens as a number, such as 2.50, or leave it blank.",
+};
+
+/** The form's URL after a refusal. The key never goes in a URL, so the form asks for it again. */
+export function modelFormQuery(problem: ModelProblem, input: ModelInput) {
+  const query = new URLSearchParams({
+    error: problem,
+    providerType: input.providerType,
+    baseUrl: input.baseUrl,
+    modelName: input.modelName,
+    inputPrice: input.inputPrice,
+    outputPrice: input.outputPrice,
+  });
+  if (input.structured) query.set("structured", "1");
+  if (input.apiKey.trim() !== "") query.set("keyTyped", "1");
+  return query;
+}
+
+/** Without a path the SDKs ask the wrong URL, and a query would end up in the middle of one. */
+function cleanBaseUrl(text: string) {
+  const url = URL.parse(text.trim());
+  const usable =
+    url !== null &&
+    (url.protocol === "http:" || url.protocol === "https:") &&
+    url.username === "" &&
+    url.password === "" &&
+    url.search === "" &&
+    url.hash === "";
+  return usable ? url.href.replace(/\/+$/, "") : undefined;
+}
+
+/** Null for a blank price, undefined for one that isn't a price. */
+function cleanPrice(text: string) {
+  if (text.trim() === "") return null;
+  const price = Number(text);
+  return Number.isFinite(price) && price >= 0 ? price : undefined;
+}
+
+function parseModel(input: ModelInput) {
+  const provider = providerTypes.find(({ value }) => value === input.providerType)?.value;
+  if (provider === undefined) return { problem: "provider" } as const;
+  const baseUrl = cleanBaseUrl(input.baseUrl);
+  if (baseUrl === undefined) return { problem: "base-url" } as const;
+  const modelName = input.modelName.trim();
+  // Postgres text refuses a NUL and half a surrogate pair.
+  if (modelName === "" || modelName.length > 200 || modelName.includes("\0") || !modelName.isWellFormed()) {
+    return { problem: "model-name" } as const;
+  }
+  const apiKey = input.apiKey.trim();
+  // Anything else can't go in a header, and fails on every call.
+  if (apiKey !== "" && !/^[\x21-\x7e]{1,4096}$/.test(apiKey)) return { problem: "api-key" } as const;
+  const inputPrice = cleanPrice(input.inputPrice);
+  if (inputPrice === undefined) return { problem: "input-price" } as const;
+  const outputPrice = cleanPrice(input.outputPrice);
+  if (outputPrice === undefined) return { problem: "output-price" } as const;
+  return { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice };
+}
+
+const sameDestination = (
+  current: { providerType: string; baseUrl: string },
+  next: { provider: string; baseUrl: string },
+) => current.providerType === next.provider && new URL(current.baseUrl).origin === new URL(next.baseUrl).origin;
+
+/**
+ * Creates the Workspace's model or changes it. A new provider, base URL or model name is a new row,
+ * and the old one is archived, so Usage history keeps pointing at what ran. Prices, the flag and the
+ * key change in place.
+ *
+ * A blank key keeps the current one, except on the way to another provider or origin: the key was
+ * only ever meant for the old one. `keyLeftBehind` says that happened.
+ */
+export async function saveModel(
+  db: Db,
+  encryptionKey: Buffer,
+  workspaceId: string,
+  input: ModelInput,
+): Promise<{ problem: ModelProblem } | { keyLeftBehind: boolean }> {
+  const parsed = parseModel(input);
+  if (parsed.problem !== undefined) return { problem: parsed.problem };
+  const { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice } = parsed;
+  const newCiphertext = apiKey === "" ? null : encryptSecret(apiKey, encryptionKey);
+  const settings = {
+    supportsStructuredOutput: input.structured,
+    inputPricePerMillion: inputPrice,
+    outputPricePerMillion: outputPrice,
+  };
+
+  return db.transaction(async (tx) => {
+    // Two saves take turns, or both could find the same row and try to replace it.
+    await tx.select({ id: workspace.id }).from(workspace).where(eq(workspace.id, workspaceId)).for("no key update");
+    const [current] = await tx
+      .select()
+      .from(modelConfig)
+      .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
+
+    if (
+      current?.providerType === provider &&
+      current.baseUrl === baseUrl &&
+      current.modelName === modelName
+    ) {
+      await tx
+        .update(modelConfig)
+        .set({ ...settings, ...(newCiphertext !== null && { apiKeyCiphertext: newCiphertext }) })
+        .where(eq(modelConfig.id, current.id));
+      return { keyLeftBehind: false };
+    }
+
+    const carried =
+      current !== undefined && sameDestination(current, { provider, baseUrl }) ? current.apiKeyCiphertext : null;
+    if (current !== undefined) await archive(tx, workspaceId);
+    await tx.insert(modelConfig).values({
+      workspaceId,
+      providerType: provider,
+      baseUrl,
+      modelName,
+      apiKeyCiphertext: newCiphertext ?? carried,
+      ...settings,
+    });
+    const hadKey = (current?.apiKeyCiphertext ?? null) !== null;
+    return { keyLeftBehind: hadKey && newCiphertext === null && carried === null };
+  });
+}
+
+/** An archived row only has to say what ran, so it forgets the key. Returns how many it archived. */
+async function archive(db: Pick<Db, "update">, workspaceId: string) {
+  const archived = await db
+    .update(modelConfig)
+    .set({ archivedAt: new Date(), apiKeyCiphertext: null })
+    .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)))
+    .returning({ id: modelConfig.id });
+  return archived.length;
+}
+
+/**
+ * Archives the model, so Agent stages stop and Items stay unrated, while deterministic rules keep
+ * running (Processing pipeline, "Without a model"). Returns false when there's none to remove.
+ */
+export async function removeModel(db: Db, workspaceId: string) {
+  return (await archive(db, workspaceId)) > 0;
+}
+
+/** The Workspace's model as the screen shows it, or undefined. */
+export async function getModel(db: Db, workspaceId: string) {
+  const [model] = await db
+    .select({
+      providerType: modelConfig.providerType,
+      baseUrl: modelConfig.baseUrl,
+      modelName: modelConfig.modelName,
+      hasKey: sql<boolean>`${modelConfig.apiKeyCiphertext} is not null`,
+      supportsStructuredOutput: modelConfig.supportsStructuredOutput,
+      inputPricePerMillion: modelConfig.inputPricePerMillion,
+      outputPricePerMillion: modelConfig.outputPricePerMillion,
+    })
+    .from(modelConfig)
+    .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
+  return model;
+}
+
+/**
+ * The active model's most recent failed call, or undefined. `recovered` means a call has worked
+ * since, so the failure is history rather than something to fix.
+ */
+export async function lastFailedCall(db: Db, workspaceId: string) {
+  const newest = (onlyFailures: boolean) =>
+    db
+      .select({ at: agentCall.createdAt, status: agentCall.status, errorMessage: agentCall.errorMessage })
+      .from(agentCall)
+      .innerJoin(modelConfig, and(eq(agentCall.modelConfigId, modelConfig.id), isNull(modelConfig.archivedAt)))
+      .where(and(eq(agentCall.workspaceId, workspaceId), onlyFailures ? ne(agentCall.status, "ok") : undefined))
+      .orderBy(desc(agentCall.createdAt))
+      .limit(1);
+  const [[failed], [latest]] = await Promise.all([newest(true), newest(false)]);
+  if (failed === undefined) return undefined;
+  return {
+    at: failed.at,
+    reason: failed.errorMessage ?? "No reason was recorded.",
+    recovered: latest?.status === "ok",
+  };
+}
+
+export const testOutcomes = ["ok", "blocked", "failed", "unreadable-key", "no-model"] as const;
+export type TestOutcome = (typeof testOutcomes)[number];
+
+/**
+ * Makes one small real call to the saved model. A call that was attempted leaves its reason on its
+ * `agent_call` row, for `lastFailedCall`.
+ */
+export async function testConnection(db: Db, deps: ModelDeps, workspaceId: string): Promise<TestOutcome> {
+  const [model] = await db
+    .select()
+    .from(modelConfig)
+    .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
+  if (model === undefined) return "no-model";
+  if (!canDecrypt(model.apiKeyCiphertext, deps.encryptionKey)) return "unreadable-key";
+
+  const result = await testModelConnection({
+    db,
+    modelConfig: model,
+    encryptionKey: deps.encryptionKey,
+    fetch: deps.fetch,
+  });
+  if (result.ok) return "ok";
+  return result.reason === "blocked" ? "blocked" : "failed";
+}
+
+// callAgent makes no attempt with a key it can't read, so no row would say why.
+function canDecrypt(ciphertext: string | null, encryptionKey: Buffer) {
+  try {
+    if (ciphertext !== null) decryptSecret(ciphertext, encryptionKey);
+    return true;
+  } catch {
+    return false;
+  }
+}

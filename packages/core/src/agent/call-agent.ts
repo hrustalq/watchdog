@@ -72,6 +72,8 @@ function describeFailure(error: unknown) {
   if (APICallError.isInstance(error) && error.statusCode !== undefined) {
     return `The model provider answered ${String(error.statusCode)}: ${error.message}`;
   }
+  // The SDK reports no answer at all (DNS, a refused connection, TLS) with no status.
+  if (APICallError.isInstance(error)) return `Watchdog couldn't reach the model provider: ${error.message}`;
   return error instanceof Error ? error.message : String(error);
 }
 
