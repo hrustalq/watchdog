@@ -20,7 +20,7 @@ export async function processItem(db: Db, itemId: string, deps: ProcessItemDeps)
       .innerJoin(source, eq(item.sourceId, source.id))
       .where(eq(item.id, itemId))
       .for("update", { of: item });
-    if (row === undefined || row.item.processedAt !== null) return;
+    if (row?.item.processedAt !== null) return;
 
     await runDeterministicClassifiers(tx, itemId, { ...row.item, sourceType: row.sourceType });
 
