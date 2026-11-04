@@ -7,6 +7,7 @@ const minimal = {
   DATABASE_URL: "postgres://watchdog:watchdog@localhost:5432/watchdog",
   BETTER_AUTH_SECRET: "a".repeat(32),
   BETTER_AUTH_URL: "http://localhost:3000",
+  WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
 };
 
 const smtp = {
@@ -27,9 +28,28 @@ describe("loadConfig", () => {
     });
   });
 
-  it("loads .env.example as written", () => {
-    const example = readFileSync(new URL("../../../.env.example", import.meta.url), "utf8");
-    expect(loadConfig(parseEnv(example)).mode).toBe("self-hosted");
+  describe("with the .env.example file", () => {
+    const example = parseEnv(readFileSync(new URL("../../../.env.example", import.meta.url), "utf8"));
+
+    it("loads it as written, warning that its encryption key is public", () => {
+      const warn = vi.fn();
+      expect(loadConfig(example, warn).mode).toBe("self-hosted");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(/WATCHDOG_ENCRYPTION_KEY is the public placeholder/),
+      );
+    });
+
+    it("refuses its encryption key in hosted mode", () => {
+      expect(() => loadConfig({ ...example, ...smtp, WATCHDOG_MODE: "hosted" })).toThrow(
+        /WATCHDOG_ENCRYPTION_KEY: must not be the placeholder/,
+      );
+    });
+  });
+
+  it("doesn't warn about a generated encryption key", () => {
+    const warn = vi.fn();
+    loadConfig(minimal, warn);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("defaults the mode to self-hosted when WATCHDOG_MODE is unset", () => {
@@ -76,14 +96,48 @@ describe("loadConfig", () => {
     );
   });
 
-  it.each(["DATABASE_URL", "BETTER_AUTH_SECRET", "BETTER_AUTH_URL"])("requires %s", (name) => {
-    const env = Object.fromEntries(Object.entries(minimal).filter(([key]) => key !== name));
-    expect(() => loadConfig(env)).toThrow(new RegExp(`${name}: is required`));
+  it.each(["DATABASE_URL", "BETTER_AUTH_SECRET", "BETTER_AUTH_URL", "WATCHDOG_ENCRYPTION_KEY"])(
+    "requires %s",
+    (name) => {
+      const env = Object.fromEntries(Object.entries(minimal).filter(([key]) => key !== name));
+      expect(() => loadConfig(env)).toThrow(new RegExp(`${name}: is required`));
+    },
+  );
+
+  it("requires WATCHDOG_ENCRYPTION_KEY in hosted mode too, and when it's blank", () => {
+    const { WATCHDOG_ENCRYPTION_KEY: _key, ...withoutKey } = minimal;
+    expect(() => loadConfig({ ...withoutKey, ...smtp, WATCHDOG_MODE: "hosted" })).toThrow(
+      /WATCHDOG_ENCRYPTION_KEY: is required/,
+    );
+    expect(() => loadConfig({ ...minimal, WATCHDOG_ENCRYPTION_KEY: " " })).toThrow(
+      /WATCHDOG_ENCRYPTION_KEY: is required/,
+    );
+  });
+
+  it("decodes WATCHDOG_ENCRYPTION_KEY to its 32 bytes", () => {
+    const encryptionKey = loadConfig({
+      ...minimal,
+      WATCHDOG_ENCRYPTION_KEY: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+    }).encryptionKey;
+    expect(encryptionKey).toEqual(Buffer.alloc(32, 7));
+  });
+
+  it.each([
+    ["31 bytes", `${"A".repeat(40)}AA==`],
+    ["33 bytes", "A".repeat(44)],
+    ["not base64", "!".repeat(44)],
+    ["32 characters instead of 32 bytes", "a".repeat(32)],
+    ["base64url", `${"_".repeat(43)}=`],
+    ["unused bits set in its last character", `${"A".repeat(42)}B=`],
+  ])("rejects a WATCHDOG_ENCRYPTION_KEY of %s without echoing it", (_label, value) => {
+    const load = () => loadConfig({ ...minimal, WATCHDOG_ENCRYPTION_KEY: value });
+    expect(load).toThrow(/WATCHDOG_ENCRYPTION_KEY: must be 32 bytes, base64-encoded/);
+    expect(load).not.toThrow(value);
   });
 
   it("names every invalid variable in one message", () => {
     expect(() => loadConfig({ WATCHDOG_MODE: "foo" })).toThrow(
-      /WATCHDOG_MODE[\s\S]*DATABASE_URL[\s\S]*BETTER_AUTH_SECRET[\s\S]*BETTER_AUTH_URL/,
+      /WATCHDOG_MODE[\s\S]*DATABASE_URL[\s\S]*BETTER_AUTH_SECRET[\s\S]*BETTER_AUTH_URL[\s\S]*WATCHDOG_ENCRYPTION_KEY/,
     );
   });
 
@@ -128,7 +182,6 @@ describe("loadConfig", () => {
     expect(
       loadConfig({
         ...minimal,
-        WATCHDOG_ENCRYPTION_KEY: "key",
         TELEGRAM_BOT_TOKEN: "token",
         TELEGRAM_API_ID: "12345",
         TELEGRAM_API_HASH: "hash",
@@ -138,7 +191,6 @@ describe("loadConfig", () => {
         GLITCHTIP_DSN: "https://key@glitchtip.example.com/1",
       }),
     ).toMatchObject({
-      encryptionKey: "key",
       telegram: { botToken: "token", apiId: 12345, apiHash: "hash" },
       obscura: { cdpUrl: "ws://obscura:9222", cdpToken: "cdp-token" },
       egressAllowlist: [{ type: "subnet", address: "10.0.0.5", prefix: 32, family: "ipv4" }],

@@ -17,13 +17,23 @@ const groups = {
 
 const oauth = (id: string, secret: string) => ({ clientId: id, clientSecret: secret });
 
+// The key in .env.example, which lets a copied file start the stack. It's public, so it protects
+// nothing, and a secret stored under it can't move to a real key without being entered again.
+const placeholderKey = Buffer.from("replace-with-32-random-key-bytes");
+
 const schema = z
   .object({
     WATCHDOG_MODE: z.enum(["self-hosted", "hosted"]).default("self-hosted"),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, error: invalid("must be a postgres:// URL") }),
     BETTER_AUTH_SECRET: z.string().min(32, "must be at least 32 characters"),
     BETTER_AUTH_URL: z.url({ protocol: /^https?$/, error: invalid("must be an http(s) URL") }),
-    WATCHDOG_ENCRYPTION_KEY: z.string().optional(),
+    // Decoding alone accepts stray characters and base64url, so the key must re-encode to itself.
+    WATCHDOG_ENCRYPTION_KEY: z.string().transform((value, ctx) => {
+      const key = Buffer.from(value, "base64");
+      if (key.length === 32 && key.toString("base64") === value) return key;
+      ctx.addIssue({ code: "custom", message: "must be 32 bytes, base64-encoded" });
+      return z.NEVER;
+    }),
     smtp: z
       .object({
         SMTP_HOST: z.string(),
@@ -65,6 +75,13 @@ const schema = z
     when: (payload) =>
       payload.issues.every((issue) => !["WATCHDOG_MODE", "smtp"].includes(String(issue.path?.[0]))),
   })
+  .refine(
+    (env) => env.WATCHDOG_MODE !== "hosted" || !env.WATCHDOG_ENCRYPTION_KEY.equals(placeholderKey),
+    {
+      path: ["WATCHDOG_ENCRYPTION_KEY"],
+      error: "must not be the placeholder from .env.example when WATCHDOG_MODE=hosted",
+    },
+  )
   .transform((env) => ({
     mode: env.WATCHDOG_MODE,
     databaseUrl: env.DATABASE_URL,
@@ -120,6 +137,11 @@ export function loadConfig(
     if (result.data.mode === "hosted" && result.data.egressAllowlist.length > 0) {
       warn(
         "EGRESS_ALLOWLIST is ignored when WATCHDOG_MODE=hosted: the egress guard lets no private addresses through.",
+      );
+    }
+    if (result.data.encryptionKey.equals(placeholderKey)) {
+      warn(
+        "WATCHDOG_ENCRYPTION_KEY is the public placeholder from .env.example. Replace it before storing a secret: changing it later makes stored secrets unreadable.",
       );
     }
     return result.data;

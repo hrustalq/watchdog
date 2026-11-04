@@ -24,6 +24,7 @@ const config = loadConfig(
     DATABASE_URL: "postgres://watchdog:watchdog@localhost:5432/watchdog",
     BETTER_AUTH_SECRET: "a".repeat(32),
     BETTER_AUTH_URL: "http://localhost:3000",
+    WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
     EGRESS_ALLOWLIST: "feeds.test",
   },
   () => undefined,

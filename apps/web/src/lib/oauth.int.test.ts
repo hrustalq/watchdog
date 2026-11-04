@@ -8,7 +8,12 @@ import { workspaceFor } from "./workspace.ts";
 
 const baseURL = "http://localhost:3000";
 const secret = "a-test-secret-that-is-at-least-32-characters";
-const requiredEnv = { DATABASE_URL: "postgres://localhost/watchdog", BETTER_AUTH_SECRET: secret, BETTER_AUTH_URL: baseURL };
+const requiredEnv = {
+  DATABASE_URL: "postgres://localhost/watchdog",
+  BETTER_AUTH_SECRET: secret,
+  BETTER_AUTH_URL: baseURL,
+  WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
+};
 const githubEnv = { GITHUB_CLIENT_ID: "github-client-id", GITHUB_CLIENT_SECRET: "github-client-secret" };
 const googleEnv = { GOOGLE_CLIENT_ID: "google-client-id", GOOGLE_CLIENT_SECRET: "google-client-secret" };
 

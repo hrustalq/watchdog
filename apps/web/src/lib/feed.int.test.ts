@@ -23,6 +23,7 @@ const env = {
   DATABASE_URL: "postgres://unused",
   BETTER_AUTH_SECRET: "a".repeat(32),
   BETTER_AUTH_URL: "http://localhost:3000",
+  WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
   EGRESS_ALLOWLIST: "feeds.test",
 };
 const lookup = () => Promise.resolve([{ address: "127.0.0.1", family: 4 }]);
