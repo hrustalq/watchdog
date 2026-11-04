@@ -2,6 +2,7 @@
 
 import { draftToYaml } from "@watchdog/core/rules/draft";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useActionState, useState } from "react";
 import { fieldError, textBox } from "@/components/field-classes";
 import { buttonVariants } from "@/components/ui/button";
@@ -15,24 +16,30 @@ import { appliesFromNow, modelLink } from "./words";
 
 const yamlBox = cn(textBox, "min-h-80 py-2 font-mono text-[0.8125rem] leading-[1.5] sm:text-[0.8125rem]");
 
-/**
- * The Form and YAML views of one draft. The draft can be anything while it's being written: it's
- * only checked when saved, on the server, so moving between the views can't lose a value. Whichever
- * view is open, the server is sent YAML.
- */
-export function RuleEditor({
-  target,
-  initialYaml,
-  initialProblems,
-  hasModel,
-  sources,
-}: {
+interface RuleEditorProps {
   target: RuleTarget | null;
   initialYaml: string;
   initialProblems: RuleProblem[];
   hasModel: boolean;
   sources: { id: string; name: string }[];
-}) {
+}
+
+/**
+ * Next.js keeps a page's state when it's navigated away from (Activity), which would show the last
+ * rule in "New", or an abandoned edit when a rule is opened again. A link starts from what the server
+ * says, and Back still restores a draft in progress. So does a rule the server has changed since.
+ */
+export function RuleEditor(props: RuleEditorProps) {
+  const { bfcacheId } = useRouter();
+  return <Editor key={`${bfcacheId}:${props.initialYaml}`} {...props} />;
+}
+
+/**
+ * The Form and YAML views of one draft. The draft can be anything while it's being written: it's
+ * only checked when saved, on the server, so moving between the views can't lose a value. Whichever
+ * view is open, the server is sent YAML.
+ */
+function Editor({ target, initialYaml, initialProblems, hasModel, sources }: RuleEditorProps) {
   const [state, formAction] = useActionState(saveRuleAction.bind(null, target), { problems: initialProblems });
   // Problems point at places in the draft, so a change to its shape puts them out of date.
   const [cleared, setCleared] = useState<typeof state | null>(null);
