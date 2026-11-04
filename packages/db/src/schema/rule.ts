@@ -14,55 +14,37 @@ import { item } from "./item.ts";
 import { workspace } from "./workspace.ts";
 
 /**
- * Sorts Items into Categories. `definition` holds the canonical rule model, whose zod schemas live
- * in packages/core. This package doesn't depend on core (ADR 0024), so callers parse the column.
+ * What a Classifier and an Extractor Rule share. `definition` holds the canonical rule model, whose
+ * zod schemas live in packages/core. This package doesn't depend on core (ADR 0024), so callers
+ * parse the column.
  */
-export const classifier = pgTable(
-  "classifier",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspace.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    kind: text("kind", { enum: ["deterministic", "agent"] }).notNull(),
-    definition: jsonb("definition").notNull(),
-    enabled: boolean("enabled").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    check("classifier_kind_check", sql`${table.kind} in ('deterministic', 'agent')`),
-    unique("classifier_workspace_id_name_key").on(table.workspaceId, table.name),
-  ],
-);
+const ruleColumns = {
+  id: uuid("id").primaryKey().defaultRandom(),
+  workspaceId: uuid("workspace_id")
+    .notNull()
+    .references(() => workspace.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  kind: text("kind", { enum: ["deterministic", "agent"] }).notNull(),
+  definition: jsonb("definition").notNull(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+};
 
-/** Pulls structured fields out of an Item. `definition` is parsed by callers, as on classifier. */
-export const extractorRule = pgTable(
-  "extractor_rule",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    workspaceId: uuid("workspace_id")
-      .notNull()
-      .references(() => workspace.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    kind: text("kind", { enum: ["deterministic", "agent"] }).notNull(),
-    definition: jsonb("definition").notNull(),
-    enabled: boolean("enabled").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .notNull()
-      .defaultNow()
-      .$onUpdate(() => new Date()),
-  },
-  (table) => [
-    check("extractor_rule_kind_check", sql`${table.kind} in ('deterministic', 'agent')`),
-    unique("extractor_rule_workspace_id_name_key").on(table.workspaceId, table.name),
-  ],
-);
+/** Sorts Items into Categories. */
+export const classifier = pgTable("classifier", ruleColumns, (table) => [
+  check("classifier_kind_check", sql`${table.kind} in ('deterministic', 'agent')`),
+  unique("classifier_workspace_id_name_key").on(table.workspaceId, table.name),
+]);
+
+/** Pulls structured fields out of an Item. */
+export const extractorRule = pgTable("extractor_rule", ruleColumns, (table) => [
+  check("extractor_rule_kind_check", sql`${table.kind} in ('deterministic', 'agent')`),
+  unique("extractor_rule_workspace_id_name_key").on(table.workspaceId, table.name),
+]);
 
 /** A Category on an Item. It stays when its Classifier is deleted. */
 export const itemCategory = pgTable(

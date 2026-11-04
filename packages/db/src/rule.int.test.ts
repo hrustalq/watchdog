@@ -1,8 +1,4 @@
-import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { and, eq, sql } from "drizzle-orm";
-import { migrate as applyMigrations } from "drizzle-orm/node-postgres/migrator";
 import { beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, type Db } from "./client.ts";
 import { migrate } from "./migrate.ts";
@@ -21,9 +17,7 @@ import {
   user,
   workspace,
 } from "./schema/index.ts";
-import { startPostgres, type TestPostgres } from "./testing/postgres.ts";
-
-const migrationsDir = path.join(import.meta.dirname, "../migrations");
+import { migrateFirst, startPostgres, type TestPostgres } from "./testing/postgres.ts";
 
 /** The one row a query returned. */
 function only<T>(rows: T[]): T {
@@ -309,32 +303,19 @@ describe("rule, Rating, Correction, Profile, model and metering tables", () => {
     await db.execute(sql`create database at_0005`);
     const url = new URL(postgres.url);
     url.pathname = "/at_0005";
-    // A copy of migrations/ whose journal stops at 0005, to build a database as it stood then.
-    const migrationsAt0005 = await mkdtemp(path.join(tmpdir(), "watchdog-migrations-"));
+    await migrateFirst(url.href, 6);
+    const old = createDb(url.href);
     try {
-      await cp(migrationsDir, migrationsAt0005, { recursive: true });
-      const journalPath = path.join(migrationsAt0005, "meta/_journal.json");
-      const firstSix = (key: string, value: unknown): unknown =>
-        key === "entries" && Array.isArray(value) ? value.slice(0, 6) : value;
-      const journal = await readFile(journalPath, "utf8");
-      await writeFile(journalPath, JSON.stringify(JSON.parse(journal, firstSix)));
-
-      const old = createDb(url.href);
-      try {
-        await applyMigrations(old, { migrationsFolder: migrationsAt0005 });
-        await old.execute(sql`insert into "user" (id, name, email) values ('u', 'O', 'o@example.com')`);
-        await old.execute(sql`insert into workspace (name, owner_user_id) values ('Workspace', 'u')`);
-        await old.execute(sql`
-          insert into source (workspace_id, type, name, config, schedule)
-          select id, 'rss', 'Blog', '{"url": "https://example.com/feed.xml"}', '*/15 * * * *' from workspace`);
-        await old.execute(sql`
-          insert into item (workspace_id, source_id, external_id, body, raw)
-          select workspace_id, id, 'guid-1', 'Hello', '{}' from source`);
-      } finally {
-        await closeDb(old);
-      }
+      await old.execute(sql`insert into "user" (id, name, email) values ('u', 'O', 'o@example.com')`);
+      await old.execute(sql`insert into workspace (name, owner_user_id) values ('Workspace', 'u')`);
+      await old.execute(sql`
+        insert into source (workspace_id, type, name, config, schedule)
+        select id, 'rss', 'Blog', '{"url": "https://example.com/feed.xml"}', '*/15 * * * *' from workspace`);
+      await old.execute(sql`
+        insert into item (workspace_id, source_id, external_id, body, raw)
+        select workspace_id, id, 'guid-1', 'Hello', '{}' from source`);
     } finally {
-      await rm(migrationsAt0005, { recursive: true, force: true });
+      await closeDb(old);
     }
 
     await migrate(url.href);

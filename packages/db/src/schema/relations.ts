@@ -17,7 +17,6 @@ export const workspaceRelations = relations(workspace, ({ one, many }) => ({
   corrections: many(correction),
   profile: one(profile),
   modelConfigs: many(modelConfig),
-  agentCalls: many(agentCall),
 }));
 
 export const sourceRelations = relations(source, ({ one, many }) => ({
@@ -31,22 +30,18 @@ export const itemRelations = relations(item, ({ one, many }) => ({
   log: many(itemLog),
   categories: many(itemCategory),
   fields: many(itemField),
-  corrections: many(correction),
-  agentCalls: many(agentCall),
 }));
 
 export const itemLogRelations = relations(itemLog, ({ one }) => ({
   item: one(item, { fields: [itemLog.itemId], references: [item.id] }),
 }));
 
-export const classifierRelations = relations(classifier, ({ one, many }) => ({
+export const classifierRelations = relations(classifier, ({ one }) => ({
   workspace: one(workspace, { fields: [classifier.workspaceId], references: [workspace.id] }),
-  categories: many(itemCategory),
 }));
 
-export const extractorRuleRelations = relations(extractorRule, ({ one, many }) => ({
+export const extractorRuleRelations = relations(extractorRule, ({ one }) => ({
   workspace: one(workspace, { fields: [extractorRule.workspaceId], references: [workspace.id] }),
-  fields: many(itemField),
 }));
 
 export const itemCategoryRelations = relations(itemCategory, ({ one }) => ({
@@ -61,7 +56,6 @@ export const itemFieldRelations = relations(itemField, ({ one }) => ({
 
 export const correctionRelations = relations(correction, ({ one }) => ({
   workspace: one(workspace, { fields: [correction.workspaceId], references: [workspace.id] }),
-  item: one(item, { fields: [correction.itemId], references: [item.id] }),
 }));
 
 export const profileRelations = relations(profile, ({ one }) => ({
@@ -74,7 +68,5 @@ export const modelConfigRelations = relations(modelConfig, ({ one, many }) => ({
 }));
 
 export const agentCallRelations = relations(agentCall, ({ one }) => ({
-  workspace: one(workspace, { fields: [agentCall.workspaceId], references: [workspace.id] }),
   modelConfig: one(modelConfig, { fields: [agentCall.modelConfigId], references: [modelConfig.id] }),
-  item: one(item, { fields: [agentCall.itemId], references: [item.id] }),
 }));
