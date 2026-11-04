@@ -205,7 +205,8 @@ describe("Rules", () => {
 
     it.each([
       ["text it can't parse", "classifier: [", /Flow sequence/],
-      ["YAML nested too deeply", "[".repeat(200_000), /./],
+      // The parser makes an error per unclosed bracket, and under Vitest each one is slow to build.
+      ["YAML nested too deeply", "[".repeat(20_000), /./],
       ["nothing at all", "", /starts with/],
       ["a list", "- a\n", /starts with/],
     ])("refuses %s as a whole", async (_, yaml, message) => {
