@@ -107,6 +107,19 @@ describe("pipeline", () => {
     expect((await jobsFor(all)).sort()).toEqual([...all].sort());
   });
 
+  it("keeps a waiting job through a long outage, beyond pg-boss's default 14 days", async () => {
+    const sourceId = await newSource();
+    await pollSource(db, sourceId, answering(["one"]));
+    const itemId = present((await itemIdsOf(sourceId))[0]);
+
+    const { rows } = await db.$client.query<{ days: number }>(
+      `select (extract(epoch from keep_until - created_on) / 86400)::float8 as days
+       from pgboss.job where name = $1 and data->>'itemId' = $2`,
+      [processItemQueue, itemId],
+    );
+    expect(rows[0]?.days).toBeGreaterThanOrEqual(89);
+  });
+
   it("queues no job and keeps no Item when the capture rolls back", async () => {
     const sourceId = await newSource();
     const enqueueItems = itemEnqueuer(boss);

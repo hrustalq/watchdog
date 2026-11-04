@@ -20,12 +20,14 @@ export function itemEnqueuer(boss: PgBoss): PollSourceDeps["enqueueItems"] {
 export async function startPipeline(db: Db, boss: PgBoss) {
   // Retries and concurrency: docs, Agent and LLM integration, "Limits". Deterministic stages take
   // far less than two minutes, so a job still active after that belongs to a worker that died, and
-  // expiring it retries the Item.
+  // expiring it retries the Item. pg-boss deletes a job left waiting past its retention, 14 days by
+  // default, which an Item outlives, so a long outage keeps the job for the Items' own 90 days.
   await boss.createQueue(processItemQueue, {
     retryLimit: 3,
     retryBackoff: true,
     retryDelay: 30,
     expireInSeconds: 120,
+    retentionSeconds: 90 * 24 * 60 * 60,
   });
 
   await boss.work<{ itemId: string }>(processItemQueue, { localConcurrency: 4 }, async ([job]) => {

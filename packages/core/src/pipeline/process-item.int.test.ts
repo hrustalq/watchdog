@@ -266,6 +266,26 @@ describe("processItem", () => {
     expect((await reload(itemId)).processedAt).not.toBeNull();
   });
 
+  it("applies an edit saved before the capture, but not one saved after it", async () => {
+    const seeded = await seed();
+    const ruleId = await saveClassifier(seeded, "launches", deterministic("launches", titleContains("launch"), ["launch"]));
+    const edit = (assign: string) =>
+      db
+        .update(classifier)
+        .set({ definition: deterministic("launches", titleContains("launch"), [assign]) })
+        .where(eq(classifier.id, ruleId));
+
+    await edit("edited-before");
+    const afterTheEdit = await capture(seeded, "A launch");
+    await processItem(db, afterTheEdit, {});
+    expect((await categoriesOf(afterTheEdit)).map((row) => row.category)).toEqual(["edited-before"]);
+
+    const beforeTheEdit = await capture(seeded, "A launch");
+    await edit("edited-after");
+    await processItem(db, beforeTheEdit, {});
+    expect(await categoriesOf(beforeTheEdit)).toEqual([]);
+  });
+
   it("does nothing for an Item that no longer exists", async () => {
     await expect(processItem(db, crypto.randomUUID(), {})).resolves.toBeUndefined();
   });
