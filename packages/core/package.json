@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./rules/draft": "./src/rules/draft.ts"
+    "./rules/draft": "./src/rules/draft.ts",
+    "./testing": "./src/agent/fake-llm.ts"
   },
   "scripts": {
     "typecheck": "tsc",
@@ -23,7 +24,11 @@
     "vitest": "^5.0.5"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.96",
+    "@ai-sdk/google": "^4.0.111",
+    "@ai-sdk/openai-compatible": "^3.0.84",
     "@watchdog/db": "workspace:*",
+    "ai": "^7.0.162",
     "cron-parser": "^5.10.3",
     "entities": "^7.0.1",
     "feedsmith": "^3.0.1",
