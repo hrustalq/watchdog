@@ -10,7 +10,7 @@ export function regexError(pattern: string): string | undefined {
   try {
     if (RE2JS.compile(pattern).programSize() <= maxInstructions) return undefined;
   } catch (error) {
-    return `"${pattern}" isn't a regular expression Watchdog can run: ${String(error)}`;
+    return `"${pattern}" isn't a regular expression Watchdog can run: ${error instanceof Error ? error.message : String(error)}`;
   }
   return `"${pattern}" is too complex: it compiles to more than ${String(maxInstructions)} instructions.`;
 }

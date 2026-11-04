@@ -44,6 +44,9 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
           <Link href="/sources" className={buttonVariants({ variant: "ghost" })}>
             Sources
           </Link>
+          <Link href="/rules" className={buttonVariants({ variant: "ghost" })}>
+            Rules
+          </Link>
           {admin ? (
             <Link href="/settings" className={buttonVariants({ variant: "ghost" })}>
               Settings

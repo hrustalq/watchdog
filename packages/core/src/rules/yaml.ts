@@ -1,10 +1,10 @@
 // The YAML view of the rule model (docs: Rule model, "Three ways to write rules, one model").
-import { parse, stringify } from "yaml";
+import { draftFromYaml, draftToYaml } from "./draft.ts";
 import { type Rule, ruleSchema } from "./schema.ts";
 
 /** A rule as YAML, with no aliases and each value on its own line, whatever its length. */
 export function ruleToYaml(rule: Rule) {
-  return stringify(rule, { aliasDuplicateObjects: false, lineWidth: 0 });
+  return draftToYaml(rule);
 }
 
 /**
@@ -12,5 +12,5 @@ export function ruleToYaml(rule: Rule) {
  * parser throws: a `YAMLParseError`, or a `RangeError` when the text nests too deeply.
  */
 export function ruleFromYaml(text: string): Rule {
-  return ruleSchema.parse(parse(text));
+  return ruleSchema.parse(draftFromYaml(text));
 }
