@@ -7,7 +7,10 @@ export function ruleToYaml(rule: Rule) {
   return stringify(rule, { aliasDuplicateObjects: false, lineWidth: 0 });
 }
 
-/** The rule in this YAML. Throws a `YAMLParseError` on bad syntax and a `ZodError` on a bad rule. */
+/**
+ * The rule in this YAML. Throws a `ZodError` on a bad rule. On text it can't read it throws what the
+ * parser throws: a `YAMLParseError`, or a `RangeError` when the text nests too deeply.
+ */
 export function ruleFromYaml(text: string): Rule {
   return ruleSchema.parse(parse(text));
 }

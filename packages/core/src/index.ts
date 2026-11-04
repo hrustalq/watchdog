@@ -18,7 +18,6 @@ export {
 export { createMailer, type MailMessage, type Mailer } from "./mail/mailer.ts";
 export { defaultSchedule, nextPollAt, scheduleError } from "./schedule.ts";
 export { type ConditionItem, evaluateCondition } from "./rules/condition.ts";
-export { firstCapture } from "./rules/regex.ts";
 export {
   agentClassifierSchema,
   type AgentClassifier,

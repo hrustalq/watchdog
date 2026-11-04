@@ -40,6 +40,7 @@ describe("conditionSchema", () => {
   it.each([
     ["an unknown field", { field: "nope", op: "is", value: "x" }, "nope"],
     ["an empty extracted field name", { field: "fields.", op: "exists" }, "fields."],
+    ["an extracted field called __proto__", { field: "fields.__proto__", op: "exists" }, "__proto__"],
     ["an unknown operator", { field: "title", op: "like", value: "x" }, "operator"],
     ["a number for contains", { field: "title", op: "contains", value: 1 }, "string"],
     ["a string for gte", { field: "severity", op: "gte", value: "4" }, "number"],
@@ -72,6 +73,74 @@ describe("conditionSchema", () => {
     const value = Array(20).fill("a{1,1000}").join("|");
     const result = conditionSchema.safeParse({ field: "title", op: "matches", value });
     expect(issuesOf(result)[0]?.message).toContain("too complex");
+  });
+
+  it.each([
+    ["a field that can't become text", { field: { toString: 1 }, op: "exists" }],
+    ["no field", { op: "exists" }],
+  ])("says what a field is for %s", (_, condition) => {
+    const { message } = issuesOf(conditionSchema.safeParse(condition))[0] ?? { message: "" };
+    expect(message).toContain("field");
+    expect(message).not.toContain("undefined");
+  });
+
+  it.each([
+    ["is", { field: "url", op: "is", value: true }],
+    ["is with no value", { field: "url", op: "is" }],
+    ["in", { field: "url", op: "in", value: [true] }],
+  ])("says what value %s takes", (_, condition) => {
+    const { message } = issuesOf(conditionSchema.safeParse(condition))[0] ?? { message: "" };
+    expect(message).toContain("string or a number");
+  });
+
+  it.each([
+    ["nothing", undefined],
+    ["text", "title"],
+    ["null", null],
+  ])("says what a Condition is for %s", (_, condition) => {
+    const { message } = issuesOf(conditionSchema.safeParse(condition))[0] ?? { message: "" };
+    expect(message).toContain("all, any, not");
+  });
+
+  describe("its size", () => {
+    const nested = (depth: number) => {
+      let condition: object = title;
+      for (let i = 1; i < depth; i++) condition = { not: condition };
+      return condition;
+    };
+
+    it("accepts 50 nodes", () => {
+      expect(conditionSchema.safeParse({ all: Array(49).fill(title) }).success).toBe(true);
+      expect(conditionSchema.safeParse(nested(50)).success).toBe(true);
+    });
+
+    it("refuses 51 nodes, which would let one rule multiply the regex budget", () => {
+      const { message } = issuesOf(conditionSchema.safeParse({ all: Array(50).fill(title) }))[0] ?? {
+        message: "",
+      };
+      expect(message).toContain("50");
+      expect(conditionSchema.safeParse(nested(51)).success).toBe(false);
+    });
+
+    it("returns an error for nesting that would overflow the stack, without throwing", () => {
+      expect(conditionSchema.safeParse(nested(100_000)).success).toBe(false);
+    });
+
+    it("refuses a tree that contains itself", () => {
+      const loop: { not?: object } = {};
+      loop.not = loop;
+      expect(conditionSchema.safeParse(loop).success).toBe(false);
+      const list: object[] = [];
+      list.push({ all: list });
+      expect(conditionSchema.safeParse({ all: list }).success).toBe(false);
+    });
+
+    it("applies at a rule's stage too", () => {
+      const when = { all: Array(50).fill(title) };
+      expect(
+        deterministicClassifierSchema.safeParse({ classifier: "a", when, assign: ["b"] }).success,
+      ).toBe(false);
+    });
   });
 });
 
@@ -115,9 +184,15 @@ describe("agentClassifierSchema", () => {
     expect(agentClassifierSchema.parse(classifier)).toEqual(classifier);
   });
 
-  it("refuses an empty prompt and no Categories", () => {
+  it("refuses an empty prompt, a blank one, and no Categories", () => {
     expect(agentClassifierSchema.safeParse({ ...classifier, prompt: "" }).success).toBe(false);
+    expect(agentClassifierSchema.safeParse({ ...classifier, prompt: " \n " }).success).toBe(false);
     expect(agentClassifierSchema.safeParse({ ...classifier, categories: [] }).success).toBe(false);
+  });
+
+  it("keeps a prompt's own whitespace", () => {
+    const prompt = "  Sort it.\n";
+    expect(agentClassifierSchema.parse({ ...classifier, prompt }).prompt).toBe(prompt);
   });
 });
 
@@ -177,6 +252,7 @@ describe("deterministicExtractorRuleSchema", () => {
     ["a field that says neither", { name: "x", type: "string" }, "regex or jsonpath"],
     ["a field that says both", { name: "x", type: "string", from: "body", regex: "(x)", jsonpath: "$" }, "regex or jsonpath"],
     ["a name with a dot", { name: "a.b", type: "string", jsonpath: "$.a" }, "name"],
+    ["the name __proto__", { name: "__proto__", type: "string", jsonpath: "$.a" }, "name"],
   ])("refuses %s", (_, field, expected) => {
     const issue = issuesOf(deterministicExtractorRuleSchema.safeParse({ ...rule, fields: [field] }))[0];
     expect(`${issue?.path.join(".") ?? ""} ${issue?.message ?? ""}`).toContain(expected);
@@ -194,6 +270,19 @@ describe("deterministicExtractorRuleSchema", () => {
 
   it("refuses a rule with no fields", () => {
     expect(deterministicExtractorRuleSchema.safeParse({ ...rule, fields: [] }).success).toBe(false);
+  });
+
+  it("accepts 50 fields and refuses 51, since each can run a regex", () => {
+    const fields = Array.from({ length: 51 }, (_, i) => ({
+      name: `f${String(i)}`,
+      type: "string",
+      from: "body",
+      regex: "(x)",
+    }));
+    const parse = (list: object[]) =>
+      deterministicExtractorRuleSchema.safeParse({ ...rule, fields: list }).success;
+    expect(parse(fields.slice(1))).toBe(true);
+    expect(parse(fields)).toBe(false);
   });
 });
 
@@ -219,6 +308,10 @@ describe("agentExtractorRuleSchema", () => {
     expect(issuesOf(agentExtractorRuleSchema.safeParse({ ...rule, when }))[0]?.message).toContain(
       '"severity"',
     );
+  });
+
+  it("refuses a blank prompt", () => {
+    expect(agentExtractorRuleSchema.safeParse({ ...rule, prompt: "  " }).success).toBe(false);
   });
 
   it("refuses a field that says where to read from, because the Agent decides", () => {

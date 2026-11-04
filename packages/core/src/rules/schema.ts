@@ -7,9 +7,15 @@ const sourceAndContent = ["source", "source.type", "title", "body", "author", "u
 const sourceContentAndCategories = [...sourceAndContent, "category"];
 const namedFields = [...sourceContentAndCategories, "severity", "importance"];
 
-// Extracted field names become keys of the Agent's flat output schema (ADR 0016).
-const fieldName = /^[\w-]{1,64}$/;
+// Extracted field names become object keys, in stored fields and the Agent's flat output schema
+// (ADR 0016), and assigning to `__proto__` wouldn't create a key.
+const fieldName = /^(?!__proto__$)[\w-]{1,64}$/;
 const extracted = "fields.";
+
+// Each predicate and field can run a regex at the instruction cap, so one rule's size bounds what
+// it can cost per Item (ADR 0026). 50 is far beyond a rule a person writes.
+const maxConditionNodes = 50;
+const maxFields = 50;
 
 function isConditionField(value: unknown): value is string {
   if (typeof value !== "string") return false;
@@ -19,8 +25,16 @@ function isConditionField(value: unknown): value is string {
 }
 
 const conditionField = z.custom<string>(isConditionField, {
-  error: (issue) => `"${String(issue.input)}" isn't a field a rule can test.`,
+  error: ({ input }) =>
+    typeof input === "string"
+      ? `"${input}" isn't a field a rule can test.`
+      : "A predicate needs a field to test.",
 });
+
+/** A branch of `byShape` for a value that fits no other: it fails with this message. */
+const refused = (error: string) => z.custom<never>(() => false, { error });
+
+const notStringOrNumber = "The value is a string or a number.";
 
 /** A string that `findError` has nothing to say about. */
 function refusedBy(findError: (value: string) => string | undefined) {
@@ -36,12 +50,12 @@ const predicateSchema = z.discriminatedUnion(
     z.strictObject({
       field: conditionField,
       op: z.literal("is"),
-      value: z.union([z.string(), z.number()]),
+      value: z.union([z.string(), z.number()], { error: notStringOrNumber }),
     }),
     z.strictObject({
       field: conditionField,
       op: z.literal("in"),
-      value: z.array(z.union([z.string(), z.number()])).min(1),
+      value: z.array(z.union([z.string(), z.number()], { error: notStringOrNumber })).min(1),
     }),
     z.strictObject({ field: conditionField, op: z.literal("contains"), value: z.string().min(1) }),
     z.strictObject({ field: conditionField, op: z.literal("matches"), value: refusedBy(regexError) }),
@@ -72,17 +86,51 @@ function byShape<T>(pick: (value: unknown) => z.ZodType<T>) {
   });
 }
 
-const allSchema = z.strictObject({ all: z.array(z.lazy(() => conditionSchema)).min(1) });
-const anySchema = z.strictObject({ any: z.array(z.lazy(() => conditionSchema)).min(1) });
-const notSchema = z.strictObject({ not: z.lazy(() => conditionSchema) });
+const allSchema = z.strictObject({ all: z.array(z.lazy(() => nodeSchema)).min(1) });
+const anySchema = z.strictObject({ any: z.array(z.lazy(() => nodeSchema)).min(1) });
+const notSchema = z.strictObject({ not: z.lazy(() => nodeSchema) });
+const notACondition = refused("A Condition is all, any, not or a predicate.");
 
-/** A boolean tree of predicates on any field: the shape of M3's Action Conditions. */
-export const conditionSchema: z.ZodType<Condition> = byShape<Condition>((value) => {
+const nodeSchema: z.ZodType<Condition> = byShape<Condition>((value) => {
+  if (typeof value !== "object" || value === null) return notACondition;
   if (has(value, "all")) return allSchema;
   if (has(value, "any")) return anySchema;
   if (has(value, "not")) return notSchema;
   return predicateSchema;
 });
+
+/**
+ * Counted before the tree is validated and without recursion, because it may yet be deep enough to
+ * overflow the stack, or contain itself through a YAML alias.
+ */
+function hasTooManyNodes(condition: unknown) {
+  const pending = [condition];
+  let nodes = 0;
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (typeof node !== "object" || node === null) continue;
+    if (++nodes > maxConditionNodes) return true;
+    for (const [key, value] of Object.entries(node)) {
+      if (key === "all" || key === "any" || key === "not") {
+        for (const child of [value].flat()) pending.push(child);
+      }
+    }
+  }
+  return false;
+}
+
+/** A boolean tree of predicates on any field: the shape of M3's Action Conditions. */
+export const conditionSchema = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    if (hasTooManyNodes(value)) {
+      ctx.addIssue({
+        code: "custom",
+        message: `A Condition can have at most ${String(maxConditionNodes)} parts, counting each predicate, all, any and not.`,
+      });
+    }
+  })
+  .pipe(nodeSchema);
 
 function* predicates(
   condition: Condition,
@@ -123,12 +171,15 @@ const extractorRuleWhen = conditionAtStage(
 
 const label = z.string().trim().min(1);
 const name = z.string().regex(fieldName, "A field name is letters, digits, _ and -, at most 64.");
+// Kept as written, so a prompt's own line breaks survive the YAML view.
+const prompt = z.string().refine((text) => text.trim() !== "", "A prompt can't be blank.");
 
 /** Fields with their names unique, since an Item stores one value per field name. */
 function fieldList<T extends { name: string }>(fieldSchema: z.ZodType<T>) {
   return z
     .array(fieldSchema)
     .min(1)
+    .max(maxFields)
     .superRefine((fields, ctx) => {
       for (const [i, field] of fields.entries()) {
         if (fields.findIndex((other) => other.name === field.name) < i) {
@@ -161,9 +212,7 @@ const jsonPathFieldSchema = z.strictObject({
 type RegexField = z.infer<typeof regexFieldSchema>;
 type JsonPathField = z.infer<typeof jsonPathFieldSchema>;
 
-const notRegexOrJsonPath = z.custom<never>(() => false, {
-  error: "A field reads from either regex or jsonpath.",
-});
+const notRegexOrJsonPath = refused("A field reads from either regex or jsonpath.");
 
 const deterministicFieldSchema = byShape<RegexField | JsonPathField>((value) => {
   if (has(value, "regex") === has(value, "jsonpath")) return notRegexOrJsonPath;
@@ -178,7 +227,7 @@ export const deterministicClassifierSchema = z.strictObject({
 
 export const agentClassifierSchema = z.strictObject({
   classifier: label,
-  prompt: z.string().min(1),
+  prompt,
   /** The Categories the Agent may assign. */
   categories: z.array(label).min(1),
 });
@@ -192,7 +241,7 @@ export const deterministicExtractorRuleSchema = z.strictObject({
 export const agentExtractorRuleSchema = z.strictObject({
   extractor: label,
   when: extractorRuleWhen,
-  prompt: z.string().min(1),
+  prompt,
   fields: fieldList(z.strictObject({ name, type: anyType })),
 });
 
@@ -213,9 +262,7 @@ export const extractorRuleSchema = byShape<ExtractorRule>((value) =>
   has(value, "prompt") ? agentExtractorRuleSchema : deterministicExtractorRuleSchema,
 );
 
-const notARule = z.custom<never>(() => false, {
-  error: 'A rule starts with "classifier:" or "extractor:" and its name.',
-});
+const notARule = refused('A rule starts with "classifier:" or "extractor:" and its name.');
 
 export const ruleSchema = byShape<Rule>((value) => {
   if (has(value, "classifier")) return classifierSchema;

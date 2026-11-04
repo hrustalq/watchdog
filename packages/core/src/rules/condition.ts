@@ -3,17 +3,18 @@ import { regexMatches } from "./regex.ts";
 import type { Condition, Predicate } from "./schema.ts";
 
 /**
- * What a Condition can read from an Item. A stage passes what exists by then, so an `item` row
- * spreads straight in, and anything absent or null is a missing field.
+ * What a Condition can read from an Item: its `item` row plus its Source's type. Forgetting one of
+ * these would look like a missing field, and `not` would then hold on every Item, so they're
+ * required. What later stages add is optional, because a stage passes what exists by then.
  */
 export interface ConditionItem {
-  sourceId?: string | null;
-  sourceType?: string | null;
-  title?: string | null;
-  body?: string | null;
-  author?: string | null;
-  url?: string | null;
-  language?: string | null;
+  sourceId: string | null;
+  sourceType: string | null;
+  title: string | null;
+  body: string | null;
+  author: string | null;
+  url: string | null;
+  language: string | null;
   categories?: readonly string[] | null;
   severity?: number | null;
   importance?: number | null;

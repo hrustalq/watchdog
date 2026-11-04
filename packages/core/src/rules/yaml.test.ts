@@ -87,14 +87,22 @@ describe("the Rule model page's example", () => {
     expect(rest).toEqual({ classifier: "competitor-launch", assign: ["competitor-launch"] });
   });
 
+  const fits = {
+    sourceId: "source-1",
+    sourceType: "rss",
+    title: "Introducing Acme",
+    body: "",
+    author: "Jane",
+    url: null,
+    language: "en",
+  };
+
   it("matches a fitting Item", () => {
-    const item = { sourceType: "rss", title: "Acme LAUNCH day", author: "Jane" };
-    expect(evaluateCondition(condition, item)).toBe(true);
+    expect(evaluateCondition(condition, fits)).toBe(true);
+    expect(evaluateCondition(condition, { ...fits, title: "Acme LAUNCH day" })).toBe(true);
   });
 
   it("doesn't match an Item that breaks each part of it", () => {
-    const fits = { sourceType: "rss", title: "Introducing Acme", author: "Jane" };
-    expect(evaluateCondition(condition, fits)).toBe(true);
     expect(evaluateCondition(condition, { ...fits, sourceType: "github" })).toBe(false);
     expect(evaluateCondition(condition, { ...fits, title: "Acme news" })).toBe(false);
     expect(evaluateCondition(condition, { ...fits, author: "me" })).toBe(false);
@@ -163,6 +171,15 @@ describe("ruleFromYaml", () => {
 
   it("refuses a duplicate key", () => {
     expect(() => ruleFromYaml(`classifier: a\nclassifier: b\n`)).toThrow();
+  });
+
+  it("refuses a Condition that aliases itself", () => {
+    expect(() => ruleFromYaml("classifier: a\nwhen: &w { not: *w }\nassign: [b]\n")).toThrow();
+  });
+
+  it("throws on nesting too deep to parse, so a caller's catch sees it", () => {
+    const deep = `classifier: a\nwhen: ${"[".repeat(100_000)}\nassign: [b]\n`;
+    expect(() => ruleFromYaml(deep)).toThrow();
   });
 
   it("refuses an alias bomb instead of expanding it", () => {

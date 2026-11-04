@@ -16,9 +16,19 @@ const item: ConditionItem = {
   fields: { plan: "Pro", price: 49, tags: ["space", "Launch"], seats: [5, 10], nothing: null },
 };
 
+const envelope: ConditionItem = {
+  sourceId: null,
+  sourceType: null,
+  title: null,
+  body: null,
+  author: null,
+  url: null,
+  language: null,
+};
+
 // Conditions go through the schema, as every saved rule does.
-const holds = (condition: unknown, on: ConditionItem = item) =>
-  evaluateCondition(conditionSchema.parse(condition), on);
+const holds = (condition: unknown, on: Partial<ConditionItem> = item) =>
+  evaluateCondition(conditionSchema.parse(condition), { ...envelope, ...on });
 
 describe("is", () => {
   it.each([
@@ -131,9 +141,10 @@ describe("exists", () => {
     expect(holds({ field: "body", op: "exists" }, { body: "" })).toBe(true);
   });
 
-  it("fails for null, undefined, no Categories and an empty array", () => {
+  it("fails for null, no Categories, a stage's absent keys and an empty array", () => {
     expect(holds({ field: "author", op: "exists" }, { author: null })).toBe(false);
-    expect(holds({ field: "author", op: "exists" }, {})).toBe(false);
+    expect(holds({ field: "severity", op: "exists" }, {})).toBe(false);
+    expect(holds({ field: "category", op: "exists" }, {})).toBe(false);
     expect(holds({ field: "category", op: "exists" }, { categories: [] })).toBe(false);
     expect(holds({ field: "fields.x", op: "exists" }, { fields: { x: [] } })).toBe(false);
     expect(holds({ field: "fields.nothing", op: "exists" })).toBe(false);
@@ -141,7 +152,7 @@ describe("exists", () => {
 
   it("doesn't find names an object inherits", () => {
     expect(holds({ field: "fields.constructor", op: "exists" }, { fields: {} })).toBe(false);
-    expect(holds({ field: "fields.__proto__", op: "exists" }, { fields: {} })).toBe(false);
+    expect(holds({ field: "fields.toString", op: "exists" }, { fields: {} })).toBe(false);
   });
 });
 
