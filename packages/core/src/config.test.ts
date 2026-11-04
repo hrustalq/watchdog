@@ -28,9 +28,28 @@ describe("loadConfig", () => {
     });
   });
 
-  it("loads .env.example as written", () => {
-    const example = readFileSync(new URL("../../../.env.example", import.meta.url), "utf8");
-    expect(loadConfig(parseEnv(example)).mode).toBe("self-hosted");
+  describe("with the .env.example file", () => {
+    const example = parseEnv(readFileSync(new URL("../../../.env.example", import.meta.url), "utf8"));
+
+    it("loads it as written, warning that its encryption key is public", () => {
+      const warn = vi.fn();
+      expect(loadConfig(example, warn).mode).toBe("self-hosted");
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringMatching(/WATCHDOG_ENCRYPTION_KEY is the public placeholder/),
+      );
+    });
+
+    it("refuses its encryption key in hosted mode", () => {
+      expect(() => loadConfig({ ...example, ...smtp, WATCHDOG_MODE: "hosted" })).toThrow(
+        /WATCHDOG_ENCRYPTION_KEY: must not be the placeholder/,
+      );
+    });
+  });
+
+  it("doesn't warn about a generated encryption key", () => {
+    const warn = vi.fn();
+    loadConfig(minimal, warn);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("defaults the mode to self-hosted when WATCHDOG_MODE is unset", () => {

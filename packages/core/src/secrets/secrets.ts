@@ -29,9 +29,9 @@ export function decryptSecret(ciphertext: string, key: Buffer): string {
     throw failure("malformed ciphertext");
   }
 
-  const decipher = createDecipheriv(algorithm, key, payload.subarray(0, ivLength));
-  decipher.setAuthTag(payload.subarray(ivLength, ivLength + tagLength));
   try {
+    const decipher = createDecipheriv(algorithm, key, payload.subarray(0, ivLength));
+    decipher.setAuthTag(payload.subarray(ivLength, ivLength + tagLength));
     const data = payload.subarray(ivLength + tagLength);
     return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
   } catch {

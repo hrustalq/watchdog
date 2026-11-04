@@ -17,6 +17,10 @@ const groups = {
 
 const oauth = (id: string, secret: string) => ({ clientId: id, clientSecret: secret });
 
+// The key in .env.example, which lets a copied file start the stack. It's public, so it protects
+// nothing, and a secret stored under it can't move to a real key without being entered again.
+const placeholderKey = Buffer.from("replace-with-32-random-key-bytes");
+
 const schema = z
   .object({
     WATCHDOG_MODE: z.enum(["self-hosted", "hosted"]).default("self-hosted"),
@@ -71,6 +75,13 @@ const schema = z
     when: (payload) =>
       payload.issues.every((issue) => !["WATCHDOG_MODE", "smtp"].includes(String(issue.path?.[0]))),
   })
+  .refine(
+    (env) => env.WATCHDOG_MODE !== "hosted" || !env.WATCHDOG_ENCRYPTION_KEY.equals(placeholderKey),
+    {
+      path: ["WATCHDOG_ENCRYPTION_KEY"],
+      error: "must not be the placeholder from .env.example when WATCHDOG_MODE=hosted",
+    },
+  )
   .transform((env) => ({
     mode: env.WATCHDOG_MODE,
     databaseUrl: env.DATABASE_URL,
@@ -126,6 +137,11 @@ export function loadConfig(
     if (result.data.mode === "hosted" && result.data.egressAllowlist.length > 0) {
       warn(
         "EGRESS_ALLOWLIST is ignored when WATCHDOG_MODE=hosted: the egress guard lets no private addresses through.",
+      );
+    }
+    if (result.data.encryptionKey.equals(placeholderKey)) {
+      warn(
+        "WATCHDOG_ENCRYPTION_KEY is the public placeholder from .env.example. Replace it before storing a secret: changing it later makes stored secrets unreadable.",
       );
     }
     return result.data;

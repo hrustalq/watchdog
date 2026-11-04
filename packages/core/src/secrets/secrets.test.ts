@@ -49,6 +49,12 @@ describe("encryptSecret and decryptSecret", () => {
     );
   });
 
+  it("fails the same way on a key of the wrong length", () => {
+    expect(() => decryptSecret(encryptSecret("sk-a-model-key", key), randomBytes(16))).toThrow(
+      "Can't decrypt the secret: wrong key or tampered ciphertext",
+    );
+  });
+
   it("names an unknown key version", () => {
     const later = encryptSecret("sk-a-model-key", key).replace(/^v1/, "v2");
     expect(() => decryptSecret(later, key)).toThrow(
