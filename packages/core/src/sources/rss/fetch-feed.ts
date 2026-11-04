@@ -3,7 +3,7 @@
 import { type AtomFeed, parseFeed, type RdfFeed, type RssFeed } from "feedsmith";
 import rootPackage from "../../../../../package.json" with { type: "json" };
 import type { createEgressFetch } from "../../egress/egress.ts";
-import { capBody, htmlToText, type ItemDraft } from "../item.ts";
+import { capBody, htmlToText, type ItemDraft, tidyText } from "../item.ts";
 
 /** Conditional-request state kept on the Source between fetches. */
 export interface FetchState {
@@ -85,7 +85,7 @@ export async function fetchFeed(
       break;
     case "atom":
       entries = (parsed.feed.entries ?? []).map((entry) => fromAtom(entry, base));
-      feedTitle = atomText(parsed.feed.title);
+      feedTitle = collapse(atomText(parsed.feed.title));
       break;
     case "json":
       throw new NotAFeedError(url);
@@ -131,7 +131,7 @@ function fromAtom(entry: AtomFeed.Entry<string>, base: string): ItemDraft | unde
   return {
     externalId,
     url,
-    title: orNull(atomText(entry.title)),
+    title: orNull(collapse(atomText(entry.title))),
     author: orNull(entry.authors?.[0]?.name),
     body: capBody(atomText(entry.content ?? entry.summary)),
     publishedAt: date(entry.published ?? entry.updated),
@@ -139,11 +139,11 @@ function fromAtom(entry: AtomFeed.Entry<string>, base: string): ItemDraft | unde
   };
 }
 
-/** Atom text as plain text: "html" and "xhtml" carry markup, "text" (the default) doesn't. */
+/** Atom text as plain text: "html" and "xhtml" carry markup, "text" keeps the author's lines. */
 function atomText(text: { value?: string; type?: string } | undefined) {
   if (text?.value === undefined) return "";
   const markup = text.type === "html" || text.type === "xhtml";
-  return markup ? htmlToText(text.value) : collapse(text.value);
+  return markup ? htmlToText(text.value) : tidyText(text.value);
 }
 
 function collapse(text: string) {

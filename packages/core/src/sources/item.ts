@@ -17,24 +17,44 @@ export interface ItemDraft {
 
 export const maxBodyBytes = 32 * 1024;
 
-// Tags that break a line, so the words on either side of them don't run together.
-const blockElements = [
-  ...["address", "article", "aside", "blockquote", "br", "dd", "div", "dl", "dt", "figcaption"],
-  ...["figure", "footer", "h[1-6]", "header", "hr", "img", "li", "main", "nav", "ol", "p", "pre"],
-  ...["section", "table", "td", "th", "tr", "ul"],
-];
-const blockTag = new RegExp(String.raw`<\/?(?:${blockElements.join("|")})\b[^<>]*>`, "gi");
+// Tags that end a paragraph, a line or a word, so the text on either side doesn't run together.
+// The name ends at a space, "/" or ">", so a custom element such as <p-note> isn't a <p>.
+const tags = (names: string[]) =>
+  new RegExp(String.raw`<\/?(?:${names.join("|")})(?=[\s/>])[^<>]*>`, "gi");
+const paragraphTag = tags([
+  ...["address", "article", "aside", "blockquote", "details", "dl", "figcaption", "figure"],
+  ...["footer", "h[1-6]", "header", "hr", "main", "nav", "ol", "p", "pre", "section", "table"],
+  "ul",
+]);
+const lineTag = tags(["br", "caption", "dd", "div", "dt", "li", "summary", "tr"]);
+const wordTag = tags(["img", "td", "th"]);
 
-/** Plain text from an HTML fragment: tags stripped, entities decoded, whitespace collapsed. */
+/** Plain text from an HTML fragment: tags stripped, entities decoded, a line per block. */
 export function htmlToText(html: string) {
   // Every pattern stays linear on hostile input: an unclosed comment or script runs to the end
   // instead of being retried from each opener, and a tag can't span another "<".
   const text = html
     .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
     .replace(/<(script|style)\b[^<>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, "")
-    .replace(blockTag, " ")
-    .replace(/<\/?[a-z][^<>]*>/gi, "");
-  return decodeHTML(text).replace(/\s+/g, " ").trim();
+    // A line break in HTML source is only a space; the tags decide where lines break.
+    .replace(/\s+/g, " ")
+    .replace(paragraphTag, "\f")
+    .replace(lineTag, "\n")
+    .replace(wordTag, " ")
+    .replace(/<\/?[a-z][^<>]*>/gi, "")
+    // A run of breaks is one blank line when a paragraph ends in it, else one line break, so
+    // "</li><li>" doesn't leave a blank line.
+    .replace(/[\n\f][ \n\f]*/g, (run) => (run.includes("\f") ? "\n\n" : "\n"));
+  return tidyText(decodeHTML(text));
+}
+
+/** Spaces collapsed within each line, lines trimmed, and at most one blank line in a row. */
+export function tidyText(text: string) {
+  return text
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /** Cuts text to at most `maxBodyBytes` of UTF-8, never inside a character. */

@@ -77,7 +77,9 @@ async function ItemDetail({ params }: Pick<PageProps<"/items/[id]">, "params">) 
       {found.body === "" ? (
         <p className="text-sm text-muted-foreground">The Source gave no text for this Item.</p>
       ) : (
-        <p className="max-w-[70ch] text-base leading-[1.6] break-words">{found.body}</p>
+        <p className="max-w-[70ch] text-base leading-[1.6] break-words whitespace-pre-line">
+          {found.body}
+        </p>
       )}
       <section aria-labelledby="log" className="flex flex-col gap-3">
         <h2 id="log" className="text-title">

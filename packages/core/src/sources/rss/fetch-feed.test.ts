@@ -56,6 +56,10 @@ const inline: Record<string, string> = {
     `<title>Plain</title><content type="text">Use the &amp;lt;details&amp;gt; element</content>` +
     `<link rel="enclosure" href="https://feeds.test/ep1.mp3"/>` +
     `<updated>2026-11-02T10:00:00</updated></entry></feed>`,
+  "/text-lines.atom":
+    `<feed xmlns="http://www.w3.org/2005/Atom"><title>T</title><id>t</id><entry><id>e1</id>` +
+    `<title type="text">Two\n  lines</title>` +
+    `<content type="text">  First\tline  \r\n Second line\n\n\n\nNew para </content></entry></feed>`,
   // 40 000 two-byte characters: 80 000 bytes, and any cut at an odd byte splits a character.
   "/huge.rss": rss(
     `<item><guid>huge</guid><description>${"é".repeat(40_000)}</description></item>`,
@@ -124,7 +128,7 @@ describe("fetchFeed", () => {
       title: "2026-10-29, Version 27.0.0-alpha.0.0.0 (Alpha), @RafaelGSS",
       author: "RafaelGSS",
       publishedAt: "2026-10-29T18:36:37.000Z",
-      bodyStart: "Notable Changes V8 15.6",
+      bodyStart: "Notable Changes\n\nV8 15.6\n\nThe V8 engine",
     },
     {
       fixture: "hnrss.rss",
@@ -133,7 +137,7 @@ describe("fetchFeed", () => {
       title: "Show HN: LokaDB – store each SaaS clients rows in a separate Postgres database",
       author: "kagen",
       publishedAt: "2026-11-03T12:51:40.000Z",
-      bodyStart: "Article URL: https://github.com/lokadb/lokadb Comments URL:",
+      bodyStart: "Article URL: https://github.com/lokadb/lokadb\n\nComments URL:",
     },
     {
       fixture: "reddit-search.atom",
@@ -143,7 +147,7 @@ describe("fetchFeed", () => {
         "Looking for someone to bring freelance development projects — commission per successful project",
       author: "/u/Actual_Maybe_3451",
       publishedAt: "2026-11-03T14:47:22.000Z",
-      bodyStart: "Hi everyone, I’m a full-stack developer",
+      bodyStart: "Hi everyone,\n\nI’m a full-stack developer",
     },
     {
       fixture: "google-alerts.atom",
@@ -161,7 +165,7 @@ describe("fetchFeed", () => {
       title: "WordPress 7.1.4",
       author: "Aaron Jorbin",
       publishedAt: "2026-10-28T17:13:02.000Z",
-      bodyStart: "This security release features fixes for multiple issues. Because this is",
+      bodyStart: "This security release features fixes for multiple issues.\n\nBecause this is",
     },
     {
       // RSS 1.0 has no guid, so the link is the external ID.
@@ -196,8 +200,28 @@ describe("fetchFeed", () => {
         /<!--|<\/?(?:a|b|blockquote|br|code|div|em|h\d|i|img|li|ol|p|pre|span|strong|ul)\b[^>]*>/i,
       );
       expect(body).not.toMatch(/&(?:[a-z]+|#\d+);/i);
-      expect(body).not.toMatch(/\s{2}/);
+      // Spaces collapse within a line, lines are trimmed, and blank lines never stack.
+      expect(body).not.toMatch(/[^\S\n]{2}|[^\S\n]\n|\n[^\S\n]|\n{3}/);
     }
+  });
+
+  it("keeps a release's sections and list items on separate lines", async () => {
+    const [release] = await entriesOf("/fixtures/github-releases.atom");
+    const lines = release?.body.split("\n") ?? [];
+
+    expect(lines.slice(0, 3)).toEqual(["Notable Changes", "", "V8 15.6"]);
+    expect(lines).toContain("Other notable changes");
+    const commit = lines.indexOf(
+      "[21cfb2a4ad] - (SEMVER-MAJOR) build: remove the bundled FIPS provider build (Filip Skokan) #64777",
+    );
+    expect(lines[commit + 1]).toBe(
+      "[34e3b90621] - (SEMVER-MAJOR) build: require OpenSSL 3 or later (Filip Skokan) #64777",
+    );
+  });
+
+  it("keeps the line breaks of plain-text Atom content, but not of its title", async () => {
+    const [entry] = await entriesOf("/text-lines.atom");
+    expect(entry).toMatchObject({ title: "Two lines", body: "First line\nSecond line\n\nNew para" });
   });
 
   it("returns the feed title", async () => {
