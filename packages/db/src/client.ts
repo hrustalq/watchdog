@@ -16,6 +16,7 @@ export function createDb(databaseUrl: string) {
 }
 
 export type Db = ReturnType<typeof createDb>;
+export type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 /**
  * Ends the pool and resolves once every connection's socket has closed. `pool.end()` alone

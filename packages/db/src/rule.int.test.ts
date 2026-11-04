@@ -269,6 +269,26 @@ describe("rule, Rating, Correction, Profile, model and metering tables", () => {
     expect(saved.outputLanguage).toBe("en");
   });
 
+  it("stamps an edited rule from the database clock, the one captured_at uses", async () => {
+    const seeded = await seed(db);
+    const rule = only(
+      await db
+        .insert(classifier)
+        .values({ workspaceId: seeded.workspace.id, name: "clock", kind: "agent", definition: {} })
+        .returning(),
+    );
+
+    // now() is fixed for a transaction, so only a stamp the database wrote equals it exactly.
+    const stamped = await db.transaction(async (tx) => {
+      await tx.update(classifier).set({ enabled: false }).where(eq(classifier.id, rule.id));
+      const { rows } = await tx.execute(
+        sql`select ${classifier.updatedAt} = now() as "same" from ${classifier} where ${classifier.id} = ${rule.id}`,
+      );
+      return rows[0]?.same;
+    });
+    expect(stamped).toBe(true);
+  });
+
   it.each([
     ["classifier", "kind", "classifier_kind_check"],
     ["extractor_rule", "kind", "extractor_rule_kind_check"],

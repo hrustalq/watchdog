@@ -2,6 +2,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { createEgressFetch, loadConfig } from "@watchdog/core";
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
+import { itemEnqueuer, startPipeline } from "./pipeline.ts";
 import { readyFile } from "./ready.ts";
 import { startScheduler } from "./scheduler.ts";
 
@@ -30,7 +31,11 @@ boss.on("error", (error) => {
 });
 await boss.start();
 const db = createDb(config.databaseUrl);
-await startScheduler(db, boss, config.mode, { fetch: createEgressFetch(config) });
+await startPipeline(db, boss);
+await startScheduler(db, boss, config.mode, {
+  fetch: createEgressFetch(config),
+  enqueueItems: itemEnqueuer(boss),
+});
 
 // The first SIGTERM or SIGINT stops pg-boss, which stops the tick and lets running polls finish.
 // A second signal while it stops is ignored.

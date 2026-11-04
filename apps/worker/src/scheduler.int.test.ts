@@ -19,6 +19,7 @@ const deps: PollSourceDeps = {
     await gates.get(url);
     return new Response(feed);
   },
+  enqueueItems: () => Promise.resolve(),
 };
 
 const minute = 60 * 1000;

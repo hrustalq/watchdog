@@ -6,6 +6,7 @@ export {
   type EgressRule,
 } from "./egress/egress.ts";
 export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/capture.ts";
+export { processItem, type ProcessItemDeps } from "./pipeline/process-item.ts";
 export type { ItemDraft } from "./sources/item.ts";
 export {
   FeedHttpError,

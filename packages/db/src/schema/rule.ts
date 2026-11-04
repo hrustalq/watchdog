@@ -29,10 +29,11 @@ const ruleColumns = {
   definition: jsonb("definition").notNull(),
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  /** From the database's clock, because the pipeline compares it with an Item's captured_at. */
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow()
-    .$onUpdate(() => new Date()),
+    .$onUpdate(() => sql`now()`),
 };
 
 /** Sorts Items into Categories. */

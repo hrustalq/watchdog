@@ -27,7 +27,11 @@ const env = {
   EGRESS_ALLOWLIST: "feeds.test",
 };
 const lookup = () => Promise.resolve([{ address: "127.0.0.1", family: 4 }]);
-const deps = { fetch: createEgressFetch(loadConfig(env, () => undefined), { lookup }), now: () => now };
+const deps = {
+  fetch: createEgressFetch(loadConfig(env, () => undefined), { lookup }),
+  now: () => now,
+  enqueueItems: () => Promise.resolve(),
+};
 
 describe("Feed", () => {
   let db: Db;

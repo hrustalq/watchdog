@@ -1,12 +1,17 @@
 // The capture stage: one poll of a Source turns new feed entries into Items
 // (docs: Processing pipeline, "Stages").
-import { and, type Db, eq, inArray, item, itemLog, source } from "@watchdog/db";
+import { and, type Db, eq, inArray, item, itemLog, source, type Tx } from "@watchdog/db";
 import type { ItemDraft } from "../sources/item.ts";
 import { fetchFeed, type FetchFeedDeps } from "../sources/rss/fetch-feed.ts";
 import { detectLanguage } from "./language.ts";
 
 export interface PollSourceDeps extends FetchFeedDeps {
   now?: () => Date;
+  /**
+   * Queues new Items' pipeline jobs over the transaction that inserts them, so a worker dying after
+   * the commit can't lose an Item, and a rolled-back capture leaves no job.
+   */
+  enqueueItems: (tx: Tx, itemIds: string[]) => Promise<void>;
 }
 
 export type PollResult = { captured: number } | { error: string };
@@ -117,6 +122,10 @@ export async function pollSource(
       const stage = "capture" as const;
       const rows = inserted.map(({ id }) => ({ itemId: id, stage, message, data }));
       await tx.insert(itemLog).values(rows);
+      await deps.enqueueItems(
+        tx,
+        inserted.map(({ id }) => id),
+      );
     }
     // FetchState is an interface, so it lacks the index signature the column's type has. A copy
     // of it has one.

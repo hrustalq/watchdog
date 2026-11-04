@@ -56,6 +56,7 @@ const deps: PollSourceDeps = {
     return respond ? Promise.resolve(respond()) : Promise.reject(new Error("connect ECONNREFUSED"));
   },
   now: () => now,
+  enqueueItems: () => Promise.resolve(),
 };
 const serve = (url: string, body: string | Buffer, init?: ResponseInit) => {
   responses.set(url, () => new Response(body, init));
