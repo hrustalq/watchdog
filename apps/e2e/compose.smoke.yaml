@@ -1,0 +1,27 @@
+# What `pnpm smoke` adds to compose.yaml. smoke.sh passes it after the other Compose files, and
+# Compose resolves its paths against the first one's directory, the repo root.
+services:
+  # Serves the recorded feed the test adds as an RSS Source, so the run makes no live HTTP request.
+  fixtures:
+    image: caddy:2.11.7-alpine
+    volumes:
+      - ./apps/e2e/fixtures/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./apps/e2e/fixtures/feed.xml:/srv/feed.xml:ro
+
+  # The fixture's address is private, so the egress guard lets it through only by name.
+  web:
+    environment:
+      EGRESS_ALLOWLIST: fixtures
+  worker:
+    environment:
+      EGRESS_ALLOWLIST: fixtures
+
+  # Caddy is the one container on a network with a way out, because it publishes the port the
+  # test opens. Every other container is on the internal network only, so nothing leaves.
+  caddy:
+    networks: [default, published]
+
+networks:
+  default:
+    internal: true
+  published: {}
