@@ -1,7 +1,7 @@
 // The deterministic Extractor Rule stage (docs: Processing pipeline, "Stages"; Rule model).
 import { eq, extractorRule, itemCategory, itemField, itemLog, type Tx } from "@watchdog/db";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
-import { jsonPathValues } from "../rules/jsonpath.ts";
+import { jsonPathValues, maxFieldValues } from "../rules/jsonpath.ts";
 import { firstCapture } from "../rules/regex.ts";
 import { type DeterministicExtractorRule, deterministicExtractorRuleSchema } from "../rules/schema.ts";
 import { deterministicRulesFor } from "./deterministic-rules.ts";
@@ -58,12 +58,18 @@ export function extractFields(fields: readonly Field[], source: ExtractionSource
       extraction.problems.push({ name, reason: "the Item's raw payload nests too deeply to read" });
       continue;
     }
-    // A single type takes the first value, as a regex takes its first match. A path that lands on
-    // an array means its values, so `$.tags` and `$.tags[*]` fill an array alike.
+    // A path that lands on one array means its values, so `$.tags` and `$.tags[*]` read alike. A
+    // single type takes the first value, as a regex takes its first match.
+    const [only] = found;
+    const all: unknown[] = found.length === 1 && Array.isArray(only) ? only : found;
     const isArray = field.type.endsWith("-array");
-    const wanted = isArray ? found.flat() : found.slice(0, 1);
+    const wanted = isArray ? all : all.slice(0, 1);
     if (wanted.length === 0) {
       extraction.empty.push(name);
+      continue;
+    }
+    if (wanted.length > maxFieldValues) {
+      extraction.problems.push({ name, reason: `it found more than ${String(maxFieldValues)} values` });
       continue;
     }
     const target = field.type.startsWith("string") ? "string" : "integer";
@@ -94,6 +100,8 @@ export async function runDeterministicExtractorRules(
   target: ConditionItem & ExtractionSource,
 ) {
   const rules = await deterministicRulesFor(tx, extractorRule, itemId);
+  if (rules.length === 0) return;
+
   const assigned = await tx
     .select({ category: itemCategory.category })
     .from(itemCategory)

@@ -28,6 +28,11 @@ describe("jsonPathValues", () => {
     expect(globalThis).not.toHaveProperty("ranFromJsonPath");
   });
 
+  it("stops one value past the most a field can hold, however many a path multiplies into", () => {
+    const wide = { a: Array.from({ length: 3000 }, () => ({ b: [1, 2, 3] })) };
+    expect(jsonPathValues("$..[*,*]", wide)).toHaveLength(1001);
+  });
+
   it("gives no values, rather than throwing, for raw nested too deeply to walk", () => {
     let deep: unknown = "x";
     for (let i = 0; i < 500; i++) deep = [deep];
@@ -36,7 +41,7 @@ describe("jsonPathValues", () => {
 });
 
 describe("jsonPathError", () => {
-  it.each(["$", "$.a.b", "$.tags[*].name", "$[?@.a > 1 && @.b == 'x'].c", "$.a[0,1,2,3,4]", "$..a..b"])(
+  it.each(["$", "$.a.b", "$.tags[*].name", "$[?@.a > 1 && @.b == 'x'].c", "$.a[0,1,2]", "$..a"])(
     "accepts %s",
     (path) => {
       expect(jsonPathError(path)).toBeUndefined();
@@ -63,7 +68,7 @@ describe("jsonPathError", () => {
   });
 
   // Both would run on JavaScript's backtracking engine, where "(a+)+$" hangs the worker.
-  it.each([`$[?search(@.a, "(a+)+$")]`, `$[?match(@.a, "(a+)+")]`])(
+  it.each([`$[?search(@.a, "(a+)+")]`, `$[?match(@.a, "(a+)+")]`])(
     "refuses a regex function, which would skip RE2: %s",
     (path) => {
       expect(jsonPathError(path)).toContain("unknown function");
@@ -71,13 +76,33 @@ describe("jsonPathError", () => {
   );
 
   it("refuses a path whose selector lists could multiply its results", () => {
-    expect(jsonPathError("$.a[*,*,*,*,*,*]")).toContain("selector");
-    expect(jsonPathError("$[*,*][*,*][*,*]")).toBeUndefined();
-    expect(jsonPathError("$[*,*][*,*][*,*][*,*][*,*]")).toContain("selector");
+    expect(jsonPathError("$.a[*,*,*,*]")).toContain("selector");
+    expect(jsonPathError("$[*,*][*,*]")).toBeUndefined();
+    expect(jsonPathError("$[*,*][*,*][*,*]")).toContain("selector");
   });
 
-  it("refuses more than two descendant segments, which multiply with the data's depth", () => {
-    expect(jsonPathError("$..a..b..c")).toContain("descendant");
+  it("refuses a second descendant segment, which would multiply with the data's depth", () => {
+    expect(jsonPathError("$..a..b")).toContain("descendant");
+    expect(jsonPathError("$..*[?@..a]")).toContain("descendant");
+  });
+
+  // A filter that starts again from the root walks the whole of `raw` for every node it tests, so
+  // each level of nesting multiplies the time.
+  it.each(["$.*[?$.*]", "$.*[?$.*[?$.*[?$.*]]]", "$.*[?$..*]", "$[?count($..*) > 1]"])(
+    "refuses a filter that goes back to the root: %s",
+    (path) => {
+      expect(jsonPathError(path)).toContain("root");
+    },
+  );
+
+  it("still allows a filter nested on the current node, which only walks downwards", () => {
+    expect(jsonPathError("$.*[?@.*[?@.*[?@.a]]]")).toBeUndefined();
+  });
+
+  it("reports a syntax error without the library's class name", () => {
+    const error = jsonPathError("$.a[");
+    expect(error).not.toContain("JSONPathSyntaxError");
+    expect(error).not.toContain("\n");
   });
 
   it("refuses a path over the length cap", () => {

@@ -87,11 +87,43 @@ describe("extractFields with a JSONPath", () => {
     ]);
   });
 
-  it.each(["$.missing", "$.empty", "$.empty[*]"])("stores nothing for %s, which has no values", (jsonpath) => {
-    expect(extractOne({ type: "string-array", jsonpath }, item({ raw }))).toEqual({
+  it("takes the first value of an array a single type's path lands on, like $.tags[*]", () => {
+    expect(extractOne({ type: "string", jsonpath: "$.tags" }, item({ raw })).values).toEqual([
+      { name: "x", value: "a" },
+    ]);
+  });
+
+  it.each([
+    ["string-array", "$.missing"],
+    ["string-array", "$.empty"],
+    ["string-array", "$.empty[*]"],
+    ["string", "$.missing"],
+    ["string", "$.empty"],
+    ["string", "$.empty[*]"],
+  ] as const)("stores no %s for %s, which has no values", (type, jsonpath) => {
+    expect(extractOne({ type, jsonpath }, item({ raw }))).toEqual({
       values: [],
       empty: ["x"],
       problems: [],
+    });
+  });
+
+  it("treats $.m and $.m[*] alike on an array of arrays, refusing both", () => {
+    const nested = { m: [[1, 2], [3]] };
+    const refusal = { name: "x", reason: "it holds an array, which can't convert to integer" };
+    for (const jsonpath of ["$.m", "$.m[*]"]) {
+      expect(extractOne({ type: "integer-array", jsonpath }, item({ raw: nested })).problems).toEqual([refusal]);
+    }
+  });
+
+  it("stores the most values an array can hold, and refuses one more", () => {
+    const list = (length: number) => item({ raw: { v: Array.from({ length }, (_, i) => i) } });
+    const field = { type: "integer-array", jsonpath: "$.v[*]" } as const;
+    expect(extractOne(field, list(1000)).values).toHaveLength(1);
+    expect(extractOne(field, list(1001))).toEqual({
+      values: [],
+      empty: [],
+      problems: [{ name: "x", reason: "it found more than 1000 values" }],
     });
   });
 
@@ -128,7 +160,7 @@ describe("extractFields' conversions", () => {
   it.each([
     ["string", null, "null"],
     ["string", {}, "an object"],
-    ["string", ["nested"], "an array"],
+    ["string", [["nested"]], "an array"],
     ["integer", "12.5", "a string"],
     ["integer", "about 5", "a string"],
     ["integer", "", "a string"],
