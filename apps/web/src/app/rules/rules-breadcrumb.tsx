@@ -11,15 +11,15 @@ function Separator() {
   );
 }
 
-/** Workspace / Rules, and on an editor the page under Rules. */
-export function RulesBreadcrumb({ current }: { current: string }) {
+/** Workspace / Rules, and on an editor the page under Rules. A rule's name can be anything. */
+export function RulesBreadcrumb({ editing }: { editing?: string }) {
   return (
     <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
       <Link href="/" className={crumb}>
         Workspace
       </Link>
       <Separator />
-      {current === "Rules" ? null : (
+      {editing === undefined ? null : (
         <>
           <Link href="/rules" className={crumb}>
             Rules
@@ -28,7 +28,7 @@ export function RulesBreadcrumb({ current }: { current: string }) {
         </>
       )}
       <span aria-current="page" className="min-w-0 truncate">
-        {current}
+        {editing ?? "Rules"}
       </span>
     </nav>
   );

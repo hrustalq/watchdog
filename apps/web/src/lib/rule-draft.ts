@@ -37,6 +37,9 @@ export const textOf = (value: unknown) => (isScalar(value) ? String(value) : "")
 const onlyHas = (map: Record<string, unknown>, keys: string[]) =>
   Object.keys(map).every((key) => keys.includes(key));
 
+/** What the glossary calls each type of rule. */
+export const ruleNoun: Record<RuleType, string> = { classifier: "Classifier", extractor: "Extractor Rule" };
+
 export const blankTest = { field: "title", op: "contains", value: "" };
 
 /** A new rule with the shape the form shows, ready to be filled in. */
@@ -136,7 +139,8 @@ function tooBigToRender(condition: unknown) {
     const node = pending.pop();
     if (!isMap(node)) continue;
     if (++parts > maxRenderedParts) return true;
-    for (const key of ["all", "any", "not"]) pending.push(...[node[key]].flat());
+    // One at a time: a list pasted into the YAML can be longer than a call's arguments can be.
+    for (const child of [node.all, node.any, node.not].flat()) pending.push(child);
   }
   return false;
 }
@@ -195,20 +199,23 @@ export function changeOp(predicate: Record<string, unknown>, op: string) {
   if (op === "exists") return { field, op };
   if (op === "in") {
     if (isList(value)) return { field, op, value };
-    return { field, op, value: value === undefined ? [] : [value] };
+    // A blank value is nothing typed yet, and as an entry it would pass validation unseen.
+    return { field, op, value: value === undefined || value === "" ? [] : [value] };
   }
-  if (isList(value)) return { field, op, value: value[0] ?? "" };
-  return { field, op, value: value ?? "" };
+  const single: unknown = isList(value) ? value[0] : value;
+  if (op === "contains" || op === "matches") return { field, op, value: textOf(single) };
+  return { field, op, value: single ?? "" };
 }
 
 /**
  * What a predicate's text box holds as a value. `gte` and `lte` take numbers, and text the form
- * can't make one of stays as typed, for the server to refuse. The other operators take text, but a
- * number from the YAML view stays a number. Only text that round-trips counts, so typing "4.05"
- * survives passing through "4.0".
+ * can't make one of stays as typed, for the server to refuse. `contains` and `matches` take only
+ * text. `is` takes text, but a number from the YAML view stays a number. Only text that round-trips
+ * counts, so typing "4.05" survives passing through "4.0".
  */
 export function typedValue(op: string, previous: unknown, text: string): string | number {
-  const wantsNumber = op === "gte" || op === "lte" || typeof previous === "number";
+  const wantsNumber =
+    op === "gte" || op === "lte" || (typeof previous === "number" && op !== "contains" && op !== "matches");
   return wantsNumber && /^-?\d/.test(text) && String(Number(text)) === text ? Number(text) : text;
 }
 

@@ -52,6 +52,10 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
   const [yaml, setYaml] = useState(initialYaml);
   const [view, setView] = useState<"form" | "yaml">("draft" in first ? "form" : "yaml");
   const [unreadable, setUnreadable] = useState<string | null>(null);
+  const [sent, setSent] = useState(initialYaml);
+  // The YAML view is the draft while it's open, so what it says now decides the notice below.
+  const readYaml = view === "yaml" ? readDraft(yaml) : undefined;
+  const current = readYaml !== undefined && "draft" in readYaml ? readYaml.draft : draft;
 
   // A refusal moves focus to the first thing to fix, as on Sources.
   useEffect(() => {
@@ -65,6 +69,8 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
       setUnreadable(read.error);
       return;
     }
+    // The problems are about the text that was sent, so edited YAML puts their places out of date.
+    if (yaml !== sent) setCleared(state);
     setDraft(read.draft);
     setUnreadable(null);
     setView("form");
@@ -84,6 +90,7 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
       onSubmit={(event) => {
         event.preventDefault();
         const data = new FormData(event.currentTarget);
+        setSent(view === "yaml" ? yaml : draftToYaml(draft));
         startTransition(() => {
           formAction(data);
         });
@@ -120,7 +127,7 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
           </ViewButton>
         </div>
 
-        {kindOf(draft) === "agent" && !hasModel ? (
+        {kindOf(current) === "agent" && !hasModel ? (
           <p className="rounded-lg bg-muted px-3 py-2 text-sm">
             This Agent-backed rule stays disabled until this Workspace has a model. You can still save
             it.{" "}

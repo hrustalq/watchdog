@@ -415,7 +415,7 @@ function PredicatePart({ path, node, type, onRemove }: PartProps & { node: Recor
   const fieldOptions = type === "extractor" ? [...contentFields, ...categoryField] : contentFields;
   return (
     <div data-path={pathKey(path)} className="flex flex-col gap-2">
-      <div className="grid gap-2 sm:grid-cols-[9rem_9rem_minmax(0,1fr)] md:grid-cols-[9rem_9rem_minmax(0,1fr)_auto]">
+      <div className="grid gap-2 sm:grid-cols-[9rem_11rem_minmax(0,1fr)] md:grid-cols-[9rem_11rem_minmax(0,1fr)_auto]">
         <Choice
           labelText="Field"
           value={node.field}

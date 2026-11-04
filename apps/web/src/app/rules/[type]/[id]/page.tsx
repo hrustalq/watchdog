@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { ruleNoun } from "@/lib/rule-draft";
 import { getRule, isRuleType } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { EditorScreen } from "../../editor-screen";
-import { kindLabel, ruleNoun } from "../../words";
+import { kindLabel } from "../../words";
 
 export const metadata: Metadata = { title: "Rule · Watchdog" };
 

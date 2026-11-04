@@ -130,6 +130,13 @@ describe("conditionPart", () => {
   });
 });
 
+describe("conditionPart on a huge list", () => {
+  it("leaves it to the YAML view rather than overflowing the arguments of a call", () => {
+    const huge = { all: Array.from({ length: 200_000 }, () => ({ field: "title", op: "exists" })) };
+    expect(conditionPart(huge)).toBe("yaml-only");
+  });
+});
+
 describe("fieldPart", () => {
   it.each([
     [{ name: "a", type: "string", from: "title", regex: "(x)" }, "deterministic", "regex"],
@@ -182,6 +189,19 @@ describe("changeOp", () => {
     expect(changeOp(predicate("exists"), "contains")).toEqual(predicate("contains", ""));
     expect(changeOp(predicate("exists"), "in")).toEqual(predicate("in", []));
   });
+
+  it("starts an empty list from a value with nothing typed, so it can't pass as an entry", () => {
+    expect(changeOp(predicate("contains", ""), "in")).toEqual(predicate("in", []));
+  });
+
+  it("makes text of a number for the operators that take only text", () => {
+    expect(changeOp(predicate("is", 2024), "contains")).toEqual(predicate("contains", "2024"));
+    expect(changeOp(predicate("in", [2024]), "matches")).toEqual(predicate("matches", "2024"));
+  });
+
+  it("keeps a number for the operators that can hold one", () => {
+    expect(changeOp(predicate("is", 2024), "gte")).toEqual(predicate("gte", 2024));
+  });
 });
 
 describe("typedValue", () => {
@@ -195,6 +215,11 @@ describe("typedValue", () => {
     expect(typedValue("is", "x", "4")).toBe("4");
     expect(typedValue("is", 4, "5")).toBe(5);
     expect(typedValue("is", 4, "five")).toBe("five");
+  });
+
+  it("keeps text as text for contains and matches, whatever it was", () => {
+    expect(typedValue("contains", 4, "2025")).toBe("2025");
+    expect(typedValue("matches", "x", "2025")).toBe("2025");
   });
 });
 

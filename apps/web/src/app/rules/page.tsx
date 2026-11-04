@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { buttonVariants } from "@/components/ui/button";
-import type { RuleKind, RuleType } from "@/lib/rule-draft";
+import { type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { cn } from "@/lib/utils";
@@ -10,14 +10,14 @@ import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
 import { removeRuleAction, setRuleEnabledAction } from "./actions";
 import { RulesBreadcrumb } from "./rules-breadcrumb";
-import { appliesFromNow, kindLabel, kindsExplained, modelLink, ruleNoun } from "./words";
+import { appliesFromNow, kindLabel, kindsExplained, modelLink } from "./words";
 
 export const metadata: Metadata = { title: "Rules · Watchdog" };
 
 export default function RulesPage({ searchParams }: PageProps<"/rules">) {
   return (
     <div className="flex flex-1 flex-col">
-      <RulesBreadcrumb current="Rules" />
+      <RulesBreadcrumb />
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
         <div className="flex flex-col gap-1">
           <h1 className="text-headline">Rules</h1>

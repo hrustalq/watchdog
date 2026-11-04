@@ -14,11 +14,10 @@ import {
   workspace,
 } from "@watchdog/db";
 import type { RuleKind, RuleProblem, RuleType } from "./rule-draft.ts";
-import { unreadable } from "./rule-draft.ts";
+import { ruleNoun, unreadable } from "./rule-draft.ts";
 import { isUuid } from "./uuid.ts";
 
 const tables = { classifier, extractor: extractorRule };
-const nouns = { classifier: "Classifier", extractor: "Extractor Rule" };
 
 /** A saved rule. A rule that isn't saved yet has no target. */
 export interface RuleTarget {
@@ -143,7 +142,7 @@ function parseRule(text: string, target: RuleTarget | null): ParsedRule | { prob
   const [type, name]: [RuleType, string] =
     "classifier" in rule ? ["classifier", rule.classifier] : ["extractor", rule.extractor];
   if (target !== null && target.type !== type) {
-    const message = `A saved ${nouns[target.type]} can't become ${type === "extractor" ? "an" : "a"} ${nouns[type]}. Create a new one instead.`;
+    const message = `A saved ${ruleNoun[target.type]} can't become ${type === "extractor" ? "an" : "a"} ${ruleNoun[type]}. Create a new one instead.`;
     return { problems: [{ path: "", message }] };
   }
   if (name.length > maxNameLength) {
@@ -167,16 +166,17 @@ async function conflicts(db: Pick<Tx, "select">, workspaceId: string, parsed: Pa
 
   const problems: RuleProblem[] = [];
   if (others.some((other) => other.name === name)) {
-    problems.push({ path: type, message: `This Workspace already has a ${nouns[type]} named “${name}”.` });
+    problems.push({ path: type, message: `This Workspace already has a ${ruleNoun[type]} named “${name}”.` });
   }
   if (!("extractor" in rule)) return problems;
 
+  // A rule that no longer parses doesn't run, so it declares nothing.
+  const declared = others.map(({ name: ruleName, definition }) => {
+    const other = extractorRuleSchema.safeParse(definition);
+    return { name: ruleName, fields: new Set(other.success ? other.data.fields.map((field) => field.name) : []) };
+  });
   for (const [index, field] of rule.fields.entries()) {
-    // A rule that no longer parses doesn't run, so it declares nothing.
-    const declaring = others.find(({ definition }) => {
-      const other = extractorRuleSchema.safeParse(definition);
-      return other.success && other.data.fields.some((declared) => declared.name === field.name);
-    });
+    const declaring = declared.find((other) => other.fields.has(field.name));
     if (declaring !== undefined) {
       problems.push({
         path: `fields.${String(index)}.name`,

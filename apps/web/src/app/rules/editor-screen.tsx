@@ -37,7 +37,7 @@ export async function EditorScreen({
       : [{ path: "", message: "That rule wasn't saved, and it's too long to bring back without JavaScript. Check it for mistakes and try again." }];
   return (
     <div className="flex flex-1 flex-col">
-      <RulesBreadcrumb current={heading} />
+      <RulesBreadcrumb editing={heading} />
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
         <div className="flex flex-col gap-1">
           <h1 className="text-headline break-words">{heading}</h1>
