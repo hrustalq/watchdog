@@ -19,14 +19,11 @@ export interface ModelFormValues {
 export function ModelForm({
   values,
   hasKey,
-  editing,
   problem,
   keyTyped,
 }: {
   values: ModelFormValues;
   hasKey: boolean;
-  /** Whether this changes a saved model rather than adding the first one. */
-  editing: boolean;
   problem: ModelProblem | undefined;
   /** The last submit held a key, and it's gone: a refused form doesn't carry it back. */
   keyTyped: boolean;
@@ -47,10 +44,9 @@ export function ModelForm({
         {hint}
       </p>
     );
-  const examples = providerTypes.map(({ label, baseUrl }, index) => (
-    <span key={label}>
-      {index > 0 ? ", " : ""}
-      {label}: <span className="font-mono break-all">{baseUrl}</span>
+  const examples = providerTypes.map(({ label, baseUrl }) => (
+    <span key={label} className="block wrap-anywhere">
+      {label}: <span className="font-mono">{baseUrl}</span>
     </span>
   ));
 
@@ -113,7 +109,7 @@ export function ModelForm({
           {...invalid("base-url")}
           className={`${field} ${dataBox}`}
         />
-        {note("base-url", <>With its version path. {examples}.</>)}
+        {note("base-url", <>With its version path. For example:{examples}</>)}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -126,7 +122,7 @@ export function ModelForm({
           type="password"
           autoComplete="off"
           spellCheck={false}
-          placeholder={hasKey ? "Leave blank to keep the current key" : "None"}
+          placeholder={hasKey ? "Leave blank to keep the current key" : undefined}
           {...invalid("api-key")}
           className={`${field} ${dataBox}`}
         />
@@ -161,68 +157,35 @@ export function ModelForm({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <PriceField
-          id="input-price"
-          name="inputPrice"
-          label="Input price"
-          value={values.inputPrice}
-          aria={invalid("input-price")}
-          note={note("input-price", "Per million tokens, for the estimated cost on the Usage screen.")}
-        />
-        <PriceField
-          id="output-price"
-          name="outputPrice"
-          label="Output price"
-          value={values.outputPrice}
-          aria={invalid("output-price")}
-          note={note("output-price", "Per million tokens.")}
-        />
+        {(
+          [
+            { id: "input-price", name: "inputPrice", label: "Input price", value: values.inputPrice },
+            { id: "output-price", name: "outputPrice", label: "Output price", value: values.outputPrice },
+          ] as const
+        ).map(({ id, name, label, value }) => (
+          <div key={id} className="flex flex-col gap-2">
+            <label htmlFor={id} className={labelClass}>
+              {label} <span className="font-normal text-muted-foreground">(optional)</span>
+            </label>
+            <input
+              id={id}
+              name={name}
+              type="number"
+              min="0"
+              step="any"
+              inputMode="decimal"
+              defaultValue={value}
+              {...invalid(id)}
+              className={`${field} ${dataBox} tabular-nums`}
+            />
+            {note(id, "Per million tokens, for the estimated cost on the Usage screen.")}
+          </div>
+        ))}
       </div>
 
-      {editing ? (
-        <p className="text-sm text-muted-foreground">
-          A new provider type, base URL or model name replaces this model. Usage history keeps the old one.
-        </p>
-      ) : null}
       <SubmitButton pendingLabel="Saving…" className="sm:w-auto sm:self-start">
         Save model
       </SubmitButton>
     </form>
-  );
-}
-
-function PriceField({
-  id,
-  name,
-  label,
-  value,
-  aria,
-  note,
-}: {
-  id: string;
-  name: string;
-  label: string;
-  value: string;
-  aria: { "aria-invalid": boolean; "aria-describedby": string; autoFocus: boolean };
-  note: React.ReactNode;
-}) {
-  return (
-    <div className="flex flex-col gap-2">
-      <label htmlFor={id} className={labelClass}>
-        {label} <span className="font-normal text-muted-foreground">(optional)</span>
-      </label>
-      <input
-        id={id}
-        name={name}
-        type="number"
-        min="0"
-        step="any"
-        inputMode="decimal"
-        defaultValue={value}
-        {...aria}
-        className={`${field} ${dataBox} tabular-nums`}
-      />
-      {note}
-    </div>
   );
 }

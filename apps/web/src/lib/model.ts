@@ -62,7 +62,10 @@ export function modelFormQuery(problem: ModelProblem, input: ModelInput) {
   return query;
 }
 
-/** Without a path the SDKs ask the wrong URL, and a query would end up in the middle of one. */
+/**
+ * The SDKs append their own path, so a query would end up in the middle of the URL, and fetch
+ * refuses a URL with credentials. Without a trailing slash, an address has one spelling to compare.
+ */
 function cleanBaseUrl(text: string) {
   const url = URL.parse(text.trim());
   const usable =
@@ -101,11 +104,6 @@ function parseModel(input: ModelInput) {
   if (outputPrice === undefined) return { problem: "output-price" } as const;
   return { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice };
 }
-
-const sameDestination = (
-  current: { providerType: string; baseUrl: string },
-  next: { provider: string; baseUrl: string },
-) => current.providerType === next.provider && new URL(current.baseUrl).origin === new URL(next.baseUrl).origin;
 
 /**
  * Creates the Workspace's model or changes it. A new provider, base URL or model name is a new row,
@@ -151,9 +149,10 @@ export async function saveModel(
       return { keyLeftBehind: false };
     }
 
-    const carried =
-      current !== undefined && sameDestination(current, { provider, baseUrl }) ? current.apiKeyCiphertext : null;
-    if (current !== undefined) await archive(tx, workspaceId);
+    const sameDestination =
+      current?.providerType === provider && new URL(current.baseUrl).origin === new URL(baseUrl).origin;
+    const carried = sameDestination ? current.apiKeyCiphertext : null;
+    await archiveModel(tx, workspaceId);
     await tx.insert(modelConfig).values({
       workspaceId,
       providerType: provider,
@@ -167,23 +166,21 @@ export async function saveModel(
   });
 }
 
-/** An archived row only has to say what ran, so it forgets the key. Returns how many it archived. */
-async function archive(db: Pick<Db, "update">, workspaceId: string) {
+/** An archived row only has to say what ran, so it forgets the key. False when there's no model. */
+async function archiveModel(db: Pick<Db, "update">, workspaceId: string) {
   const archived = await db
     .update(modelConfig)
     .set({ archivedAt: new Date(), apiKeyCiphertext: null })
     .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)))
     .returning({ id: modelConfig.id });
-  return archived.length;
+  return archived.length > 0;
 }
 
 /**
  * Archives the model, so Agent stages stop and Items stay unrated, while deterministic rules keep
- * running (Processing pipeline, "Without a model"). Returns false when there's none to remove.
+ * running (Processing pipeline, "Without a model").
  */
-export async function removeModel(db: Db, workspaceId: string) {
-  return (await archive(db, workspaceId)) > 0;
-}
+export const removeModel = (db: Db, workspaceId: string) => archiveModel(db, workspaceId);
 
 /** The Workspace's model as the screen shows it, or undefined. */
 export async function getModel(db: Db, workspaceId: string) {

@@ -152,18 +152,16 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
         <h2 id="model-form" className="text-title">
           {model === undefined ? "Add a model" : "Change the model"}
         </h2>
-        {model === undefined && problem === undefined ? (
-          <p className="text-sm text-muted-foreground">
-            Bring your own model to get Items rated and Agent-backed rules running. Without one, deterministic rules
-            still run and Items stay unrated.
-          </p>
-        ) : null}
+        <p className="text-sm text-muted-foreground">
+          {model === undefined
+            ? "Bring your own model to get Items rated and Agent-backed rules running. Without one, deterministic rules still run and Items stay unrated."
+            : "A new provider type, base URL or model name replaces this model. Usage history keeps the old one."}
+        </p>
         {/* A new key on the saved values remounts nothing, so React's own form reset clears the field. */}
         <ModelForm
           key={JSON.stringify(values)}
           values={values}
           hasKey={model?.hasKey === true}
-          editing={model !== undefined}
           problem={problem}
           keyTyped={param("keyTyped") !== ""}
         />
@@ -212,8 +210,9 @@ function FailedCall({
   const words = (
     <span className="min-w-0 break-words">
       Last failed call at <Timestamp at={failure.at} />: {failure.reason}
-      {failure.recovered ? " A later call worked." : null}
-      {hint === undefined ? null : ` ${hint}`}
+      {/* The reason is someone else's sentence, and may not end in a full stop. */}
+      {failure.recovered ? <span className="block">A later call worked.</span> : null}
+      {hint === undefined ? null : <span className="block">{hint}</span>}
     </span>
   );
   if (failure.recovered) return <p className="text-sm text-muted-foreground">{words}</p>;
