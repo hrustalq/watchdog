@@ -239,7 +239,7 @@ describe("ruleSchema", () => {
     expect(ruleSchema.parse(rule)).toEqual(rule);
   });
 
-  it("keeps the stage's message for a rule of unknown kind", () => {
+  it("keeps the stage's message when it picks the rule's kind itself", () => {
     const rule = { extractor: "a", when: { field: "severity", op: "exists" }, prompt: "p", fields: [] };
     expect(issuesOf(ruleSchema.safeParse(rule)).map((issue) => issue.message).join()).toContain(
       '"severity"',

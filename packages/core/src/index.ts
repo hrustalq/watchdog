@@ -17,3 +17,25 @@ export {
 } from "./sources/rss/fetch-feed.ts";
 export { createMailer, type MailMessage, type Mailer } from "./mail/mailer.ts";
 export { defaultSchedule, nextPollAt, scheduleError } from "./schedule.ts";
+export { type ConditionItem, evaluateCondition } from "./rules/condition.ts";
+export { firstCapture } from "./rules/regex.ts";
+export {
+  agentClassifierSchema,
+  type AgentClassifier,
+  agentExtractorRuleSchema,
+  type AgentExtractorRule,
+  type Classifier,
+  classifierSchema,
+  type Condition,
+  conditionSchema,
+  type DeterministicClassifier,
+  deterministicClassifierSchema,
+  type DeterministicExtractorRule,
+  deterministicExtractorRuleSchema,
+  type ExtractorRule,
+  extractorRuleSchema,
+  type Predicate,
+  type Rule,
+  ruleSchema,
+} from "./rules/schema.ts";
+export { ruleFromYaml, ruleToYaml } from "./rules/yaml.ts";

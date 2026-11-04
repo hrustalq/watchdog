@@ -125,17 +125,17 @@ const label = z.string().trim().min(1);
 const name = z.string().regex(fieldName, "A field name is letters, digits, _ and -, at most 64.");
 
 /** Fields with their names unique, since an Item stores one value per field name. */
-function fieldList<T extends { name: string }>(field: z.ZodType<T>) {
+function fieldList<T extends { name: string }>(fieldSchema: z.ZodType<T>) {
   return z
-    .array(field)
+    .array(fieldSchema)
     .min(1)
     .superRefine((fields, ctx) => {
-      for (const [i, { name }] of fields.entries()) {
-        if (fields.findIndex((other) => other.name === name) < i) {
+      for (const [i, field] of fields.entries()) {
+        if (fields.findIndex((other) => other.name === field.name) < i) {
           ctx.addIssue({
             code: "custom",
             path: [i, "name"],
-            message: `A rule can't declare the field "${name}" twice.`,
+            message: `A rule can't declare the field "${field.name}" twice.`,
           });
         }
       }
