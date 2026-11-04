@@ -7,18 +7,20 @@ import { RulesBreadcrumb } from "./rules-breadcrumb";
 /**
  * The editor as a whole page. Both routes that use it set `instant = false` and read their data
  * without Suspense, so the form and what's wrong with it are in the first HTML, which is how they
- * work without JavaScript, and a missing rule is a real 404.
+ * work without JavaScript.
  */
 export async function EditorScreen({
   workspaceId,
   target,
   heading,
+  detail,
   yaml,
   query,
 }: {
   workspaceId: string;
   target: RuleTarget | null;
   heading: string;
+  detail?: string;
   yaml: string;
   query: Record<string, string | string[] | undefined>;
 }) {
@@ -37,7 +39,10 @@ export async function EditorScreen({
     <div className="flex flex-1 flex-col">
       <RulesBreadcrumb current={heading} />
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
-        <h1 className="text-headline break-words">{heading}</h1>
+        <div className="flex flex-col gap-1">
+          <h1 className="text-headline break-words">{heading}</h1>
+          {detail === undefined ? null : <p className="text-sm text-muted-foreground">{detail}</p>}
+        </div>
         <RuleEditor
           target={target}
           initialYaml={sentBack ?? yaml}

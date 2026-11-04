@@ -179,6 +179,7 @@ describe("Rules", () => {
       expect(await problems(yaml)).toEqual([
         { path: "when.all.0.value", message: containing("isn't a regular expression") },
       ]);
+      expect(JSON.stringify(await problems(yaml))).not.toContain("RE2JS");
     });
 
     it("refuses a regex field with no capture group, beside it", async () => {

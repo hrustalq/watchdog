@@ -1,8 +1,8 @@
 "use client";
 
 import { draftToYaml } from "@watchdog/core/rules/draft";
-import { createContext, use, useMemo } from "react";
-import { field as fieldClass, fieldError, label, textBox } from "@/components/field-classes";
+import { createContext, use, useEffect, useMemo, useRef } from "react";
+import { dataBox, field as fieldClass, fieldError, label, textBox } from "@/components/field-classes";
 import { Button } from "@/components/ui/button";
 import {
   addPart,
@@ -102,6 +102,8 @@ function useInvalid(path: Path, shownAt: Path = path) {
   return { "aria-invalid": invalid, "aria-describedby": invalid ? `problems-${pathKey(shownAt)}` : undefined };
 }
 
+const describedBy = (...ids: (string | undefined)[]) => ids.filter((id) => id !== undefined).join(" ") || undefined;
+
 /** The messages beside a field, without the path the field already shows. */
 function Problems({ at, exact = false }: { at: Path; exact?: boolean }) {
   const { problems } = useEditing();
@@ -136,6 +138,8 @@ export function RuleForm({
   const type = ruleTypeOf(draft);
   const agent = kindOf(draft) === "agent";
   const hidden = formHides(draft);
+  const root = useRef<HTMLDivElement>(null);
+  const changedAt = useRef<Path | null>(null);
   const editing = useMemo<Editing>(
     () => ({
       draft,
@@ -144,22 +148,41 @@ export function RuleForm({
         onEdit(setAt(draft, path, value));
       },
       reshape: (path, value) => {
+        changedAt.current = path;
         onReshape(setAt(draft, path, value));
       },
       remove: (path) => {
+        changedAt.current = path;
         onReshape(removeAt(draft, path));
       },
     }),
     [draft, problems, onEdit, onReshape],
   );
+
+  // A change of shape can take away the button that was pressed, which drops focus out of the form.
+  // It goes to the nearest part still there: the one at that path, or the one around it.
+  useEffect(() => {
+    const path = changedAt.current;
+    changedAt.current = null;
+    if (path === null || document.activeElement !== document.body) return;
+    for (let end = path.length; end > 0; end -= 1) {
+      const part = root.current?.querySelector(`[data-path="${pathKey(path.slice(0, end))}"]`);
+      const control = part?.querySelector<HTMLElement>("select, input, textarea, button");
+      if (control) {
+        control.focus();
+        return;
+      }
+    }
+  }, [draft]);
+
   const conditionHelp =
     type === "classifier"
-      ? "An Item that passes gets this Classifier's Categories. It can test Source and content."
+      ? "An Item that meets this gets this Classifier's Categories. It can test Source and content."
       : "The rule runs on Items that meet this. It can test Categories, Source and content, not the Rating.";
 
   return (
     <EditingContext value={editing}>
-      <div className="flex flex-col gap-6">
+      <div ref={root} className="flex flex-col gap-6">
         <TextField path={[type]} labelText="Name" hidden={hidden.includes(type)} />
 
         {agent && type === "classifier" ? (
@@ -224,21 +247,31 @@ function TextField({
   const invalid = useInvalid(path);
   const id = `rule-${pathKey(path)}`;
   const text = textOf(valueAt(draft, path));
+  const helpId = help === undefined ? undefined : `${id}-help`;
+  const described = { ...invalid, "aria-describedby": describedBy(invalid["aria-describedby"], helpId) };
   const onChange = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     edit(path, event.target.value);
   };
   const box = multiline ? (
-    <textarea id={id} rows={5} value={text} onChange={onChange} className={cn(textBox, "py-2")} {...invalid} />
+    <textarea id={id} rows={5} value={text} onChange={onChange} className={cn(textBox, "py-2")} {...described} />
   ) : (
-    <input id={id} type="text" value={text} onChange={onChange} className={fieldClass} {...invalid} />
+    <input id={id} type="text" value={text} onChange={onChange} className={fieldClass} {...described} />
   );
   return (
     <div className="flex flex-col gap-2">
-      <label htmlFor={id} className={label}>
-        {labelText}
-      </label>
-      {hidden ? null : box}
-      {help === undefined ? null : <p className="text-xs text-muted-foreground">{help}</p>}
+      {hidden ? null : (
+        <>
+          <label htmlFor={id} className={label}>
+            {labelText}
+          </label>
+          {box}
+          {help === undefined ? null : (
+            <p id={helpId} className="text-xs text-muted-foreground">
+              {help}
+            </p>
+          )}
+        </>
+      )}
       <Problems at={path} />
     </div>
   );
@@ -250,11 +283,17 @@ function LinesField({ path, labelText, hidden }: { path: Path; labelText: string
   const value = valueAt(draft, path);
   return (
     <div className="flex flex-col gap-2">
-      <label htmlFor={id} className={label}>
-        {labelText}
-      </label>
-      {hidden ? null : <LinesBox id={id} path={path} list={isScalarList(value) ? value : []} />}
-      <p className="text-xs text-muted-foreground">One per line.</p>
+      {hidden ? null : (
+        <>
+          <label htmlFor={id} className={label}>
+            {labelText}
+          </label>
+          <LinesBox id={id} path={path} list={isScalarList(value) ? value : []} helpId={`${id}-help`} />
+          <p id={`${id}-help`} className="text-xs text-muted-foreground">
+            One per line.
+          </p>
+        </>
+      )}
       <Problems at={path} />
     </div>
   );
@@ -267,12 +306,14 @@ function LinesBox({
   list,
   label: ariaLabel,
   problemsAt = path,
+  helpId,
 }: {
   id?: string;
   path: Path;
   list: (string | number)[];
   label?: string;
   problemsAt?: Path;
+  helpId?: string;
 }) {
   const { edit } = useEditing();
   const invalid = useInvalid(path, problemsAt);
@@ -290,8 +331,9 @@ function LinesBox({
         const tidied = fromLines(text, { tidy: true });
         if (tidied.join("\n") !== text) edit(path, tidied);
       }}
-      className={cn(textBox, "py-1.5 font-mono text-[0.8125rem] sm:text-[0.8125rem]")}
+      className={cn(textBox, dataBox, "py-1.5")}
       {...invalid}
+      aria-describedby={describedBy(invalid["aria-describedby"], helpId)}
     />
   );
 }
@@ -372,8 +414,8 @@ function PredicatePart({ path, node, type, onRemove }: PartProps & { node: Recor
   const opInvalid = useInvalid([...path, "op"], path);
   const fieldOptions = type === "extractor" ? [...contentFields, ...categoryField] : contentFields;
   return (
-    <div className="flex flex-col gap-2">
-      <div className="grid gap-2 sm:grid-cols-[9rem_9rem_minmax(0,1fr)]">
+    <div data-path={pathKey(path)} className="flex flex-col gap-2">
+      <div className="grid gap-2 sm:grid-cols-[9rem_9rem_minmax(0,1fr)] md:grid-cols-[9rem_9rem_minmax(0,1fr)_auto]">
         <Choice
           labelText="Field"
           value={node.field}
@@ -393,9 +435,11 @@ function PredicatePart({ path, node, type, onRemove }: PartProps & { node: Recor
           }}
         />
         <PredicateValue path={path} node={node} />
+        <div className="sm:col-span-3 md:col-span-1">
+          <PartActions path={path} node={node} onRemove={onRemove} />
+        </div>
       </div>
       <Problems at={path} />
-      <PartActions path={path} node={node} onRemove={onRemove} />
     </div>
   );
 }
@@ -421,7 +465,7 @@ function PredicateValue({ path, node }: { path: Path; node: Record<string, unkno
       onChange={(event) => {
         edit(valuePath, typedValue(op, value, event.target.value));
       }}
-      className={cn(fieldClass, "font-mono text-[0.8125rem] sm:text-[0.8125rem]")}
+      className={cn(fieldClass, dataBox)}
       {...invalid}
     />
   );
@@ -450,7 +494,7 @@ function PartActions({
 
 function NotPart({ path, node, type, onRemove }: PartProps & { node: unknown }) {
   return (
-    <div className="flex flex-col gap-3 rounded-lg border p-3">
+    <div data-path={pathKey(path)} className="flex flex-col gap-3 rounded-lg border p-3">
       <p className={label}>Not</p>
       <ConditionPart path={[...path, "not"]} type={type} />
       <Problems at={path} exact />
@@ -464,7 +508,7 @@ function GroupPart({ path, node, part, type, onRemove }: PartProps & { node: unk
   const listPath = [...path, part];
   const list = asList(valueAt(draft, listPath));
   return (
-    <div className="flex flex-col gap-3 rounded-lg border p-3">
+    <div data-path={pathKey(path)} className="flex flex-col gap-3 rounded-lg border p-3">
       <Choice
         labelText="How the tests combine"
         value={part}
@@ -480,7 +524,11 @@ function GroupPart({ path, node, part, type, onRemove }: PartProps & { node: unk
       {list.map((_child, index) => {
         const childPath = [...listPath, index];
         // Entries have no ids, and every control here is controlled, so an index is a safe key.
-        return <ConditionPart key={pathKey(childPath)} path={childPath} type={type} onRemove={() => { remove(childPath); }} />;
+        return (
+          <div key={pathKey(childPath)} role="group" aria-label={`Part ${String(index + 1)}`}>
+            <ConditionPart path={childPath} type={type} onRemove={() => { remove(childPath); }} />
+          </div>
+        );
       })}
       <PartActions path={path} node={node} onRemove={onRemove}>
         <SmallButton onClick={() => { reshape(path, addPart(node, { any: [blankTest] })); }}>Add a group</SmallButton>
@@ -492,7 +540,7 @@ function GroupPart({ path, node, part, type, onRemove }: PartProps & { node: unk
 /** A part of the rule the form has no controls for: shown as it is, and kept. */
 function YamlOnly({ path, value, removeLabel, onRemove }: { path: Path; value: unknown; removeLabel: string; onRemove: () => void }) {
   return (
-    <div className="flex flex-col gap-2 rounded-lg bg-muted p-3">
+    <div data-path={pathKey(path)} className="flex flex-col gap-2 rounded-lg border p-3">
       <p className="text-xs text-muted-foreground">Only the YAML view can edit this part. It stays in the rule.</p>
       <pre className="overflow-x-auto font-mono text-[0.8125rem]">{draftToYaml(value)}</pre>
       <Problems at={path} />
@@ -508,7 +556,7 @@ function FieldList({ hidden }: { hidden: boolean }) {
   const kind = kindOf(draft);
   const fields = asList(valueAt(draft, ["fields"]));
   return (
-    <fieldset className="flex min-w-0 flex-col gap-3">
+    <fieldset data-path="fields" className="flex min-w-0 flex-col gap-3">
       <legend className={cn(label, "mb-2")}>Fields</legend>
       <Problems at={["fields"]} exact />
       {hidden
@@ -517,10 +565,14 @@ function FieldList({ hidden }: { hidden: boolean }) {
             const path = ["fields", index];
             const onRemove = () => { remove(path); };
             const part = fieldPart(entry, kind);
-            return part === "yaml-only" || !isMap(entry) ? (
-              <YamlOnly key={pathKey(path)} path={path} value={entry} removeLabel="Remove" onRemove={onRemove} />
-            ) : (
-              <FieldRow key={pathKey(path)} path={path} entry={entry} part={part} onRemove={onRemove} />
+            return (
+              <div key={pathKey(path)} role="group" aria-label={`Field ${String(index + 1)}`}>
+                {part === "yaml-only" || !isMap(entry) ? (
+                  <YamlOnly path={path} value={entry} removeLabel="Remove" onRemove={onRemove} />
+                ) : (
+                  <FieldRow path={path} entry={entry} part={part} onRemove={onRemove} />
+                )}
+              </div>
             );
           })}
       {hidden ? null : (
@@ -529,6 +581,15 @@ function FieldList({ hidden }: { hidden: boolean }) {
         </div>
       )}
     </fieldset>
+  );
+}
+
+function FieldLabel({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <label className="flex min-w-0 flex-col gap-1">
+      <span className={label}>{text}</span>
+      {children}
+    </label>
   );
 }
 
@@ -558,35 +619,48 @@ function FieldRow({
   }
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border p-3">
+    <div data-path={pathKey(path)} className="flex flex-col gap-2 rounded-lg border p-3">
       <div className="grid gap-2 sm:grid-cols-2">
-        <input
-          type="text"
-          aria-label="Field name"
-          placeholder="Field name, such as cve"
-          spellCheck={false}
-          value={textOf(entry.name)}
-          onChange={(event) => { edit([...path, "name"], event.target.value); }}
-          className={cn(fieldClass, "font-mono text-[0.8125rem] sm:text-[0.8125rem]")}
-          {...nameInvalid}
-        />
-        <Choice labelText="Type" value={entry.type} options={part === "regex" ? singleTypes : allTypes} invalid={typeInvalid} onChange={(next) => { edit([...path, "type"], next); }} />
+        <FieldLabel text="Field name">
+          <input
+            type="text"
+            placeholder="cve"
+            spellCheck={false}
+            value={textOf(entry.name)}
+            onChange={(event) => { edit([...path, "name"], event.target.value); }}
+            className={cn(fieldClass, dataBox)}
+            {...nameInvalid}
+          />
+        </FieldLabel>
+        <FieldLabel text="Type">
+          <Choice labelText="Type" value={entry.type} options={part === "regex" ? singleTypes : allTypes} invalid={typeInvalid} onChange={(next) => { edit([...path, "type"], next); }} />
+        </FieldLabel>
         {part === "agent" ? null : (
           <>
-            <Choice labelText="Reads from" value={part === "jsonpath" ? "jsonpath" : entry.from} options={readsFrom} invalid={fromInvalid} onChange={readFrom} />
-            <input
-              type="text"
-              aria-label={part === "jsonpath" ? "JSONPath" : "Regular expression"}
-              placeholder={part === "jsonpath" ? "$.categories[*].name" : "With one capture group, such as (CVE-\\d+-\\d+)"}
-              spellCheck={false}
-              value={textOf(entry[patternKey])}
-              onChange={(event) => { edit(patternPath, event.target.value); }}
-              className={cn(fieldClass, "font-mono text-[0.8125rem] sm:text-[0.8125rem]")}
-              {...patternInvalid}
-            />
+            <FieldLabel text="Reads from">
+              <Choice labelText="Reads from" value={part === "jsonpath" ? "jsonpath" : entry.from} options={readsFrom} invalid={fromInvalid} onChange={readFrom} />
+            </FieldLabel>
+            <FieldLabel text={part === "jsonpath" ? "JSONPath" : "Regular expression"}>
+              <input
+                type="text"
+                placeholder={part === "jsonpath" ? "$.categories[*].name" : "(CVE-\\d+-\\d+)"}
+                spellCheck={false}
+                value={textOf(entry[patternKey])}
+                onChange={(event) => { edit(patternPath, event.target.value); }}
+                className={cn(fieldClass, dataBox)}
+                {...patternInvalid}
+              />
+            </FieldLabel>
           </>
         )}
       </div>
+      {part === "agent" ? null : (
+        <p className="text-xs text-muted-foreground">
+          {part === "regex"
+            ? "The field takes the first capture group, so the regex needs one."
+            : "The path reads the Source's own payload for this Item."}
+        </p>
+      )}
       <Problems at={path} />
       <div>
         <SmallButton onClick={onRemove}>Remove</SmallButton>

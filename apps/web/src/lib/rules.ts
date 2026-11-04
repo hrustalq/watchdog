@@ -180,7 +180,7 @@ async function conflicts(db: Pick<Tx, "select">, workspaceId: string, parsed: Pa
     if (declaring !== undefined) {
       problems.push({
         path: `fields.${String(index)}.name`,
-        message: `The Extractor Rule “${declaring.name}” already declares the field “${field.name}”. Field names are unique in a Workspace, so fields.${field.name} means one thing.`,
+        message: `The Extractor Rule “${declaring.name}” already declares the field “${field.name}”. Rename it here, so fields.${field.name} means one thing.`,
       });
     }
   }

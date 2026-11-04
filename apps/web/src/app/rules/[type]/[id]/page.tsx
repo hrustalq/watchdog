@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getRule, isRuleType } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { EditorScreen } from "../../editor-screen";
+import { kindLabel, ruleNoun } from "../../words";
 
 export const metadata: Metadata = { title: "Rule · Watchdog" };
 
@@ -19,6 +20,7 @@ export default async function EditRulePage({ params, searchParams }: PageProps<"
       workspaceId={workspace.id}
       target={{ type, id }}
       heading={rule.name}
+      detail={`${ruleNoun[type]} · ${kindLabel[rule.kind]}`}
       yaml={rule.yaml}
       query={query}
     />

@@ -3,18 +3,17 @@
 import { draftToYaml } from "@watchdog/core/rules/draft";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useActionState, useState } from "react";
-import { fieldError, textBox } from "@/components/field-classes";
-import { buttonVariants } from "@/components/ui/button";
+import { startTransition, useActionState, useEffect, useRef, useState } from "react";
+import { dataBox, fieldError, label, textBox } from "@/components/field-classes";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { type Draft, formShows, kindOf, readDraft, type RuleProblem, yamlWithoutScript } from "@/lib/rule-draft";
 import type { RuleTarget } from "@/lib/rules";
 import { cn } from "@/lib/utils";
-import { SubmitButton } from "../sign-in/submit-button";
 import { saveRuleAction } from "./actions";
 import { RuleForm } from "./rule-form";
 import { appliesFromNow, modelLink } from "./words";
 
-const yamlBox = cn(textBox, "min-h-80 py-2 font-mono text-[0.8125rem] leading-[1.5] sm:text-[0.8125rem]");
+const yamlBox = cn(textBox, dataBox, "min-h-80 py-2 leading-[1.5]");
 
 interface RuleEditorProps {
   target: RuleTarget | null;
@@ -40,7 +39,10 @@ export function RuleEditor(props: RuleEditorProps) {
  * view is open, the server is sent YAML.
  */
 function Editor({ target, initialYaml, initialProblems, hasModel, sources }: RuleEditorProps) {
-  const [state, formAction] = useActionState(saveRuleAction.bind(null, target), { problems: initialProblems });
+  const [state, formAction, pending] = useActionState(saveRuleAction.bind(null, target), {
+    problems: initialProblems,
+  });
+  const formRef = useRef<HTMLFormElement>(null);
   // Problems point at places in the draft, so a change to its shape puts them out of date.
   const [cleared, setCleared] = useState<typeof state | null>(null);
   const problems = cleared === state ? [] : state.problems;
@@ -50,6 +52,12 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
   const [yaml, setYaml] = useState(initialYaml);
   const [view, setView] = useState<"form" | "yaml">("draft" in first ? "form" : "yaml");
   const [unreadable, setUnreadable] = useState<string | null>(null);
+
+  // A refusal moves focus to the first thing to fix, as on Sources.
+  useEffect(() => {
+    if (state.problems.length === 0) return;
+    formRef.current?.querySelector<HTMLElement>('[aria-invalid="true"], [role="alert"]')?.focus();
+  }, [state]);
 
   function showForm() {
     const read = readDraft(yaml);
@@ -68,10 +76,23 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
   }
 
   return (
-    <form action={formAction} className="flex flex-col gap-6">
+    <form
+      ref={formRef}
+      // Only for a browser without JavaScript. With it, React would reset the form after the action,
+      // and a select goes back to its first option while the draft still holds another.
+      action={formAction}
+      onSubmit={(event) => {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        startTransition(() => {
+          formAction(data);
+        });
+      }}
+      className="flex flex-col gap-6"
+    >
       <noscript>
         <div className="flex flex-col gap-2">
-          <label htmlFor="rule-yaml-noscript" className="text-xs font-medium tracking-[0.01em]">
+          <label htmlFor="rule-yaml-noscript" className={label}>
             Rule as YAML
           </label>
           <textarea
@@ -80,10 +101,11 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
             defaultValue={initialYaml}
             spellCheck={false}
             aria-invalid={initialProblems.length > 0}
+            aria-describedby="rule-yaml-noscript-problems"
             className={yamlBox}
           />
           <p className="text-xs text-muted-foreground">The Form view needs JavaScript. YAML writes the same rule.</p>
-          <ProblemList problems={initialProblems} />
+          <ProblemList id="rule-yaml-noscript-problems" problems={initialProblems} />
         </div>
       </noscript>
 
@@ -121,7 +143,7 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
           />
         ) : (
           <div className="flex flex-col gap-2">
-            <label htmlFor="rule-yaml" className="text-xs font-medium tracking-[0.01em]">
+            <label htmlFor="rule-yaml" className={label}>
               Rule as YAML
             </label>
             <textarea
@@ -133,15 +155,16 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
               }}
               spellCheck={false}
               aria-invalid={problems.length > 0 || unreadable !== null}
-              aria-describedby={unreadable === null ? undefined : "rule-yaml-unreadable"}
+              aria-describedby={unreadable === null ? "rule-yaml-problems" : "rule-yaml-unreadable rule-yaml-problems"}
               className={yamlBox}
             />
             {unreadable === null ? null : (
-              <p id="rule-yaml-unreadable" role="alert" className={cn(fieldError, "font-mono break-words whitespace-pre-wrap")}>
-                The Form view can&apos;t show this yet. {unreadable}
-              </p>
+              <div id="rule-yaml-unreadable" role="alert" className={cn(fieldError, "flex flex-col gap-1")}>
+                <p>The Form view can&apos;t show this yet.</p>
+                <pre className="font-mono font-normal break-words whitespace-pre-wrap">{unreadable}</pre>
+              </div>
             )}
-            <ProblemList problems={problems} />
+            <ProblemList id="rule-yaml-problems" problems={problems} />
           </div>
         )}
 
@@ -151,21 +174,24 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
 
       <div className="flex flex-col gap-3 border-t pt-4">
         {problems.length === 0 ? null : (
-          <div role="alert" className="flex flex-col gap-1">
+          <div role="alert" tabIndex={-1} className="flex flex-col gap-1 outline-none">
             <p className={fieldError}>
               Not saved. {problems.length === 1 ? "1 problem needs" : `${String(problems.length)} problems need`} fixing
               {view === "form" ? " first." : ", listed above."}
             </p>
+            {/* Without JavaScript, the list beside the YAML box has them all. */}
             {view === "form" ? (
-              <ProblemList problems={problems.filter((problem) => !formShows(problem.path))} />
+              <div className="[@media(scripting:none)]:hidden">
+                <ProblemList problems={problems.filter((problem) => !formShows(problem.path))} />
+              </div>
             ) : null}
           </div>
         )}
         <p className="text-sm text-muted-foreground">{appliesFromNow}</p>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <SubmitButton pendingLabel="Saving…" className="sm:w-auto">
-            Save rule
-          </SubmitButton>
+          <Button type="submit" disabled={pending} className="w-full sm:w-auto">
+            {pending ? "Saving…" : "Save rule"}
+          </Button>
           <Link href="/rules" className={buttonVariants({ variant: "ghost" })}>
             Cancel
           </Link>
@@ -200,10 +226,10 @@ function ViewButton({
 }
 
 /** Problems with where each one is, for a view that has no field to put them beside. */
-function ProblemList({ problems }: { problems: RuleProblem[] }) {
+function ProblemList({ id, problems }: { id?: string; problems: RuleProblem[] }) {
   if (problems.length === 0) return null;
   return (
-    <ul className="flex flex-col gap-1">
+    <ul id={id} className="flex flex-col gap-1">
       {problems.map((problem) => (
         <li key={`${problem.path}:${problem.message}`} className={cn(fieldError, "break-words whitespace-pre-wrap")}>
           {problem.path === "" ? null : <code className="font-mono font-normal">{problem.path}: </code>}

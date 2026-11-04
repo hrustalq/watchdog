@@ -5,11 +5,12 @@ import { buttonVariants } from "@/components/ui/button";
 import type { RuleKind, RuleType } from "@/lib/rule-draft";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
+import { cn } from "@/lib/utils";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
 import { removeRuleAction, setRuleEnabledAction } from "./actions";
 import { RulesBreadcrumb } from "./rules-breadcrumb";
-import { appliesFromNow, kindLabel, modelLink, ruleNoun } from "./words";
+import { appliesFromNow, kindLabel, kindsExplained, modelLink, ruleNoun } from "./words";
 
 export const metadata: Metadata = { title: "Rules · Watchdog" };
 
@@ -30,6 +31,7 @@ export default function RulesPage({ searchParams }: PageProps<"/rules">) {
           <h2 id="add-rule" className="text-title">
             Add a rule
           </h2>
+          <p className="text-sm text-muted-foreground">{kindsExplained}</p>
           <div className="grid gap-4 sm:grid-cols-2">
             <AddRule type="classifier" description="Sorts every Item into Categories." />
             <AddRule
@@ -51,7 +53,7 @@ async function SavedNotice({ searchParams }: Pick<PageProps<"/rules">, "searchPa
   if (saved === undefined) return null;
   return (
     <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
-      Rule saved. It applies to Items captured from now on.
+      Rule saved.
     </Notice>
   );
 }
@@ -61,7 +63,7 @@ function AddRule({ type, description }: { type: RuleType; description: string })
     <Link
       href={`/rules/new?type=${type}&kind=${kind}`}
       aria-label={`New ${kindLabel[kind]} ${ruleNoun[type]}`}
-      className={buttonVariants({ variant: "outline" })}
+      className={cn(buttonVariants({ variant: "outline" }))}
     >
       {kindLabel[kind]}
     </Link>
@@ -85,8 +87,20 @@ async function RuleLists() {
   const { classifiers, extractorRules, hasModel } = await listRules(server().db, workspace.id);
   return (
     <>
-      <RuleList type="classifier" heading="Classifiers" rules={classifiers} hasModel={hasModel} />
-      <RuleList type="extractor" heading="Extractor Rules" rules={extractorRules} hasModel={hasModel} />
+      <RuleList
+        type="classifier"
+        heading="Classifiers"
+        empty="None yet. Items get no Categories until you add one."
+        rules={classifiers}
+        hasModel={hasModel}
+      />
+      <RuleList
+        type="extractor"
+        heading="Extractor Rules"
+        empty="None yet. Items get no extracted fields until you add one."
+        rules={extractorRules}
+        hasModel={hasModel}
+      />
     </>
   );
 }
@@ -101,11 +115,13 @@ interface RuleRow {
 function RuleList({
   type,
   heading,
+  empty,
   rules,
   hasModel,
 }: {
   type: RuleType;
   heading: string;
+  empty: string;
   rules: RuleRow[];
   hasModel: boolean;
 }) {
@@ -115,7 +131,7 @@ function RuleList({
         {heading} <span className="font-normal text-muted-foreground tabular-nums">{rules.length}</span>
       </h2>
       {rules.length === 0 ? (
-        <p className="text-sm text-muted-foreground">None yet.</p>
+        <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
         <ul className="divide-y rounded-lg border">
           {rules.map((rule) => (
@@ -166,10 +182,10 @@ function EnableSwitch({ type, rule, needsModel }: { type: RuleType; rule: RuleRo
         type="submit"
         role="switch"
         aria-checked={on}
-        aria-label={`${rule.name} enabled`}
         disabled={needsModel}
         className="group flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-muted/50"
       >
+        <span className="sr-only">{rule.name}: </span>
         <span aria-hidden="true" className="flex h-5 w-9 items-center rounded-md bg-input p-0.5 group-aria-checked:justify-end group-aria-checked:bg-primary">
           <span className="size-4 rounded-sm bg-foreground group-aria-checked:bg-primary-foreground" />
         </span>
@@ -185,16 +201,21 @@ function DeleteRule({ type, rule }: { type: RuleType; rule: RuleRow }) {
   return (
     <details className="group sm:max-w-64">
       <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
-        <span className="group-open:hidden">Delete</span>
-        <span className="hidden group-open:inline">Keep it</span>
+        <span className="group-open:hidden">
+          Delete<span className="sr-only"> {rule.name}</span>
+        </span>
+        <span className="hidden group-open:inline">
+          Keep it<span className="sr-only"> {rule.name}</span>
+        </span>
       </summary>
-      <div className="mt-2 flex flex-col gap-3 rounded-lg bg-muted p-3">
+      <div className="mt-2 flex flex-col gap-3 rounded-lg border p-3">
         <p className="text-sm">
           Deleting {rule.name} stops it running. The {kept} stay on their Items. This can&apos;t be
           undone.
         </p>
         <form action={removeRuleAction.bind(null, type, rule.id)}>
-          <SubmitButton variant="destructive" pendingLabel="Deleting…">
+          {/* A lighter tint than the button's own, which leaves its text at 3.3:1. */}
+          <SubmitButton variant="destructive" pendingLabel="Deleting…" className="dark:bg-destructive/15">
             Delete {ruleNoun[type]}
           </SubmitButton>
         </form>
