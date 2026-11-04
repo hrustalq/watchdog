@@ -6,10 +6,7 @@ import type { modelConfig } from "@watchdog/db";
 import type { Config } from "../config.ts";
 import { createEgressFetch } from "../egress/egress.ts";
 
-export type AgentModelConfig = Pick<
-  typeof modelConfig.$inferSelect,
-  "id" | "providerType" | "baseUrl" | "modelName" | "apiKeyCiphertext" | "supportsStructuredOutput"
->;
+export type AgentModelConfig = typeof modelConfig.$inferSelect;
 
 /** The egress guard's fetch, which every Agent request goes through. */
 export type AgentFetch = ReturnType<typeof createEgressFetch>;
@@ -39,8 +36,9 @@ function providerFetch(fetch: AgentFetch): typeof globalThis.fetch {
 
 /**
  * The model and the options that apply the "supports structured output" flag. Without the flag,
- * OpenAI-compatible and Google hosts get plain JSON mode. Anthropic has no such mode, so it answers
- * through a forced tool call, which is how ADR 0016 says it works.
+ * OpenAI-compatible and Google hosts get plain JSON mode, which sends no schema, so the prompt has
+ * to carry it. Anthropic has no such mode. It answers through a forced tool call that carries the
+ * schema, which is how ADR 0016 says it works.
  */
 export function createAgentModel(config: AgentModelConfig, apiKey: string | null, fetch: AgentFetch) {
   const structured = config.supportsStructuredOutput;
@@ -58,6 +56,7 @@ export function createAgentModel(config: AgentModelConfig, apiKey: string | null
           ...(apiKey !== null && { apiKey }),
         })(config.modelName),
         providerOptions: {},
+        schemaInPrompt: !structured,
       };
     case "anthropic":
       return {
@@ -65,11 +64,13 @@ export function createAgentModel(config: AgentModelConfig, apiKey: string | null
         providerOptions: {
           anthropic: { structuredOutputMode: structured ? "outputFormat" : "jsonTool" },
         },
+        schemaInPrompt: false,
       };
     case "google":
       return {
         model: createGoogle({ ...settings, apiKey: key })(config.modelName),
         providerOptions: { google: { structuredOutputs: structured } },
+        schemaInPrompt: !structured,
       };
   }
 }

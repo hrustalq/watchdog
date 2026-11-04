@@ -17,10 +17,9 @@ import { type AgentFetch, type AgentModelConfig, createAgentModel } from "./prov
 // The SDK warns on every call that a host without the flag gets no schema, which is intended.
 globalThis.AI_SDK_LOG_WARNINGS = false;
 
-export type AgentFailureReason = "invalid_output" | "blocked" | "error";
 export interface AgentFailure {
   ok: false;
-  reason: AgentFailureReason;
+  reason: "invalid_output" | "blocked" | "error";
   message: string;
 }
 export type AgentResult<Value> = { ok: true; output: Value } | AgentFailure;
@@ -49,8 +48,14 @@ ${JSON.stringify(z.toJSONSchema(schema))}`;
 const asRepair = (prompt: string, problem: string) =>
   `${prompt}
 
-Your previous response failed validation, so respond again and fix this:
+Your previous response failed validation. Respond again with only the JSON, with no code fences or
+other text, and fix this:
 ${problem}`;
+
+const maxInteger = 2_147_483_647;
+/** A host can report any number, and one the column refuses mustn't lose a paid answer. */
+const storableTokens = (count: number | undefined) =>
+  count !== undefined && Number.isInteger(count) && count >= 0 && count <= maxInteger ? count : null;
 
 const rowStatus = { invalid_output: "invalid_output", blocked: "error", error: "error" } as const;
 
@@ -73,23 +78,26 @@ export async function callAgent<Schema extends z.ZodObject>(
 ): Promise<AgentResult<z.output<Schema>>> {
   const { db, modelConfig, schema, system, prompt } = options;
 
-  let apiKey: string | null;
-  let agentModel;
+  // The meter's foreign key would catch this too, but only after the model has been paid for.
+  if (options.workspaceId !== modelConfig.workspaceId) {
+    return { ok: false, reason: "error", message: "This model belongs to another Workspace." };
+  }
+
+  let prepared;
   try {
     const ciphertext = modelConfig.apiKeyCiphertext;
-    apiKey = ciphertext === null ? null : decryptSecret(ciphertext, options.encryptionKey);
-    agentModel = createAgentModel(modelConfig, apiKey, options.fetch);
+    // Headers drop surrounding whitespace, so trimming redacts the key as the provider receives it.
+    const apiKey = ciphertext === null ? null : decryptSecret(ciphertext, options.encryptionKey).trim();
+    const agentModel = createAgentModel(modelConfig, apiKey, options.fetch);
+    const instructions = agentModel.schemaInPrompt ? `${system}\n\n${asPlainJson(schema)}` : system;
+    prepared = { apiKey, instructions, ...agentModel };
   } catch (error) {
     return { ok: false, reason: "error", message: describeFailure(error) };
   }
-  const { model, providerOptions } = agentModel;
+  const { apiKey, instructions, model, providerOptions } = prepared;
   // A provider's error can quote the key it was sent, and the message may reach a Log row.
   const redact = (text: string) =>
     apiKey === null || apiKey === "" ? text : text.replaceAll(apiKey, "[redacted]");
-
-  const instructions = modelConfig.supportsStructuredOutput
-    ? system
-    : `${system}\n\n${asPlainJson(schema)}`;
 
   async function attempt(number: number, text: string) {
     const started = performance.now();
@@ -124,8 +132,8 @@ export async function callAgent<Schema extends z.ZodObject>(
       itemId: options.itemId,
       purpose: options.purpose,
       attempt: number,
-      inputTokens: usage?.inputTokens ?? null,
-      outputTokens: usage?.outputTokens ?? null,
+      inputTokens: storableTokens(usage?.inputTokens),
+      outputTokens: storableTokens(usage?.outputTokens),
       latencyMs: Math.round(performance.now() - started),
       status: result.ok ? "ok" : rowStatus[result.reason],
     });

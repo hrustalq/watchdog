@@ -211,6 +211,7 @@ describe("callAgent", () => {
       const fake = fakeLlm(providerType, [{ text: "It looks bad." }, { json: valid }]);
 
       await expect(call(seeded, fake.fetch)).resolves.toEqual({ ok: true, output: valid });
+      expect(textOf(fake.requests[1])).toContain("no code fences");
       expect(await rows(seeded)).toMatchObject([{ status: "invalid_output" }, { status: "ok" }]);
     });
 
@@ -294,6 +295,18 @@ describe("callAgent", () => {
     });
   });
 
+  describe("token counts a host reports", () => {
+    // Each would make the insert fail, and lose an answer the user paid for, or corrupt Usage.
+    it.each([12.5, 3_000_000_000, -1])("stores null for %d and keeps the answer", async (inputTokens) => {
+      const seeded = await seed("openai-compatible");
+      const fake = fakeLlm("openai-compatible", [{ json: valid, usage: { inputTokens, outputTokens: 5 } }]);
+
+      await expect(call(seeded, fake.fetch)).resolves.toEqual({ ok: true, output: valid });
+
+      expect(await rows(seeded)).toMatchObject([{ status: "ok", inputTokens: null, outputTokens: 5 }]);
+    });
+  });
+
   describe("a response with no usage block", () => {
     it.each(["openai-compatible", "google"] as const)("stores null tokens with %s", async (providerType) => {
       const seeded = await seed(providerType);
@@ -341,6 +354,7 @@ describe("callAgent", () => {
       const fake = fakeLlm("anthropic", [{ json: valid }]);
       await call(await seed("anthropic", { structured: false }), fake.fetch);
       expect(fake.requests[0]?.body).toMatchObject({ tools: [{ name: "json" }] });
+      expect(textOf(fake.requests[0])).not.toContain("Respond with only");
     });
 
     it("google sends the response schema with the flag", async () => {
@@ -379,6 +393,16 @@ describe("callAgent", () => {
       },
     );
 
+    it("redacts the key as it goes on the wire when it was stored with stray whitespace", async () => {
+      const seeded = await seed("anthropic", { ciphertext: encryptSecret(`${apiKey}\n`, encryptionKey) });
+      const fake = fakeLlm("anthropic", [{ status: 401, message: `Bad key: ${apiKey}` }]);
+
+      const { message } = failed(await call(seeded, fake.fetch));
+
+      expect(fake.requests[0]?.headers["x-api-key"]).toBe(apiKey);
+      expect(message).not.toContain(apiKey);
+    });
+
     it("fails without a request or a row when the key can't be decrypted", async () => {
       const seeded = await seed("anthropic", { ciphertext: encryptSecret(apiKey, Buffer.alloc(32, 9)) });
       const fake = fakeLlm("anthropic", []);
@@ -390,6 +414,40 @@ describe("callAgent", () => {
       expect(fake.requests).toEqual([]);
       expect(await rows(seeded)).toEqual([]);
     });
+  });
+
+  it("refuses another Workspace's model before it spends anything", async () => {
+    const seeded = await seed("openai-compatible");
+    const other = await seed("openai-compatible");
+    const fake = fakeLlm("openai-compatible", []);
+
+    const { reason } = failed(await call({ ...seeded, modelConfig: other.modelConfig }, fake.fetch));
+
+    expect(reason).toBe("error");
+    expect(fake.requests).toEqual([]);
+    expect(await rows(seeded)).toEqual([]);
+  });
+
+  it("fails without a request or a row when the schema has no JSON Schema form", async () => {
+    const seeded = await seed("openai-compatible", { structured: false });
+    const fake = fakeLlm("openai-compatible", []);
+
+    const { reason } = failed(
+      await callAgent({
+        db,
+        encryptionKey,
+        ...seeded,
+        purpose: "classify",
+        schema: z.object({ at: z.date() }),
+        system: "You classify Items.",
+        prompt: "Classify this Item.",
+        fetch: fake.fetch,
+      }),
+    );
+
+    expect(reason).toBe("error");
+    expect(fake.requests).toEqual([]);
+    expect(await rows(seeded)).toEqual([]);
   });
 
   it("meters a call with no Item", async () => {
