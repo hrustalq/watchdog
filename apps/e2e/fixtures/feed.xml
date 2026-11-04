@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Trimmed from the PostgreSQL news feed (packages/core/src/sources/rss/fixtures/postgresql-news.rss).
+     The dates are Caddy template actions (Caddyfile next to this file), so each request gets dates
+     relative to the moment it's served: two inside the 7-day Backfill window and one outside it. -->
+<rss version="2.0">
+  <channel>
+    <title>PostgreSQL news</title>
+    <link>https://www.postgresql.org/</link>
+    <description>PostgreSQL news</description>
+    <language>en-us</language>
+    <item>
+      <title>Security release for psqlodbc</title>
+      <link>https://www.postgresql.org/about/news/security-release-for-psqlodbc-3431/</link>
+      <description>&lt;p&gt;The PostgreSQL ODBC project has released version 18.00.0006 to fix multiple security issues see the &lt;a href="https://github.com/postgresql-interfaces/psqlodbc/blob/main/Changelog.md"&gt;Changelog&lt;/a&gt; for details&lt;/p&gt;</description>
+      <pubDate>{{now | dateModify "-2h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://www.postgresql.org/about/news/security-release-for-psqlodbc-3431/</guid>
+    </item>
+    <item>
+      <title>HypoPG 1.4.5 is out!</title>
+      <link>https://www.postgresql.org/about/news/hypopg-145-is-out-3428/</link>
+      <description>&lt;p&gt;I'm pleased to announce the release of the version 1.4.5 of HypoPG, an extension adding support for Hypothetical Indexes, compatible with PostgreSQL 9.2 and above.&lt;/p&gt;</description>
+      <pubDate>{{now | dateModify "-144h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://www.postgresql.org/about/news/hypopg-145-is-out-3428/</guid>
+    </item>
+    <item>
+      <title>E-Maj 5.0.1 : Major Security Update.</title>
+      <link>https://www.postgresql.org/about/news/e-maj-501-major-security-update-3425/</link>
+      <description>&lt;p&gt;We are very glad to announce the &lt;strong&gt;E-Maj 5.0.1&lt;/strong&gt; version.&lt;/p&gt;</description>
+      <pubDate>{{now | dateModify "-192h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://www.postgresql.org/about/news/e-maj-501-major-security-update-3425/</guid>
+    </item>
+  </channel>
+</rss>
