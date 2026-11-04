@@ -1,0 +1,223 @@
+// The canonical rule model (docs: Rule model; ADR 0007). The form and YAML are views of these shapes,
+// so the schemas are strict: a key they don't know would otherwise vanish on the way through.
+import { z } from "zod";
+import { captureRegexError, regexError } from "./regex.ts";
+
+const sourceAndContent = ["source", "source.type", "title", "body", "author", "url", "language"];
+const sourceContentAndCategories = [...sourceAndContent, "category"];
+const namedFields = [...sourceContentAndCategories, "severity", "importance"];
+
+// Extracted field names become keys of the Agent's flat output schema (ADR 0016).
+const fieldName = /^[\w-]{1,64}$/;
+const extracted = "fields.";
+
+function isConditionField(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  return value.startsWith(extracted)
+    ? fieldName.test(value.slice(extracted.length))
+    : namedFields.includes(value);
+}
+
+const conditionField = z.custom<string>(isConditionField, {
+  error: (issue) => `"${String(issue.input)}" isn't a field a rule can test.`,
+});
+
+/** A string that `findError` has nothing to say about. */
+function refusedBy(findError: (value: string) => string | undefined) {
+  return z.string().superRefine((value, ctx) => {
+    const message = findError(value);
+    if (message !== undefined) ctx.addIssue({ code: "custom", message });
+  });
+}
+
+const predicateSchema = z.discriminatedUnion(
+  "op",
+  [
+    z.strictObject({
+      field: conditionField,
+      op: z.literal("is"),
+      value: z.union([z.string(), z.number()]),
+    }),
+    z.strictObject({
+      field: conditionField,
+      op: z.literal("in"),
+      value: z.array(z.union([z.string(), z.number()])).min(1),
+    }),
+    z.strictObject({ field: conditionField, op: z.literal("contains"), value: z.string().min(1) }),
+    z.strictObject({ field: conditionField, op: z.literal("matches"), value: refusedBy(regexError) }),
+    z.strictObject({ field: conditionField, op: z.literal("gte"), value: z.number() }),
+    z.strictObject({ field: conditionField, op: z.literal("lte"), value: z.number() }),
+    z.strictObject({ field: conditionField, op: z.literal("exists") }),
+  ],
+  { error: "A predicate's operator is one of is, in, contains, matches, gte, lte or exists." },
+);
+
+export type Predicate = z.infer<typeof predicateSchema>;
+export type Condition = { all: Condition[] } | { any: Condition[] } | { not: Condition } | Predicate;
+
+function has(value: unknown, key: string) {
+  return typeof value === "object" && value !== null && key in value;
+}
+
+/**
+ * A union that picks its branch from the value's shape. `z.union` reports only "Invalid input" when
+ * every branch fails, and the Rules screen shows each message beside its field.
+ */
+function byShape<T>(pick: (value: unknown) => z.ZodType<T>) {
+  return z.unknown().transform((value, ctx): T => {
+    const result = pick(value).safeParse(value);
+    if (result.success) return result.data;
+    for (const issue of result.error.issues) ctx.addIssue({ ...issue });
+    return z.NEVER;
+  });
+}
+
+const allSchema = z.strictObject({ all: z.array(z.lazy(() => conditionSchema)).min(1) });
+const anySchema = z.strictObject({ any: z.array(z.lazy(() => conditionSchema)).min(1) });
+const notSchema = z.strictObject({ not: z.lazy(() => conditionSchema) });
+
+/** A boolean tree of predicates on any field: the shape of M3's Action Conditions. */
+export const conditionSchema: z.ZodType<Condition> = byShape<Condition>((value) => {
+  if (has(value, "all")) return allSchema;
+  if (has(value, "any")) return anySchema;
+  if (has(value, "not")) return notSchema;
+  return predicateSchema;
+});
+
+function* predicates(
+  condition: Condition,
+  path: PropertyKey[] = [],
+): Generator<{ field: string; path: PropertyKey[] }> {
+  if ("all" in condition) {
+    for (const [i, child] of condition.all.entries()) yield* predicates(child, [...path, "all", i]);
+  } else if ("any" in condition) {
+    for (const [i, child] of condition.any.entries()) yield* predicates(child, [...path, "any", i]);
+  } else if ("not" in condition) {
+    yield* predicates(condition.not, [...path, "not"]);
+  } else {
+    yield { field: condition.field, path: [...path, "field"] };
+  }
+}
+
+/** A Condition limited to what exists when its rule runs (docs: Rule model, "What each rule can test"). */
+function conditionAtStage(allowed: string[], refusal: (field: string) => string) {
+  return conditionSchema.superRefine((condition, ctx) => {
+    for (const { field, path } of predicates(condition)) {
+      if (!allowed.includes(field)) {
+        ctx.addIssue({ code: "custom", path, message: refusal(field) });
+      }
+    }
+  });
+}
+
+const classifierWhen = conditionAtStage(
+  sourceAndContent,
+  (field) =>
+    `A deterministic Classifier's "when" can't test "${field}": it can test only Source and content.`,
+);
+const extractorRuleWhen = conditionAtStage(
+  sourceContentAndCategories,
+  (field) =>
+    `An Extractor Rule's Condition can't test "${field}": it can test only Categories, Source and content.`,
+);
+
+const label = z.string().trim().min(1);
+const name = z.string().regex(fieldName, "A field name is letters, digits, _ and -, at most 64.");
+
+/** Fields with their names unique, since an Item stores one value per field name. */
+function fieldList<T extends { name: string }>(field: z.ZodType<T>) {
+  return z
+    .array(field)
+    .min(1)
+    .superRefine((fields, ctx) => {
+      for (const [i, { name }] of fields.entries()) {
+        if (fields.findIndex((other) => other.name === name) < i) {
+          ctx.addIssue({
+            code: "custom",
+            path: [i, "name"],
+            message: `A rule can't declare the field "${name}" twice.`,
+          });
+        }
+      }
+    });
+}
+
+const singleType = z.enum(["string", "integer"]);
+const anyType = z.enum(["string", "integer", "string-array", "integer-array"]);
+
+// One capture group gives one value, so only JSONPath can fill an array.
+const regexFieldSchema = z.strictObject({
+  name,
+  type: singleType,
+  from: z.enum(["title", "body"]),
+  regex: refusedBy(captureRegexError),
+});
+const jsonPathFieldSchema = z.strictObject({
+  name,
+  type: anyType,
+  jsonpath: z.string().startsWith("$", 'A JSONPath starts at the root, "$".'),
+});
+
+type RegexField = z.infer<typeof regexFieldSchema>;
+type JsonPathField = z.infer<typeof jsonPathFieldSchema>;
+
+const notRegexOrJsonPath = z.custom<never>(() => false, {
+  error: "A field reads from either regex or jsonpath.",
+});
+
+const deterministicFieldSchema = byShape<RegexField | JsonPathField>((value) => {
+  if (has(value, "regex") === has(value, "jsonpath")) return notRegexOrJsonPath;
+  return has(value, "regex") ? regexFieldSchema : jsonPathFieldSchema;
+});
+
+export const deterministicClassifierSchema = z.strictObject({
+  classifier: label,
+  when: classifierWhen,
+  assign: z.array(label).min(1),
+});
+
+export const agentClassifierSchema = z.strictObject({
+  classifier: label,
+  prompt: z.string().min(1),
+  /** The Categories the Agent may assign. */
+  categories: z.array(label).min(1),
+});
+
+export const deterministicExtractorRuleSchema = z.strictObject({
+  extractor: label,
+  when: extractorRuleWhen,
+  fields: fieldList(deterministicFieldSchema),
+});
+
+export const agentExtractorRuleSchema = z.strictObject({
+  extractor: label,
+  when: extractorRuleWhen,
+  prompt: z.string().min(1),
+  fields: fieldList(z.strictObject({ name, type: anyType })),
+});
+
+export type DeterministicClassifier = z.infer<typeof deterministicClassifierSchema>;
+export type AgentClassifier = z.infer<typeof agentClassifierSchema>;
+export type DeterministicExtractorRule = z.infer<typeof deterministicExtractorRuleSchema>;
+export type AgentExtractorRule = z.infer<typeof agentExtractorRuleSchema>;
+
+export type Classifier = DeterministicClassifier | AgentClassifier;
+export type ExtractorRule = DeterministicExtractorRule | AgentExtractorRule;
+export type Rule = Classifier | ExtractorRule;
+
+export const classifierSchema = byShape<Classifier>((value) =>
+  has(value, "prompt") ? agentClassifierSchema : deterministicClassifierSchema,
+);
+
+export const extractorRuleSchema = byShape<ExtractorRule>((value) =>
+  has(value, "prompt") ? agentExtractorRuleSchema : deterministicExtractorRuleSchema,
+);
+
+const notARule = z.custom<never>(() => false, {
+  error: 'A rule starts with "classifier:" or "extractor:" and its name.',
+});
+
+export const ruleSchema = byShape<Rule>((value) => {
+  if (has(value, "classifier")) return classifierSchema;
+  return has(value, "extractor") ? extractorRuleSchema : notARule;
+});
