@@ -68,13 +68,17 @@ export const agentCall = pgTable(
       .references(() => workspace.id, { onDelete: "cascade" }),
     modelConfigId: uuid("model_config_id").notNull(),
     itemId: uuid("item_id").references(() => item.id, { onDelete: "set null" }),
-    purpose: text("purpose", { enum: ["classify", "extract-rate", "compile-rule", "draft-profile"] }).notNull(),
+    purpose: text("purpose", {
+      enum: ["classify", "extract-rate", "compile-rule", "draft-profile", "test-connection"],
+    }).notNull(),
     attempt: integer("attempt").notNull(),
     /** Null when the provider reports no usage. */
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
     latencyMs: integer("latency_ms").notNull(),
     status: text("status", { enum: ["ok", "invalid_output", "error"] }).notNull(),
+    /** Why the attempt failed, for the Model screen, with the API key redacted. Null when it worked. */
+    errorMessage: text("error_message"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
@@ -87,7 +91,7 @@ export const agentCall = pgTable(
     }),
     check(
       "agent_call_purpose_check",
-      sql`${table.purpose} in ('classify', 'extract-rate', 'compile-rule', 'draft-profile')`,
+      sql`${table.purpose} in ('classify', 'extract-rate', 'compile-rule', 'draft-profile', 'test-connection')`,
     ),
     check("agent_call_status_check", sql`${table.status} in ('ok', 'invalid_output', 'error')`),
     index("agent_call_workspace_id_created_at_idx").on(table.workspaceId, table.createdAt),

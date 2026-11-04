@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { type EgressRule, parseEgressRule } from "../egress/egress.ts";
 import { encryptSecret } from "../secrets/secrets.ts";
-import { type AgentResult, callAgent } from "./call-agent.ts";
+import { type AgentResult, callAgent, testModelConnection } from "./call-agent.ts";
 import { type FakeRequest, fakeLlm } from "./fake-llm.ts";
 import { createAgentFetch } from "./provider.ts";
 
@@ -468,5 +468,65 @@ describe("callAgent", () => {
     });
 
     expect(await rows(seeded)).toMatchObject([{ itemId: null, purpose: "compile-rule", status: "ok" }]);
+  });
+
+  describe("the failure a meter row keeps", () => {
+    it("is the reason the call gave, without the key", async () => {
+      const seeded = await seed("openai-compatible");
+      const fake = fakeLlm("openai-compatible", [{ status: 401, message: `Bad key: ${apiKey}` }]);
+
+      await call(seeded, fake.fetch);
+
+      const [row] = await rows(seeded);
+      expect(row?.errorMessage).toBe("The model provider answered 401: Bad key: [redacted]");
+    });
+
+    it("is empty on an attempt that worked", async () => {
+      const seeded = await seed("openai-compatible");
+      await call(seeded, fakeLlm("openai-compatible", [{ json: valid }]).fetch);
+
+      expect(await rows(seeded)).toMatchObject([{ status: "ok", errorMessage: null }]);
+    });
+
+    it("is the validation problem on an invalid response", async () => {
+      const seeded = await seed("openai-compatible");
+      await call(seeded, fakeLlm("openai-compatible", [{ text: "no" }, { text: "no" }]).fetch);
+
+      expect(await rows(seeded)).toMatchObject([
+        { attempt: 1, errorMessage: "The response was not valid JSON." },
+        { attempt: 2, errorMessage: "The response was not valid JSON." },
+      ]);
+    });
+
+    it("can't lose the meter row to what a provider's error says", async () => {
+      const seeded = await seed("openai-compatible");
+      const message = `Nul\0 and half a pair \ud83d, then ${"long ".repeat(1000)}`;
+
+      await call(seeded, fakeLlm("openai-compatible", [{ status: 500, message }]).fetch);
+
+      const [row] = await rows(seeded);
+      expect(row?.errorMessage).toMatch(/^The model provider answered 500: Nul and half a pair �, then long/);
+      expect(row?.errorMessage?.length).toBeLessThanOrEqual(1000);
+    });
+  });
+
+  describe("testModelConnection", () => {
+    it("makes one small call and meters it as a connection test", async () => {
+      const seeded = await seed("openai-compatible");
+      const fake = fakeLlm("openai-compatible", [{ json: { reply: "ok" } }]);
+
+      const result = await testModelConnection({
+        db,
+        encryptionKey,
+        modelConfig: seeded.modelConfig,
+        fetch: fake.fetch,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(fake.requests).toHaveLength(1);
+      expect(await rows(seeded)).toMatchObject([
+        { itemId: null, purpose: "test-connection", status: "ok", errorMessage: null },
+      ]);
+    });
   });
 });

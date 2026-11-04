@@ -57,6 +57,9 @@ const maxInteger = 2_147_483_647;
 const storableTokens = (count: number | undefined) =>
   count !== undefined && Number.isInteger(count) && count >= 0 && count <= maxInteger ? count : null;
 
+/** Postgres refuses a NUL and half a surrogate pair, and a provider's error can hold either. */
+const storableMessage = (message: string) => message.replaceAll("\0", "").toWellFormed().slice(0, 1000);
+
 const rowStatus = { invalid_output: "invalid_output", blocked: "error", error: "error" } as const;
 
 function validationError(error: NoObjectGeneratedError | NoOutputGeneratedError) {
@@ -136,6 +139,7 @@ export async function callAgent<Schema extends z.ZodObject>(
       outputTokens: storableTokens(usage?.outputTokens),
       latencyMs: Math.round(performance.now() - started),
       status: result.ok ? "ok" : rowStatus[result.reason],
+      errorMessage: result.ok ? null : storableMessage(result.message),
     });
     return result;
   }
@@ -143,4 +147,20 @@ export async function callAgent<Schema extends z.ZodObject>(
   const first = await attempt(1, prompt);
   if (first.ok || first.reason !== "invalid_output") return first;
   return attempt(2, asRepair(prompt, first.message));
+}
+
+/** One small real call, so the user knows the model works. It costs a few tokens and is metered. */
+export function testModelConnection(
+  options: Pick<CallAgentOptions<z.ZodObject>, "db" | "modelConfig" | "encryptionKey" | "fetch">,
+) {
+  return callAgent({
+    ...options,
+    workspaceId: options.modelConfig.workspaceId,
+    itemId: null,
+    purpose: "test-connection",
+    // Any string counts: this tests the connection, not how well the model follows instructions.
+    schema: z.object({ reply: z.string() }),
+    system: "You are answering a connection test.",
+    prompt: 'Set "reply" to "ok".',
+  });
 }

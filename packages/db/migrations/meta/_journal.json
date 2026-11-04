@@ -50,6 +50,13 @@
       "when": 1793789084390,
       "tag": "0006_rule_rating_tables",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793831261895,
+      "tag": "0007_agent_call_failure_reason",
+      "breakpoints": true
     }
   ]
 }
