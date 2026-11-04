@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  index,
   jsonb,
   pgTable,
   primaryKey,
@@ -56,7 +57,12 @@ export const itemCategory = pgTable(
     category: text("category").notNull(),
     classifierId: uuid("classifier_id").references(() => classifier.id, { onDelete: "set null" }),
   },
-  (table) => [primaryKey({ columns: [table.itemId, table.category] })],
+  (table) => [
+    primaryKey({ columns: [table.itemId, table.category] }),
+    // Deleting a Classifier sets classifier_id null here. Without this, that scans every Workspace's
+    // rows.
+    index("item_category_classifier_id_idx").on(table.classifierId),
+  ],
 );
 
 /** A field extracted from an Item. It stays when its Extractor Rule is deleted. */
@@ -70,5 +76,9 @@ export const itemField = pgTable(
     value: jsonb("value").notNull(),
     extractorRuleId: uuid("extractor_rule_id").references(() => extractorRule.id, { onDelete: "set null" }),
   },
-  (table) => [primaryKey({ columns: [table.itemId, table.name] })],
+  (table) => [
+    primaryKey({ columns: [table.itemId, table.name] }),
+    // As on item_category.
+    index("item_field_extractor_rule_id_idx").on(table.extractorRuleId),
+  ],
 );

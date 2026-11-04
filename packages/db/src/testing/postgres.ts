@@ -2,8 +2,8 @@ import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
-import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate as applyMigrations } from "drizzle-orm/node-postgres/migrator";
+import { closeDb, createDb } from "../client.ts";
 
 // The Postgres in Compose (#8) must run the same major version.
 export const postgresImage = "postgres:18-alpine";
@@ -30,7 +30,7 @@ export async function startPostgres(): Promise<TestPostgres> {
  */
 export async function migrateFirst(databaseUrl: string, count: number): Promise<void> {
   const migrationsFolder = await mkdtemp(path.join(tmpdir(), "watchdog-migrations-"));
-  const db = drizzle(databaseUrl);
+  const db = createDb(databaseUrl);
   try {
     await cp(path.join(import.meta.dirname, "../../migrations"), migrationsFolder, { recursive: true });
     const journalPath = path.join(migrationsFolder, "meta/_journal.json");
@@ -40,7 +40,7 @@ export async function migrateFirst(databaseUrl: string, count: number): Promise<
     await writeFile(journalPath, JSON.stringify(JSON.parse(journal, firstEntries)));
     await applyMigrations(db, { migrationsFolder });
   } finally {
-    await db.$client.end();
+    await closeDb(db);
     await rm(migrationsFolder, { recursive: true, force: true });
   }
 }

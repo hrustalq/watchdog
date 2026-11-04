@@ -21,6 +21,7 @@ export const correction = pgTable(
     itemSummary: text("item_summary"),
     before: jsonb("before").notNull(),
     after: jsonb("after").notNull(),
+    /** A replacing Correction resets this, so the newest judgement counts as recent for the Agent. */
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [

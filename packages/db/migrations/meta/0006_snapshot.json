@@ -1,5 +1,5 @@
 {
-  "id": "b9ae81ca-a9d5-477d-b7d1-a54a80af64e4",
+  "id": "fe3dfa29-3d97-4785-9e47-c71a366d16bf",
   "prevId": "bdcc10b3-0eb5-43e3-afbe-5a31796780b4",
   "version": "7",
   "dialect": "postgresql",
@@ -1188,7 +1188,23 @@
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "item_category_classifier_id_idx": {
+          "name": "item_category_classifier_id_idx",
+          "columns": [
+            {
+              "expression": "classifier_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "item_category_item_id_item_id_fk": {
           "name": "item_category_item_id_item_id_fk",
@@ -1260,7 +1276,23 @@
           "notNull": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "item_field_extractor_rule_id_idx": {
+          "name": "item_field_extractor_rule_id_idx",
+          "columns": [
+            {
+              "expression": "extractor_rule_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
       "foreignKeys": {
         "item_field_item_id_item_id_fk": {
           "name": "item_field_item_id_item_id_fk",
@@ -1626,19 +1658,6 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "agent_call_model_config_id_model_config_id_fk": {
-          "name": "agent_call_model_config_id_model_config_id_fk",
-          "tableFrom": "agent_call",
-          "tableTo": "model_config",
-          "columnsFrom": [
-            "model_config_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
         "agent_call_item_id_item_id_fk": {
           "name": "agent_call_item_id_item_id_fk",
           "tableFrom": "agent_call",
@@ -1650,6 +1669,21 @@
             "id"
           ],
           "onDelete": "set null",
+          "onUpdate": "no action"
+        },
+        "agent_call_model_config_fk": {
+          "name": "agent_call_model_config_fk",
+          "tableFrom": "agent_call",
+          "tableTo": "model_config",
+          "columnsFrom": [
+            "workspace_id",
+            "model_config_id"
+          ],
+          "columnsTo": [
+            "workspace_id",
+            "id"
+          ],
+          "onDelete": "no action",
           "onUpdate": "no action"
         }
       },
@@ -1783,7 +1817,16 @@
         }
       },
       "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
+      "uniqueConstraints": {
+        "model_config_workspace_id_id_key": {
+          "name": "model_config_workspace_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "workspace_id",
+            "id"
+          ]
+        }
+      },
       "policies": {},
       "checkConstraints": {
         "model_config_provider_type_check": {

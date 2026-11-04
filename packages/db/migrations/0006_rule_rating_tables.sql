@@ -88,6 +88,7 @@ CREATE TABLE "model_config" (
 	"archived_at" timestamp with time zone,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	CONSTRAINT "model_config_workspace_id_id_key" UNIQUE("workspace_id","id"),
 	CONSTRAINT "model_config_provider_type_check" CHECK ("model_config"."provider_type" in ('openai-compatible', 'anthropic', 'google'))
 );
 --> statement-breakpoint
@@ -109,9 +110,11 @@ ALTER TABLE "correction" ADD CONSTRAINT "correction_workspace_id_workspace_id_fk
 ALTER TABLE "correction" ADD CONSTRAINT "correction_item_id_item_id_fk" FOREIGN KEY ("item_id") REFERENCES "public"."item"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "profile" ADD CONSTRAINT "profile_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "agent_call" ADD CONSTRAINT "agent_call_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "agent_call" ADD CONSTRAINT "agent_call_model_config_id_model_config_id_fk" FOREIGN KEY ("model_config_id") REFERENCES "public"."model_config"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "agent_call" ADD CONSTRAINT "agent_call_item_id_item_id_fk" FOREIGN KEY ("item_id") REFERENCES "public"."item"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "agent_call" ADD CONSTRAINT "agent_call_model_config_fk" FOREIGN KEY ("workspace_id","model_config_id") REFERENCES "public"."model_config"("workspace_id","id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "model_config" ADD CONSTRAINT "model_config_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "item_category_classifier_id_idx" ON "item_category" USING btree ("classifier_id");--> statement-breakpoint
+CREATE INDEX "item_field_extractor_rule_id_idx" ON "item_field" USING btree ("extractor_rule_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "correction_item_id_kind_key" ON "correction" USING btree ("item_id","kind") WHERE "correction"."item_id" is not null;--> statement-breakpoint
 CREATE INDEX "correction_workspace_id_created_at_idx" ON "correction" USING btree ("workspace_id","created_at");--> statement-breakpoint
 CREATE INDEX "agent_call_workspace_id_created_at_idx" ON "agent_call" USING btree ("workspace_id","created_at");--> statement-breakpoint

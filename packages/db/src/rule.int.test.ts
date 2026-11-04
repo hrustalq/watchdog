@@ -179,8 +179,17 @@ describe("rule, Rating, Correction, Profile, model and metering tables", () => {
     const seeded = await seedEverything(db);
 
     await expect(db.delete(modelConfig).where(eq(modelConfig.id, seeded.model.id))).rejects.toMatchObject({
-      cause: { code: "23503", constraint: "agent_call_model_config_id_model_config_id_fk" },
+      cause: { code: "23503", constraint: "agent_call_model_config_fk" },
     });
+  });
+
+  it("refuses an agent_call whose workspace_id isn't its model's Workspace", async () => {
+    const seeded = await seedEverything(db);
+    const other = await seed(db);
+
+    await expect(
+      db.insert(agentCall).values(newAgentCall(other.workspace.id, seeded.model.id, null)),
+    ).rejects.toMatchObject({ cause: { code: "23503", constraint: "agent_call_model_config_fk" } });
   });
 
   it("refuses a second Correction with the same (item_id, kind)", async () => {

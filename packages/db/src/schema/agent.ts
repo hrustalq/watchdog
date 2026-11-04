@@ -2,12 +2,14 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   numeric,
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -47,6 +49,8 @@ export const modelConfig = pgTable(
       "model_config_provider_type_check",
       sql`${table.providerType} in ('openai-compatible', 'anthropic', 'google')`,
     ),
+    // Lets agent_call reference (workspace_id, id).
+    unique("model_config_workspace_id_id_key").on(table.workspaceId, table.id),
     // A Workspace has one active model.
     uniqueIndex("model_config_workspace_id_active_key")
       .on(table.workspaceId)
@@ -62,10 +66,7 @@ export const agentCall = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspace.id, { onDelete: "cascade" }),
-    /** No delete action: a model with calls is archived, and only its Workspace can remove it. */
-    modelConfigId: uuid("model_config_id")
-      .notNull()
-      .references(() => modelConfig.id),
+    modelConfigId: uuid("model_config_id").notNull(),
     itemId: uuid("item_id").references(() => item.id, { onDelete: "set null" }),
     purpose: text("purpose", { enum: ["classify", "extract-rate", "compile-rule", "draft-profile"] }).notNull(),
     attempt: integer("attempt").notNull(),
@@ -77,6 +78,13 @@ export const agentCall = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
+    // Keeps workspace_id equal to the model's Workspace. No delete action: a model with calls is
+    // archived, and only its Workspace can remove it.
+    foreignKey({
+      name: "agent_call_model_config_fk",
+      columns: [table.workspaceId, table.modelConfigId],
+      foreignColumns: [modelConfig.workspaceId, modelConfig.id],
+    }),
     check(
       "agent_call_purpose_check",
       sql`${table.purpose} in ('classify', 'extract-rate', 'compile-rule', 'draft-profile')`,
