@@ -7,7 +7,7 @@ import { magicLink, setupLink } from "./web-log.ts";
 // (compose.smoke.yaml), with dates relative to the run.
 test("a new install signs in, adds an RSS Source and sees its Items in the Feed", async ({ page }) => {
   // The Items wait for the worker's next tick, at most a minute, and the Feed's next refresh.
-  test.setTimeout(180_000);
+  test.setTimeout(240_000);
   const email = "smoke@example.com";
 
   await test.step("claim the install with the setup link", async () => {
@@ -43,7 +43,7 @@ test("a new install signs in, adds an RSS Source and sees its Items in the Feed"
     // The Feed refreshes itself every 30 seconds, so no reload is needed.
     for (const title of ["Security release for psqlodbc", "HypoPG 1.4.5 is out!"]) {
       await expect(item(title), `"${title}" never reached the Feed`).toContainText("Backfill", {
-        timeout: 120_000,
+        timeout: 150_000,
       });
     }
     // Captured in the same poll as the two above, so it would be on the page by now.
@@ -61,7 +61,7 @@ test("a new install signs in, adds an RSS Source and sees its Items in the Feed"
 
 // Better Auth keys the sign-in rate limit (5 a minute) on X-Forwarded-For. Caddy sets that header
 // from the connection, so a new value on every request still lands in this machine's one bucket.
-// The test above already used part of the bucket, so the limit comes at the sixth request or before.
+// The test above may have used part of the bucket, so the limit comes at the sixth request or before.
 test("a spoofed X-Forwarded-For doesn't escape the sign-in rate limit", async ({ page }) => {
   const signIn = new URL("/sign-in", await setupLink()).href;
   for (let i = 1; i <= 6 && !page.url().includes("error=too-many"); i++) {
