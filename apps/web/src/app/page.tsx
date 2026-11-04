@@ -30,7 +30,7 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
   return (
     <div className="flex flex-1 flex-col">
       {/* On a phone the links get a row of their own, under the name and Sign out. */}
-      <header className="flex min-h-12 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b px-4 py-2 sm:h-12 sm:flex-nowrap sm:gap-4 sm:py-0">
+      <header className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b px-4 py-2 sm:h-12 sm:flex-nowrap sm:gap-4 sm:py-0">
         <p className="flex min-w-0 flex-1 items-baseline gap-2">
           {/* On a phone the name needs the room more than its label does. */}
           <span className="hidden text-xs font-medium tracking-[0.01em] text-muted-foreground sm:inline">
@@ -38,10 +38,12 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
           </span>
           <span className="truncate text-title">{workspace.name}</span>
         </p>
-        <div className="order-last flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto sm:shrink-0 sm:flex-nowrap sm:gap-3">
-          <span className="hidden truncate text-sm text-muted-foreground sm:inline">
-            {user.email}
-          </span>
+        <span className="hidden truncate text-sm text-muted-foreground sm:inline">{user.email}</span>
+        {/* The negative margin lines the first link's text up with the name above it. */}
+        <nav
+          aria-label="Workspace"
+          className="order-last -ml-3 flex w-full flex-wrap items-center gap-1 sm:order-none sm:ml-0 sm:w-auto sm:shrink-0 sm:flex-nowrap sm:gap-3"
+        >
           <Link href="/sources" className={buttonVariants({ variant: "ghost" })}>
             Sources
           </Link>
@@ -56,7 +58,7 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
               Settings
             </Link>
           ) : null}
-        </div>
+        </nav>
         <form action={signOut} className="shrink-0">
           <Button type="submit" variant="outline">
             Sign out

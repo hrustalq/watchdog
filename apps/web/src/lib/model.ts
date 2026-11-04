@@ -40,7 +40,7 @@ export type ModelProblem = (typeof modelProblems)[number];
 
 export const modelProblemMessage: Record<ModelProblem, string> = {
   provider: "Choose one of the provider types in the list.",
-  "base-url": "Enter the full base URL, starting with https://, with no user name or query.",
+  "base-url": "Enter the full base URL, starting with http:// or https://, with no user name or query.",
   "model-name": "Enter the model's name as the provider spells it, in at most 200 characters.",
   "api-key": "An API key is one line of letters, digits and symbols. Paste it again.",
   "input-price": "Enter a price per million tokens as a number, such as 2.50, or leave it blank.",

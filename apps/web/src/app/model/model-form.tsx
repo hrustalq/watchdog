@@ -34,16 +34,17 @@ export function ModelForm({
     // Focus lands on the field with the error, so the field and its message are read together.
     autoFocus: problem === name,
   });
-  const note = (name: ModelProblem, hint?: React.ReactNode) =>
-    problem === name ? (
-      <p id={`${name}-note`} role="alert" className={fieldError}>
-        {modelProblemMessage[name]}
-      </p>
-    ) : (
-      <p id={`${name}-note`} className="text-xs text-muted-foreground">
-        {hint}
-      </p>
-    );
+  // The hint stays beside an error: a refused field is when its examples are needed most.
+  const note = (name: ModelProblem, hint: React.ReactNode) => (
+    <div id={`${name}-note`} className="flex flex-col gap-1">
+      {problem === name ? (
+        <p role="alert" className={fieldError}>
+          {modelProblemMessage[name]}
+        </p>
+      ) : null}
+      <p className="text-xs text-muted-foreground">{hint}</p>
+    </div>
+  );
   const examples = providerTypes.map(({ label, baseUrl }) => (
     <span key={label} className="block wrap-anywhere">
       {label}: <span className="font-mono">{baseUrl}</span>
@@ -52,45 +53,24 @@ export function ModelForm({
 
   return (
     <form action={saveModelAction} className="flex flex-col gap-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-2">
-          <label htmlFor="provider" className={labelClass}>
-            Provider type
-          </label>
-          <select
-            id="provider"
-            name="providerType"
-            defaultValue={values.providerType}
-            {...invalid("provider")}
-            className={`${field} bg-background`}
-          >
-            {providerTypes.map(({ value, label }) => (
-              <option key={value} value={value}>
-                {label}
-              </option>
-            ))}
-          </select>
-          {note("provider", "OpenAI-compatible also covers OpenRouter, Groq, DeepSeek, Mistral, Ollama and LM Studio.")}
-        </div>
-        <div className="flex flex-col gap-2">
-          <label htmlFor="model-name" className={labelClass}>
-            Model name
-          </label>
-          <input
-            id="model-name"
-            name="modelName"
-            type="text"
-            required
-            maxLength={200}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="gpt-5-mini"
-            defaultValue={values.modelName}
-            {...invalid("model-name")}
-            className={`${field} ${dataBox}`}
-          />
-          {note("model-name", "As the provider spells it.")}
-        </div>
+      <div className="flex flex-col gap-2">
+        <label htmlFor="provider" className={labelClass}>
+          Provider type
+        </label>
+        <select
+          id="provider"
+          name="providerType"
+          defaultValue={values.providerType}
+          {...invalid("provider")}
+          className={`${field} bg-background`}
+        >
+          {providerTypes.map(({ value, label }) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {note("provider", "OpenAI-compatible also covers OpenRouter, Groq, DeepSeek, Mistral, Ollama and LM Studio.")}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -109,7 +89,7 @@ export function ModelForm({
           {...invalid("base-url")}
           className={`${field} ${dataBox}`}
         />
-        {note("base-url", <>With its version path. For example:{examples}</>)}
+        {note("base-url", <>Include the version in the path. For example:{examples}</>)}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -129,31 +109,57 @@ export function ModelForm({
         {note(
           "api-key",
           <>
-            {keyTyped ? <strong className="font-medium text-foreground">Enter the key again. </strong> : null}
+            {keyTyped ? (
+              <strong className="font-medium text-foreground">
+                The key you typed wasn&apos;t saved. Enter it again
+                {hasKey ? ", or leave this blank to keep the current one" : ""}.{" "}
+              </strong>
+            ) : null}
+            Stored encrypted, and never shown again.{" "}
             {hasKey
-              ? "A new key replaces the current one. A key stays with its address: changing the provider type or the host needs the key again."
-              : "Stored encrypted, and never shown again. Leave it blank for a local model that needs none."}
+              ? "Changing the provider type or the host needs the key again, because Watchdog won't send a key to another address."
+              : "Most hosted providers need one. Leave it blank if this model doesn't."}
           </>,
         )}
       </div>
 
-      <div className="flex items-start gap-2">
+      <div className="flex flex-col gap-2">
+        <label htmlFor="model-name" className={labelClass}>
+          Model name
+        </label>
         <input
-          id="structured"
-          name="structured"
-          type="checkbox"
-          defaultChecked={values.structured}
-          aria-describedby="structured-hint"
-          className="mt-0.5 size-4 shrink-0 accent-primary outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+          id="model-name"
+          name="modelName"
+          type="text"
+          required
+          maxLength={200}
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="gpt-5-mini"
+          defaultValue={values.modelName}
+          {...invalid("model-name")}
+          className={`${field} ${dataBox}`}
         />
-        <div className="flex flex-col gap-1">
-          <label htmlFor="structured" className={labelClass}>
-            Supports structured output
-          </label>
-          <p id="structured-hint" className="text-xs text-muted-foreground">
-            The host accepts a JSON Schema. Without this, Watchdog asks for plain JSON and checks what comes back.
-          </p>
-        </div>
+        {note("model-name", "As the provider's docs spell it.")}
+      </div>
+
+      <div className="flex flex-col gap-1">
+        {/* The label holds the box, so the whole row is the target. */}
+        <label htmlFor="structured" className={`${labelClass} flex min-h-6 items-center gap-2`}>
+          <input
+            id="structured"
+            name="structured"
+            type="checkbox"
+            defaultChecked={values.structured}
+            aria-describedby="structured-hint"
+            className="size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          />
+          Supports structured output
+        </label>
+        <p id="structured-hint" className="pl-6 text-xs text-muted-foreground">
+          The host accepts a JSON Schema. Without this, Watchdog asks for plain JSON and checks what comes back. Leave it
+          off if you&apos;re not sure.
+        </p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -178,7 +184,7 @@ export function ModelForm({
               {...invalid(id)}
               className={`${field} ${dataBox} tabular-nums`}
             />
-            {note(id, "Per million tokens, for the estimated cost on the Usage screen.")}
+            {note(id, "Per million tokens, to estimate this model's cost.")}
           </div>
         ))}
       </div>

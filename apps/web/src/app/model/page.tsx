@@ -54,6 +54,8 @@ const blankForm: ModelFormValues = {
 };
 
 const noticeClass = "rounded-lg bg-muted px-3 py-2 text-sm";
+const keyLink =
+  "rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
 
 async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchParams">) {
   const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
@@ -100,8 +102,11 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
       ) : null}
       {param("saved") === "key-left-behind" ? (
         <Notice role="status" className={noticeClass}>
-          Model saved without the old API key, which stays with its old address. Enter this model&apos;s key below,
-          unless it needs none.
+          Model saved with no API key. The old key was only for the old address, so Watchdog deleted it.{" "}
+          <a href="#api-key" className={keyLink}>
+            Enter this model&apos;s key
+          </a>
+          , unless it needs none.
         </Notice>
       ) : null}
       {param("removed") !== "" ? (
@@ -186,8 +191,11 @@ function TestResult({ test, modelName }: { test: TestOutcome | undefined; modelN
     case "unreadable-key":
       return (
         <Notice role="alert" className="text-sm text-alarm">
-          Watchdog can&apos;t read the stored API key, which happens when WATCHDOG_ENCRYPTION_KEY changes. Enter the
-          key again below.
+          Watchdog can&apos;t read the stored API key, which happens when WATCHDOG_ENCRYPTION_KEY changes.{" "}
+          <a href="#api-key" className={keyLink}>
+            Enter the key again
+          </a>
+          .
         </Notice>
       );
     case "blocked":
@@ -212,7 +220,7 @@ function FailedCall({
       Last failed call at <Timestamp at={failure.at} />: {failure.reason}
       {/* The reason is someone else's sentence, and may not end in a full stop. */}
       {failure.recovered ? <span className="block">A later call worked.</span> : null}
-      {hint === undefined ? null : <span className="block">{hint}</span>}
+      {hint === undefined ? null : <span className="block text-muted-foreground">{hint}</span>}
     </span>
   );
   if (failure.recovered) return <p className="text-sm text-muted-foreground">{words}</p>;
@@ -246,7 +254,12 @@ function RemoveModel({ name }: { name: string }) {
           running, and Usage history stays.
         </p>
         <form action={removeModelAction}>
-          <SubmitButton variant="destructive" pendingLabel="Removing…">
+          {/* Solid Alarm Red: the variant's red on a tint over this panel is under 4.5:1. */}
+          <SubmitButton
+            variant="destructive"
+            pendingLabel="Removing…"
+            className="bg-alarm text-alarm-foreground hover:bg-alarm/90 dark:bg-alarm dark:hover:bg-alarm/90"
+          >
             Remove model
           </SubmitButton>
         </form>
