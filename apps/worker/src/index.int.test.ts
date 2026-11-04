@@ -12,6 +12,7 @@ import {
   eq,
   item,
   itemCategory,
+  itemLog,
   migrate,
   source,
   user,
@@ -177,7 +178,7 @@ describe("worker", () => {
     }
   }, 60_000);
 
-  describe("killed between capture and processing", () => {
+  describe("processing captured Items", () => {
     let db: Db;
     let boss: PgBoss;
 
@@ -193,8 +194,14 @@ describe("worker", () => {
       };
     });
 
-    /** Captures one Item a saved Classifier matches, the way a poll does, with no worker running. */
-    async function captureItem() {
+    /** A feed with one entry, dated now so the Backfill takes it. */
+    const feed = () =>
+      `<?xml version="1.0"?><rss version="2.0"><channel><title>Feed</title>` +
+      `<item><guid>one</guid><title>One</title><description>An entry.</description>` +
+      `<pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`;
+
+    /** A new Workspace whose saved Classifier matches the feed's entry, and a Source in it. */
+    async function newSource(url: string, nextPollAt?: Date) {
       const id = crypto.randomUUID();
       await db.insert(user).values({ id, name: "Owner", email: `${id}@example.com` });
       const [ws] = await db.insert(workspace).values({ name: "Workspace", ownerUserId: id }).returning();
@@ -215,27 +222,31 @@ describe("worker", () => {
           workspaceId,
           type: "rss",
           name: "Feed",
-          config: { url: "https://feeds.test/feed.rss" },
+          config: { url },
           schedule: "*/15 * * * *",
-          // So only this test captures from it, not the worker's own tick.
-          nextPollAt: new Date(Date.now() + 60 * 60 * 1000),
+          nextPollAt,
         })
         .returning();
-      const sourceId = src?.id ?? "";
+      return src?.id ?? "";
+    }
+
+    const itemOf = async (sourceId: string) =>
+      (await db.select({ id: item.id }).from(item).where(eq(item.sourceId, sourceId)))[0]?.id;
+
+    /** Captures one Item a saved Classifier matches, the way a poll does, with no worker running. */
+    async function captureItem() {
+      // Not due, so only this test captures from it, not the worker's own tick.
+      const sourceId = await newSource(
+        "https://feeds.test/feed.rss",
+        new Date(Date.now() + 60 * 60 * 1000),
+      );
       await pollSource(db, sourceId, {
-        fetch: () =>
-          Promise.resolve(
-            new Response(
-              `<?xml version="1.0"?><rss version="2.0"><channel><title>Feed</title>` +
-                `<item><guid>one</guid><title>One</title><description>An entry.</description>` +
-                `<pubDate>${new Date().toUTCString()}</pubDate></item></channel></rss>`,
-            ),
-          ),
+        fetch: () => Promise.resolve(new Response(feed())),
         enqueueItems: itemEnqueuer(boss),
       });
-      const [captured] = await db.select({ id: item.id }).from(item).where(eq(item.sourceId, sourceId));
+      const captured = await itemOf(sourceId);
       if (captured === undefined) throw new Error("Nothing was captured");
-      return captured.id;
+      return captured;
     }
 
     const jobState = async (itemId: string) =>
@@ -259,7 +270,39 @@ describe("worker", () => {
       );
     };
 
-    it("processes a queued Item after the restart", async () => {
+    it("classifies an Item it captured from its own poll", async () => {
+      const server = createServer((_request, response) => {
+        response.setHeader("content-type", "application/rss+xml");
+        response.end(feed());
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("The server has no port");
+      const sourceId = await newSource(`http://127.0.0.1:${String(address.port)}/feed.rss`);
+
+      const worker = await startWorker(postgres.url);
+      try {
+        const itemId = await vi.waitFor(
+          async () => {
+            const captured = await itemOf(sourceId);
+            if (captured === undefined) throw new Error("Nothing captured yet");
+            return captured;
+          },
+          { timeout: 30_000, interval: 100 },
+        );
+        await expectClassifiedSoon(itemId);
+        expect(await db.select().from(itemLog).where(eq(itemLog.itemId, itemId))).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ stage: "classify", message: "Classifier ones assigned one" }),
+          ]),
+        );
+        expect(await worker.stop()).toBe(0);
+      } finally {
+        server.close();
+      }
+    }, 120_000);
+
+    it("processes a queued Item after a kill and a restart", async () => {
       // A first run creates the queue and is killed, so the job waits with no worker to take it.
       await (await startWorker(postgres.url)).kill();
       const itemId = await captureItem();
@@ -293,12 +336,14 @@ describe("worker", () => {
       expect(await jobState(itemId)).toEqual(["active"]);
       expect(await processedAt(itemId)).toBeNull();
 
-      // Stands in for waiting out the queue's expiry and retry delay, which take minutes.
+      // Stands in for waiting out the queue's expiry and retry delay, which take minutes, and for the
+      // worker's own supervisor, which runs a minute after it starts and would still do this.
       await db.$client.query(
         `update pgboss.job set started_on = now() - interval '1 hour', retry_delay = 0,
          retry_backoff = false where name = $1 and data->>'itemId' = $2`,
         [processItemQueue, itemId],
       );
+      await boss.supervise(processItemQueue);
 
       const restarted = await startWorker(postgres.url);
       await expectClassifiedSoon(itemId);
