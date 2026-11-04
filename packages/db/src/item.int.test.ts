@@ -139,6 +139,52 @@ describe("Source, Item and Log tables", () => {
     expect(plan).not.toMatch(/Sort/);
   });
 
+  it.each([
+    ["severity", 6],
+    ["severity", 0],
+    ["importance", 6],
+    ["importance", 0],
+  ])("refuses a %s of %i", async (axis, value) => {
+    const seeded = await seed(db);
+
+    await expect(
+      db.update(item).set({ [axis]: value }).where(eq(item.id, seeded.item.id)),
+    ).rejects.toMatchObject({ cause: { code: "23514", constraint: `item_${axis}_check` } });
+  });
+
+  it("stores a Rating from 1 to 5, and an Item starts unrated", async () => {
+    const seeded = await seed(db);
+    expect(seeded.item).toMatchObject({ severity: null, importance: null });
+
+    const [low] = await db
+      .update(item)
+      .set({ severity: 1, importance: 1 })
+      .where(eq(item.id, seeded.item.id))
+      .returning();
+    expect(low).toMatchObject({ severity: 1, importance: 1 });
+    const [high] = await db
+      .update(item)
+      .set({ severity: 5, importance: 5 })
+      .where(eq(item.id, seeded.item.id))
+      .returning();
+    expect(high).toMatchObject({ severity: 5, importance: 5 });
+  });
+
+  it("allows the stages through correct in the Log, and nothing else", async () => {
+    const seeded = await seed(db);
+    const itemId = seeded.item.id;
+
+    await db.insert(itemLog).values(
+      (["classify", "extract", "rate", "correct"] as const).map((stage) => ({ itemId, stage, message: stage })),
+    );
+
+    const rows = await db.select().from(itemLog).where(eq(itemLog.itemId, itemId));
+    expect(rows.map((row) => row.stage).sort()).toEqual(["capture", "classify", "correct", "extract", "rate"]);
+    await expect(
+      db.execute(sql`insert into item_log (item_id, stage, message) values (${itemId}, 'act', 'Fired')`),
+    ).rejects.toMatchObject({ cause: { code: "23514", constraint: "item_log_stage_check" } });
+  });
+
   it("loads a Workspace's Sources with their Items and Logs through the relations", async () => {
     const seeded = await seed(db);
 

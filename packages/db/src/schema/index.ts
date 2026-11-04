@@ -5,4 +5,8 @@ export * from "./workspace.ts";
 export * from "./instance.ts";
 export * from "./source.ts";
 export * from "./item.ts";
+export * from "./rule.ts";
+export * from "./correction.ts";
+export * from "./profile.ts";
+export * from "./agent.ts";
 export * from "./relations.ts";

@@ -43,6 +43,13 @@
       "when": 1793749659816,
       "tag": "0005_no_duplicate_feeds",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793788608989,
+      "tag": "0006_rule_rating_tables",
+      "breakpoints": true
     }
   ]
 }
