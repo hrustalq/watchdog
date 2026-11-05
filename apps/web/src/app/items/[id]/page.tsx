@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
 import { Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { Button } from "@/components/ui/button";
@@ -17,6 +16,10 @@ import { CorrectCategories } from "./correct-categories";
 import { RunStatus } from "./run-status";
 
 export const metadata: Metadata = { title: "Item · Watchdog" };
+
+// The data is read without Suspense, so the Item is in the first HTML, which is how it and its
+// Correction forms work without JavaScript.
+export const instant = false;
 
 export default function ItemPage({ params, searchParams }: PageProps<"/items/[id]">) {
   return (
@@ -34,9 +37,7 @@ export default function ItemPage({ params, searchParams }: PageProps<"/items/[id
         <span aria-current="page">Item</span>
       </nav>
       <main className="mx-auto flex w-full max-w-3xl flex-col px-4 py-8">
-        <Suspense fallback={<div aria-busy="true" className="h-48 rounded-lg bg-muted" />}>
-          <ItemDetail params={params} searchParams={searchParams} />
-        </Suspense>
+        <ItemDetail params={params} searchParams={searchParams} />
       </main>
     </div>
   );

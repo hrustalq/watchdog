@@ -28,9 +28,10 @@ function Step({ axis, current, step, title }: { axis: Axis; current: number; ste
       size="icon-xs"
       {...(inScale
         ? { type: "submit", name: axis, value: String(level) }
-        : { type: "button", "aria-disabled": true, className: "opacity-50" })}
+        : { type: "button", "aria-disabled": true, className: "hover:bg-transparent dark:hover:bg-transparent" })}
     >
-      <Glyph aria-hidden="true" />
+      {/* Only the glyph dims, so the focus ring stays at full strength. */}
+      <Glyph aria-hidden="true" className={inScale ? undefined : "opacity-50"} />
       <span className="sr-only">
         {inScale
           ? `${lower ? "Lower" : "Raise"} ${axes[axis]} to ${String(level)}: ${title}`
@@ -40,9 +41,15 @@ function Step({ axis, current, step, title }: { axis: Axis; current: number; ste
   );
 }
 
+/** What a Rating's status says once a Correction has gone through. */
+const ratingResult = (severity: number | null, importance: number | null) =>
+  severity === null || importance === null
+    ? "Still unrated"
+    : `Now Severity ${String(severity)} of 5, Importance ${String(importance)} of 5`;
+
 /**
- * A rated Item's chips in a Feed row, each between one-click buttons a level down and up. A row has four
- * buttons rather than the whole scale, so a page of 50 rows stays quiet and quick to tab through.
+ * A rated Item's chips in a Feed row in editing mode, each between one-click buttons a level down and
+ * up. A row has four buttons rather than the whole scale, because each one is a tab stop.
  */
 export function RatingStepper({
   itemId,
@@ -62,7 +69,7 @@ export function RatingStepper({
       className={`relative inline-flex flex-wrap items-center gap-x-2 gap-y-1 ${saving}`}
     >
       <input type="hidden" name="itemId" value={itemId} />
-      <CorrectionStatus />
+      <CorrectionStatus result={ratingResult(severity, importance)} />
       <span className="inline-flex items-center">
         <Step axis="severity" current={severity} step={-1} title={title} />
         {/* The row's link names the chips by these ids as its description. */}
@@ -87,9 +94,8 @@ function Scale({ axis, current }: { axis: Axis; current: number }) {
       {levels.map((level) => (
         <Button
           key={level}
-          type="submit"
-          name={axis}
-          value={String(level)}
+          // The current level posts nothing, and stays focusable after its click made it current.
+          {...(level === current ? { type: "button" } : { type: "submit", name: axis, value: String(level) })}
           size="icon-xs"
           variant={level === current ? "default" : "ghost"}
           aria-current={level === current ? "true" : undefined}
@@ -108,7 +114,14 @@ function Choice({ axis }: { axis: Axis }) {
   return (
     <label className="flex items-center gap-2 text-xs font-medium tracking-[0.01em] text-muted-foreground">
       {axes[axis]}
-      <select name={axis} required defaultValue="" className={`${field} w-auto bg-background text-foreground`}>
+      {/* Empty is where it starts, not a mistake, and the browser still refuses to submit it. */}
+      <select
+        name={axis}
+        required
+        aria-invalid={false}
+        defaultValue=""
+        className={`${field} w-auto bg-background text-foreground invalid:text-muted-foreground`}
+      >
         <option value="" disabled>
           Choose
         </option>
@@ -139,7 +152,7 @@ export function RatingControls({
   return (
     <form action={correctRatingAction} className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${saving}`}>
       <input type="hidden" name="itemId" value={itemId} />
-      <CorrectionStatus />
+      <CorrectionStatus result={ratingResult(severity, importance)} />
       {severity === null || importance === null ? (
         <>
           <Choice axis="severity" />

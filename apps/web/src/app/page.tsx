@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { Suspense } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { eq, source } from "@watchdog/db";
 import { CategoryList, Rating } from "@/components/rating";
@@ -12,17 +11,24 @@ import { RatingStepper } from "./correct-rating";
 import { FeedRefresher } from "./feed-refresher";
 import { modelLink } from "./rules/words";
 
-export default function WorkspacePage({ searchParams }: PageProps<"/">) {
-  return (
-    <Suspense fallback={<WorkspaceSkeleton />}>
-      <WorkspaceScreen searchParams={searchParams} />
-    </Suspense>
-  );
+// The data is read without Suspense, so the Feed is in the first HTML, which is how it and its
+// Correction forms work without JavaScript.
+export const instant = false;
+
+/** The Feed's URL. It holds the view, the page and editing mode, so they survive a reload. */
+function feedHref(latest: boolean, edit: boolean, before?: string) {
+  const query = new URLSearchParams();
+  if (latest) query.set("view", "latest");
+  if (before !== undefined) query.set("before", before);
+  if (edit) query.set("edit", "1");
+  const text = query.toString();
+  return text === "" ? "/" : `/?${text}`;
 }
 
-async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchParams">) {
+export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
   const [{ user, workspace, admin }, params] = await Promise.all([requireWorkspace(), searchParams]);
   const latest = params.view === "latest";
+  const edit = params.edit === "1";
   // A malformed cursor is ignored, so the page is the view's first one and keeps refreshing.
   const latestBefore = latest ? parseCursor(params.before) : undefined;
   const topBefore = latest ? undefined : parseTopCursor(params.before);
@@ -39,8 +45,6 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
   // With no Items the empty state has the Feed's whole story, so Top has no order to explain.
   const caption = before === undefined && !(fallback && items.length === 0);
   const hasModel = fallback && caption && (await hasActiveModel(db, workspace.id));
-  // Top's fallback pages through Latest, so its "Show older" goes there.
-  const olderView = latest || fallback ? "view=latest&" : "";
   return (
     <div className="flex flex-1 flex-col">
       {/* On a phone the links get a row of their own, under the name and Sign out. */}
@@ -82,15 +86,26 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
           </Button>
         </form>
       </header>
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8">
+      {/* The list ignores clicks while its rows settle, which FeedRefresher signals. */}
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8 [&:has([data-settling])_ol]:pointer-events-none">
         {/* On every page, since a Rating can arrive for an Item on an older one. The key starts it
             afresh on each page, so paging isn't announced as Items arriving. It sits first, so it stays
             mounted when the empty state gives way to the list. */}
         <FeedRefresher key={[latest, fallback, before?.id].join()} ids={items.map((row) => row.id)} />
         <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <h1 className="text-headline">Feed</h1>
-            <ViewControl latest={latest} />
+            <div className="flex flex-wrap items-center gap-2">
+              {items.length === 0 ? null : (
+                <Link
+                  href={feedHref(latest, !edit, typeof params.before === "string" ? params.before : undefined)}
+                  className={buttonVariants({ variant: edit ? "default" : "outline" })}
+                >
+                  {edit ? "Done" : "Correct Ratings"}
+                </Link>
+              )}
+              <ViewControl latest={latest} edit={edit} />
+            </div>
           </div>
           {caption ? (
             <p className="text-sm text-muted-foreground">
@@ -100,17 +115,18 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
           {before === undefined ? null : (
             // The negative margin lines the link's text up with the heading above it.
             <Link
-              href={latest ? "/?view=latest" : "/"}
+              href={feedHref(latest, edit)}
               className={`${buttonVariants({ variant: "ghost" })} -ml-3 self-start`}
             >
               {latest ? "Back to the newest" : "Back to the first page"}
             </Link>
           )}
         </div>
-        <FeedBody items={items} paged={before !== undefined} sources={sources} />
+        <FeedBody items={items} paged={before !== undefined} sources={sources} edit={edit} />
         {older === null ? null : (
           <Link
-            href={`/?${olderView}before=${older}`}
+            // Top's fallback pages through Latest, so its "Show older" goes there.
+            href={feedHref(latest || fallback, edit, older)}
             className={`${buttonVariants({ variant: "outline" })} self-center`}
           >
             Show older
@@ -122,7 +138,7 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
 }
 
 /** Top or Latest. The URL holds the choice, so it survives a reload and "Show older". */
-function ViewControl({ latest }: { latest: boolean }) {
+function ViewControl({ latest, edit }: { latest: boolean; edit: boolean }) {
   const view = (href: string, label: string, selected: boolean) => (
     <Link
       href={href}
@@ -135,8 +151,8 @@ function ViewControl({ latest }: { latest: boolean }) {
   );
   return (
     <nav aria-label="Feed view" className="flex gap-1">
-      {view("/", "Top", !latest)}
-      {view("/?view=latest", "Latest", latest)}
+      {view(feedHref(false, edit), "Top", !latest)}
+      {view(feedHref(true, edit), "Latest", latest)}
     </nav>
   );
 }
@@ -160,8 +176,18 @@ function FeedCaption({ latest, fallback, hasModel }: { latest: boolean; fallback
   );
 }
 
-function FeedBody({ items, paged, sources }: { items: FeedItem[]; paged: boolean; sources: number }) {
-  if (items.length > 0) return <FeedList items={items} />;
+function FeedBody({
+  items,
+  paged,
+  sources,
+  edit,
+}: {
+  items: FeedItem[];
+  paged: boolean;
+  sources: number;
+  edit: boolean;
+}) {
+  if (items.length > 0) return <FeedList items={items} edit={edit} />;
   if (paged) return <p className="text-sm text-muted-foreground">No older Items.</p>;
   if (sources === 0) {
     return (
@@ -194,7 +220,7 @@ function EmptyState({ title, children }: { title: string; children: React.ReactN
   );
 }
 
-function FeedList({ items }: { items: FeedItem[] }) {
+function FeedList({ items, edit }: { items: FeedItem[]; edit: boolean }) {
   return (
     <ol className="divide-y overflow-hidden rounded-lg border">
       {items.map((row) => (
@@ -206,9 +232,9 @@ function FeedList({ items }: { items: FeedItem[] }) {
               <Link
                 href={`/items/${row.id}`}
                 aria-describedby={
-                  row.severity === null || row.importance === null
-                    ? `rating-${row.id}`
-                    : `rating-${row.id}-severity rating-${row.id}-importance`
+                  edit && row.severity !== null && row.importance !== null
+                    ? `rating-${row.id}-severity rating-${row.id}-importance`
+                    : `rating-${row.id}`
                 }
                 className="rounded-sm outline-none after:absolute after:inset-0 focus-visible:after:ring-3 focus-visible:after:ring-inset focus-visible:after:ring-ring/30"
               >
@@ -232,25 +258,25 @@ function FeedList({ items }: { items: FeedItem[] }) {
             </p>
           )}
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium tracking-[0.01em]">
-            {row.severity === null || row.importance === null ? (
-              <>
-                <Rating id={`rating-${row.id}`} severity={row.severity} importance={row.importance} />
-                {/* An unrated Item takes both axes at once, which needs more room than a row has. */}
-                <Link
-                  href={`/items/${row.id}#rating`}
-                  className="relative rounded-sm underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
-                >
-                  Rate<span className="sr-only"> {row.title ?? "Untitled Item"}</span>
-                </Link>
-              </>
-            ) : (
+            {edit && row.severity !== null && row.importance !== null ? (
               <RatingStepper
                 itemId={row.id}
                 title={row.title ?? "Untitled Item"}
                 severity={row.severity}
                 importance={row.importance}
               />
+            ) : (
+              <Rating id={`rating-${row.id}`} severity={row.severity} importance={row.importance} />
             )}
+            {edit && (row.severity === null || row.importance === null) ? (
+              // An unrated Item takes both axes at once, which needs more room than a row has.
+              <Link
+                href={`/items/${row.id}#rating`}
+                className="relative inline-flex min-h-6 items-center rounded-sm underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+              >
+                Rate<span className="sr-only"> {row.title ?? "Untitled Item"}</span>
+              </Link>
+            ) : null}
             <CategoryList categories={row.categories} />
             <span className="min-w-0 break-words text-muted-foreground">{row.sourceName}</span>
             {row.isBackfill ? (
@@ -263,14 +289,3 @@ function FeedList({ items }: { items: FeedItem[] }) {
   );
 }
 
-function WorkspaceSkeleton() {
-  return (
-    <div className="flex flex-1 flex-col" aria-busy="true">
-      <header className="flex h-12 items-center justify-between border-b px-4">
-        <div className="h-4 w-32 rounded-sm bg-muted" />
-        <div className="h-8 w-20 rounded-lg bg-muted" />
-      </header>
-      <main className="flex-1" />
-    </div>
-  );
-}

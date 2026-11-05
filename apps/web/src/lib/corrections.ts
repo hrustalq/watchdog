@@ -52,6 +52,16 @@ async function record(
       // The Agent reads the most recent Corrections by created_at, and this is the newest judgement.
       set: { ...copies, after, createdAt: sql`now()` },
     });
+  // Back at the original, nothing is corrected, so a reverted misclick doesn't reach the Agent.
+  await tx
+    .delete(correction)
+    .where(
+      and(
+        eq(correction.itemId, target.id),
+        eq(correction.kind, kind),
+        sql`${correction.before} = ${correction.after}`,
+      ),
+    );
   await tx.insert(itemLog).values({ itemId: target.id, stage: "correct", message, data: { kind, before, after } });
 }
 

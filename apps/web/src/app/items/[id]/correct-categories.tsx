@@ -10,11 +10,12 @@ import { SubmitButton } from "../../sign-in/submit-button";
  * the box would otherwise press the first remove button.
  */
 export function CorrectCategories({ itemId, categories }: { itemId: string; categories: string[] }) {
+  const result = `Categories now: ${categories.length === 0 ? "none" : categories.join(", ")}`;
   return (
     <div className="flex flex-col items-start gap-2">
       <form action={correctCategoriesAction} className="has-data-pending:opacity-60">
         <input type="hidden" name="itemId" value={itemId} />
-        <CorrectionStatus />
+        <CorrectionStatus result={result} />
         {categories.length === 0 ? (
           <span className="text-muted-foreground">None</span>
         ) : (
@@ -36,11 +37,12 @@ export function CorrectCategories({ itemId, categories }: { itemId: string; cate
       </form>
       <form action={correctCategoriesAction} className="flex items-center gap-2 has-data-pending:opacity-60">
         <input type="hidden" name="itemId" value={itemId} />
-        <CorrectionStatus />
+        <CorrectionStatus result={result} />
         <input
           type="text"
           name="add"
           required
+          aria-invalid={false}
           maxLength={100}
           autoComplete="off"
           aria-label="Add a Category"

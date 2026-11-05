@@ -207,6 +207,21 @@ describe("Corrections", () => {
       ]);
     });
 
+    it("drops the Correction when the user goes back to the original, and keeps the Item corrected", async () => {
+      const seeded = await seed();
+      const itemId = await capture(seeded, { severity: 4, importance: 3 });
+      await correctRating(db, seeded.workspaceId, itemId, { severity: 2 });
+
+      await correctRating(db, seeded.workspaceId, itemId, { severity: 4 });
+
+      expect(await correctionsOf(seeded.workspaceId)).toEqual([]);
+      expect((await reload(itemId)).ratingCorrectedAt).not.toBeNull();
+      expect((await logOf(itemId)).map((row) => row.message)).toEqual([
+        "Corrected the Rating from Severity 4, Importance 3 to Severity 2, Importance 3",
+        "Corrected the Rating from Severity 2, Importance 3 to Severity 4, Importance 3",
+      ]);
+    });
+
     it("changes nothing when the level is the one the Item already has", async () => {
       const seeded = await seed();
       const itemId = await capture(seeded, { severity: 4, importance: 3 });
@@ -279,6 +294,18 @@ describe("Corrections", () => {
       expect(await correctionsOf(seeded.workspaceId)).toMatchObject([
         { before: { categories: ["news"] }, after: { categories: ["lead"] } },
       ]);
+    });
+
+    it("drops the Correction when the Categories go back to the original", async () => {
+      const seeded = await seed();
+      const itemId = await capture(seeded);
+      await addCategories(itemId, "news");
+      await correctCategories(db, seeded.workspaceId, itemId, { add: "lead" });
+
+      await correctCategories(db, seeded.workspaceId, itemId, { remove: "lead" });
+
+      expect(await correctionsOf(seeded.workspaceId)).toEqual([]);
+      expect((await reload(itemId)).categoriesCorrectedAt).not.toBeNull();
     });
 
     it("keeps a Rating Correction and a Category Correction as separate rows", async () => {
