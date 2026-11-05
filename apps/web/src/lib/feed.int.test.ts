@@ -476,7 +476,7 @@ describe("Feed", () => {
       }
     });
 
-    it("gives Latest a cursor it ignores from Top", () => {
+    it("ignores a Top cursor in Latest", () => {
       expect(parseCursor(`9_2026-11-03T00:00:00.000000Z_${crypto.randomUUID()}`)).toBeUndefined();
     });
 

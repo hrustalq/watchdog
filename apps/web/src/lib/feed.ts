@@ -53,7 +53,7 @@ export function parseTopCursor(value: unknown) {
   return valid ? { score, captured, id } : undefined;
 }
 
-export type TopCursor = NonNullable<ReturnType<typeof parseTopCursor>>;
+type TopCursor = NonNullable<ReturnType<typeof parseTopCursor>>;
 
 /**
  * One page of rows in the given order, and the cursor for the page after it (null on the last).
