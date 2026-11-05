@@ -1417,7 +1417,7 @@ describe("processItem", () => {
         after: {},
       });
 
-      const summariesOf = async (workspaceId: string) =>
+      const summariesOf = (workspaceId: string) =>
         db
           .select({ kind: correction.kind, itemId: correction.itemId, summary: correction.itemSummary })
           .from(correction)
