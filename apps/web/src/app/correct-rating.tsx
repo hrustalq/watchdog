@@ -47,14 +47,11 @@ function Step({ axis, current, step, title }: { axis: Axis; current: number; ste
 export function RatingStepper({
   itemId,
   title,
-  chipId,
   severity,
   importance,
 }: {
   itemId: string;
   title: string;
-  /** Each chip's id starts with this, for the row's link to name them as its description. */
-  chipId: string;
   severity: number;
   importance: number;
 }) {
@@ -68,12 +65,13 @@ export function RatingStepper({
       <CorrectionStatus />
       <span className="inline-flex items-center">
         <Step axis="severity" current={severity} step={-1} title={title} />
-        <SeverityChip id={`${chipId}-severity`} value={severity} />
+        {/* The row's link names the chips by these ids as its description. */}
+        <SeverityChip id={`rating-${itemId}-severity`} value={severity} />
         <Step axis="severity" current={severity} step={1} title={title} />
       </span>
       <span className="inline-flex items-center">
         <Step axis="importance" current={importance} step={-1} title={title} />
-        <ImportanceChip id={`${chipId}-importance`} value={importance} />
+        <ImportanceChip id={`rating-${itemId}-importance`} value={importance} />
         <Step axis="importance" current={importance} step={1} title={title} />
       </span>
     </form>

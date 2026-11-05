@@ -247,7 +247,6 @@ function FeedList({ items }: { items: FeedItem[] }) {
               <RatingStepper
                 itemId={row.id}
                 title={row.title ?? "Untitled Item"}
-                chipId={`rating-${row.id}`}
                 severity={row.severity}
                 importance={row.importance}
               />

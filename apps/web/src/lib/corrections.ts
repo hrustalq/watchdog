@@ -19,19 +19,24 @@ const maxCategoryLength = 100;
 /** Locks the Item, because a job can be storing an Agent's answer to it. */
 async function lockItem(tx: Tx, workspaceId: string, itemId: string) {
   const [row] = await tx
-    .select({ title: item.title, summary: item.summary, severity: item.severity, importance: item.importance })
+    .select({
+      id: item.id,
+      workspaceId: item.workspaceId,
+      title: item.title,
+      summary: item.summary,
+      severity: item.severity,
+      importance: item.importance,
+    })
     .from(item)
     .where(and(eq(item.workspaceId, workspaceId), eq(item.id, itemId)))
     .for("update");
   return row;
 }
 
-type Target = NonNullable<Awaited<ReturnType<typeof lockItem>>> & { id: string; workspaceId: string };
-
 /** Writes the Correction and its Log row. A second one of a kind keeps the original `before`. */
 async function record(
   tx: Tx,
-  target: Target,
+  target: NonNullable<Awaited<ReturnType<typeof lockItem>>>,
   kind: "rating" | "categories",
   before: unknown,
   after: unknown,
@@ -50,12 +55,7 @@ async function record(
   await tx.insert(itemLog).values({ itemId: target.id, stage: "correct", message, data: { kind, before, after } });
 }
 
-interface Levels {
-  severity: number | null;
-  importance: number | null;
-}
-
-const ratingWords = ({ severity, importance }: Levels) =>
+const ratingWords = ({ severity, importance }: { severity: number | null; importance: number | null }) =>
   severity === null || importance === null
     ? "Unrated"
     : `Severity ${String(severity)}, Importance ${String(importance)}`;
@@ -86,7 +86,7 @@ export function correctRating(
       .set({ ...after, ratingCorrectedAt: sql`now()` })
       .where(eq(item.id, itemId));
     const message = `Corrected the Rating from ${ratingWords(before)} to ${ratingWords(after)}`;
-    await record(tx, { ...locked, id: itemId, workspaceId }, "rating", before, after, message);
+    await record(tx, locked, "rating", before, after, message);
   });
 }
 
@@ -131,7 +131,7 @@ export function correctCategories(
     await tx.update(item).set({ categoriesCorrectedAt: sql`now()` }).where(eq(item.id, itemId));
     await record(
       tx,
-      { ...locked, id: itemId, workspaceId },
+      locked,
       "categories",
       { categories: current },
       { categories },
