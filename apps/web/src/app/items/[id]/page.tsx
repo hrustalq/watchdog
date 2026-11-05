@@ -11,6 +11,7 @@ import { kindLabel, modelLink } from "../../rules/words";
 import { Notice } from "../../sign-in/notice";
 import { SubmitButton } from "../../sign-in/submit-button";
 import { runExtractorRuleAction } from "./actions";
+import { RunStatus } from "./run-status";
 
 export const metadata: Metadata = { title: "Item · Watchdog" };
 
@@ -99,11 +100,17 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
         {found.fields.length === 0 ? (
           <p className="text-sm text-muted-foreground">No fields on this Item yet.</p>
         ) : (
-          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 font-mono text-[0.8125rem]">
-            {found.fields.map(({ name, value }) => (
+          // A field's name can be 64 characters with nowhere to wrap, so a phone stacks it on its value.
+          <dl className="grid gap-x-6 gap-y-1 font-mono text-[0.8125rem] sm:grid-cols-[minmax(0,14rem)_1fr]">
+            {found.fields.map(({ name, value, extractorRule }) => (
               <div key={name} className="contents">
-                <dt className="text-muted-foreground">{name}</dt>
-                <dd className="min-w-0 break-words">{Array.isArray(value) ? value.join(", ") : String(value)}</dd>
+                <dt className="break-all text-muted-foreground">{name}</dt>
+                <dd className="mb-1 min-w-0 break-words sm:mb-0">
+                  {Array.isArray(value) ? value.join(", ") : String(value)}
+                  {extractorRule === null ? null : (
+                    <span className="ml-2 font-sans text-xs text-muted-foreground">from {extractorRule.name}</span>
+                  )}
+                </dd>
               </div>
             ))}
           </dl>
@@ -114,7 +121,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
           <h2 id="run-rule" className="text-title">
             Run an Extractor Rule
           </h2>
-          <p className="text-sm text-muted-foreground">
+          <p className="max-w-[70ch] text-sm text-muted-foreground">
             Runs on this Item even if it doesn&apos;t meet the rule&apos;s Condition, and replaces what that rule found
             before. An Agent-backed rule makes one call to your model, which your provider bills as usual.
           </p>
@@ -161,7 +168,11 @@ function RunOutcome({ message, failed }: { message: string; failed: boolean }) {
   return failed ? (
     <Notice role="alert" className="flex items-start gap-2 text-sm text-alarm">
       <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
-      <span className="min-w-0 break-words">{message}</span>
+      <span className="min-w-0 break-words">
+        {message}
+        {/* The reason is someone else's sentence, and may not end in a full stop. */}
+        <span className="block text-muted-foreground">What this rule found before stays as it was.</span>
+      </span>
     </Notice>
   ) : (
     <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm break-words">
@@ -187,10 +198,18 @@ function RunRule({
   return (
     <li className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex min-w-0 flex-col gap-0.5">
-        <p className="text-sm font-medium break-words">{rule.name}</p>
+        <p className="text-sm font-medium break-words">
+          <Link
+            href={`/rules/extractor/${rule.id}`}
+            className="rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+          >
+            {rule.name}
+          </Link>
+        </p>
         <p className="text-xs font-medium tracking-[0.01em] text-muted-foreground">
           {kindLabel[rule.kind]}
-          {rule.enabled ? null : " · Disabled for new Items"}
+          {rule.kind === "agent" && !needsModel ? " · One model call" : null}
+          {rule.enabled ? null : " · Off for new Items"}
         </p>
         {needsModel ? (
           <p className="text-sm text-muted-foreground">
@@ -210,6 +229,7 @@ function RunRule({
           <SubmitButton variant="outline" pendingLabel="Running…" className="sm:w-auto">
             {label}
           </SubmitButton>
+          <RunStatus name={rule.name} />
         </form>
       )}
     </li>

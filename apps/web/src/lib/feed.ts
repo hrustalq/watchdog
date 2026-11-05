@@ -81,15 +81,19 @@ export async function feedPage(db: Db, workspaceId: string, before?: FeedCursor)
 
 export type FeedItem = Awaited<ReturnType<typeof feedPage>>["items"][number];
 
+const isManual = (data: unknown): data is { manual: unknown } =>
+  typeof data === "object" && data !== null && "manual" in data;
+
 /**
  * The manual run a URL names, from the Item's own Log, so a URL can only point at what this page
- * already shows. A provider's reason is too long and too private to go in the URL itself.
+ * already shows. A provider's reason is too long and too private to go in the URL itself. Only the
+ * newest run counts: Back mustn't put a success above a later failure.
  */
 export function manualRunIn(log: { id: number; message: string; data: unknown }[], runId: unknown) {
-  const row = log.find(({ id }) => String(id) === runId);
-  const data = row?.data;
-  if (row === undefined || typeof data !== "object" || data === null || !("manual" in data)) return undefined;
-  return { id: row.id, message: row.message, failed: "failed" in data };
+  const newest = log.findLast((row) => isManual(row.data));
+  const data = newest?.data;
+  if (newest === undefined || String(newest.id) !== runId || !isManual(data)) return undefined;
+  return { id: newest.id, message: newest.message, failed: "failed" in data };
 }
 
 /** An Item's envelope with its Source's name, its extracted fields and its Log, oldest first, or undefined. */
@@ -102,6 +106,7 @@ export function itemWithLog(db: Db, workspaceId: string, itemId: string) {
       source: { columns: { name: true } },
       fields: {
         columns: { name: true, value: true },
+        with: { extractorRule: { columns: { name: true } } },
         orderBy: (field, { asc }) => [asc(field.name)],
       },
       log: {

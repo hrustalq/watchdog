@@ -5,6 +5,7 @@ import {
   createDb,
   type Db,
   eq,
+  extractorRule,
   item,
   itemField,
   itemLog,
@@ -259,19 +260,24 @@ describe("Feed", () => {
     ]);
   });
 
-  it("loads an Item's extracted fields by name", async () => {
+  it("loads an Item's extracted fields by name, each with the rule that filled it", async () => {
     const seeded = await seed();
     const [id] = await insertItems(seeded, [{}]);
+    const [rule] = await db
+      .insert(extractorRule)
+      .values({ workspaceId: seeded.workspaceId, name: "CVEs", kind: "deterministic", definition: {} })
+      .returning();
     await db.insert(itemField).values([
+      // A deleted rule leaves its field with no rule.
       { itemId: present(id), name: "tags", value: ["a", "b"] },
-      { itemId: present(id), name: "cve", value: "CVE-1" },
+      { itemId: present(id), name: "cve", value: "CVE-1", extractorRuleId: present(rule).id },
     ]);
 
     const loaded = await itemWithLog(db, seeded.workspaceId, present(id));
 
     expect(loaded?.fields).toEqual([
-      { name: "cve", value: "CVE-1" },
-      { name: "tags", value: ["a", "b"] },
+      { name: "cve", value: "CVE-1", extractorRule: { name: "CVEs" } },
+      { name: "tags", value: ["a", "b"], extractorRule: null },
     ]);
   });
 
