@@ -204,6 +204,14 @@ export const removeModel = (db: Db, workspaceId: string) =>
     return archiveModel(tx, workspaceId);
   });
 
+export type StoredKey = "none" | "set" | "unreadable";
+
+function storedKey(ciphertext: string | null, encryptionKey: Buffer): StoredKey {
+  const apiKey = readApiKey(ciphertext, encryptionKey);
+  if (apiKey === undefined) return "unreadable";
+  return apiKey === null ? "none" : "set";
+}
+
 /**
  * The Workspace's model as the screen shows it, or undefined. It tries the key on every read, so a
  * changed WATCHDOG_ENCRYPTION_KEY shows before any call fails, and in a Workspace with no calls yet.
@@ -223,11 +231,7 @@ export async function getModel(db: Db, encryptionKey: Buffer, workspaceId: strin
     .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
   if (row === undefined) return undefined;
   const { apiKeyCiphertext, ...model } = row;
-  return {
-    ...model,
-    hasKey: apiKeyCiphertext !== null,
-    keyUnreadable: readApiKey(apiKeyCiphertext, encryptionKey) === undefined,
-  };
+  return { ...model, storedKey: storedKey(apiKeyCiphertext, encryptionKey) };
 }
 
 /**

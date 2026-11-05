@@ -8,6 +8,7 @@ import {
   lastFailedCall,
   modelProblems,
   providerTypes,
+  type StoredKey,
   testOutcomes,
   type TestOutcome,
 } from "@/lib/model";
@@ -102,7 +103,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
     <>
       {param("saved") === "1" ? (
         <Notice role="status" className={noticeClass}>
-          {model?.keyUnreadable === true
+          {model?.storedKey === "unreadable"
             ? "Model saved, but its API key is still unreadable."
             : "Model saved. Test the connection to check that it works."}
         </Notice>
@@ -132,17 +133,17 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
             <p className="text-sm text-muted-foreground">
               {providerTypes.find(({ value }) => value === model.providerType)?.label}
               {" · "}
-              {keyStatus(model)}
+              {keyStatus[model.storedKey]}
             </p>
           </div>
           {/* The URL can outlive the test: "Connected" mustn't sit above a newer failure. */}
           <TestResult
-            test={test === "ok" && (failure?.recovered === false || model.keyUnreadable) ? undefined : test}
+            test={test === "ok" && (failure?.recovered === false || model.storedKey === "unreadable") ? undefined : test}
             modelName={model.modelName}
           />
-          {model.keyUnreadable ? <UnreadableKey justTested={test === "unreadable-key"} mode={mode} /> : null}
+          {model.storedKey === "unreadable" ? <UnreadableKey justTested={test === "unreadable-key"} mode={mode} /> : null}
           {/* An older failure, or "A later call worked", says nothing about a key that can't be read. */}
-          {failure === undefined || model.keyUnreadable ? null : (
+          {failure === undefined || model.storedKey === "unreadable" ? null : (
             <FailedCall
               failure={failure}
               // A test that just failed is why the user is reading this line.
@@ -152,7 +153,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
           )}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             {/* A test can't help while the key is unreadable: it makes no call, and the screen already knows. */}
-            {model.keyUnreadable ? (
+            {model.storedKey === "unreadable" ? (
               <a href="#api-key" className={`${buttonVariants()} w-full sm:w-auto`}>
                 Enter the key again
               </a>
@@ -182,8 +183,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
         <ModelForm
           key={JSON.stringify(values)}
           values={values}
-          hasKey={model?.hasKey === true}
-          keyUnreadable={model?.keyUnreadable === true}
+          storedKey={model?.storedKey ?? "none"}
           problem={problem}
           keyTyped={param("keyTyped") !== ""}
         />
@@ -196,15 +196,15 @@ function formIntro(model: Awaited<ReturnType<typeof getModel>>) {
   if (model === undefined) {
     return "Bring your own model to get Items rated and Agent-backed rules running. Without one, deterministic rules still run and Items stay unrated.";
   }
-  return model.keyUnreadable
-    ? "Enter the API key below. Leaving the rest as it is keeps this model."
-    : "A new provider type, base URL or model name replaces this model. Usage history keeps the old one.";
+  const replaces = "A new provider type, base URL or model name replaces this model. Usage history keeps the old one.";
+  return model.storedKey === "unreadable" ? `Enter the API key below, and leave the rest to keep this model. ${replaces}` : replaces;
 }
 
-function keyStatus({ hasKey, keyUnreadable }: { hasKey: boolean; keyUnreadable: boolean }) {
-  if (keyUnreadable) return "API key unreadable";
-  return hasKey ? "API key set" : "No API key";
-}
+const keyStatus: Record<StoredKey, string> = {
+  none: "No API key",
+  set: "API key set",
+  unreadable: "API key unreadable",
+};
 
 const blockedHint = (mode: "hosted" | "self-hosted") =>
   mode === "self-hosted"
@@ -257,7 +257,7 @@ const UnreadableKey = ({ justTested, mode }: { justTested: boolean; mode: "hoste
           , which happens when <span className="font-mono text-[0.8125rem]">WATCHDOG_ENCRYPTION_KEY</span> changes
         </>
       ) : null}
-      . New Items stay unrated until you enter the key again, and deterministic rules keep running.
+      . Items captured until you enter the key again stay unrated, and deterministic rules keep running.
       {mode === "self-hosted" ? " If the change was a mistake, put the old value back instead." : null}
     </span>
   </AlarmLine>

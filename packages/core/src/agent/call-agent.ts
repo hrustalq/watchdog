@@ -19,10 +19,12 @@ globalThis.AI_SDK_LOG_WARNINGS = false;
 
 const rowStatus = { invalid_output: "invalid_output", blocked: "error", error: "error" } as const;
 
-export interface AgentFailure {
+type AttemptReason = keyof typeof rowStatus;
+
+export interface AgentFailure<Reason = AttemptReason | "unreadable_key"> {
   ok: false;
   /** An attempt's reasons, plus `unreadable_key`: no provider was reached, so nothing is metered. */
-  reason: keyof typeof rowStatus | "unreadable_key";
+  reason: Reason;
   message: string;
 }
 export type AgentResult<Value> = { ok: true; output: Value } | AgentFailure;
@@ -127,7 +129,7 @@ export async function callAgent<Schema extends z.ZodObject>(
   async function attempt(number: number, text: string) {
     const started = performance.now();
     let usage;
-    let result: AgentResult<z.output<Schema>> & { reason?: keyof typeof rowStatus };
+    let result: { ok: true; output: z.output<Schema> } | AgentFailure<AttemptReason>;
     try {
       const response = await generateText({
         model,

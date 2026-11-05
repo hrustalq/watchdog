@@ -1,5 +1,5 @@
 import { dataBox, field, fieldError, label as labelClass } from "@/components/field-classes";
-import { type ModelProblem, modelProblemMessage, providerTypes } from "@/lib/model";
+import { type ModelProblem, modelProblemMessage, providerTypes, type StoredKey } from "@/lib/model";
 import { SubmitButton } from "../sign-in/submit-button";
 import { saveModelAction } from "./actions";
 
@@ -12,14 +12,11 @@ export interface ModelFormValues {
   outputPrice: string;
 }
 
-function keyHint(hasKey: boolean, keyUnreadable: boolean) {
-  if (keyUnreadable) {
-    return "Left blank, the unreadable key stays.";
-  }
-  return hasKey
-    ? "Changing the provider type or the host needs the key again, because Watchdog won't send a key to another address."
-    : "Most hosted providers need one. Leave it blank if this model doesn't.";
-}
+const keyHint: Record<StoredKey, string> = {
+  none: "Most hosted providers need one. Leave it blank if this model doesn't.",
+  set: "Changing the provider type or the host needs the key again, because Watchdog won't send a key to another address.",
+  unreadable: "Left blank on the same provider and host, the unreadable key stays.",
+};
 
 /**
  * Sets the Workspace's model. The key field is never filled in: the page only knows whether a key
@@ -28,19 +25,16 @@ function keyHint(hasKey: boolean, keyUnreadable: boolean) {
  */
 export function ModelForm({
   values,
-  hasKey,
-  keyUnreadable,
+  storedKey,
   problem,
   keyTyped,
 }: {
   values: ModelFormValues;
-  hasKey: boolean;
-  keyUnreadable: boolean;
+  storedKey: StoredKey;
   problem: ModelProblem | undefined;
   /** The last submit held a key, and it's gone: a refused form doesn't carry it back. */
   keyTyped: boolean;
 }) {
-  const keepable = hasKey && !keyUnreadable;
   const invalid = (name: ModelProblem) => ({
     "aria-invalid": problem === name,
     "aria-describedby": `${name}-note`,
@@ -107,7 +101,7 @@ export function ModelForm({
 
       <div className="flex flex-col gap-2">
         <label htmlFor="api-key" className={labelClass}>
-          API key {keyUnreadable ? null : <span className="font-normal text-muted-foreground">(optional)</span>}
+          API key {storedKey === "unreadable" ? null : <span className="font-normal text-muted-foreground">(optional)</span>}
         </label>
         <input
           id="api-key"
@@ -115,7 +109,7 @@ export function ModelForm({
           type="password"
           autoComplete="off"
           spellCheck={false}
-          placeholder={keepable ? "Leave blank to keep the current key" : undefined}
+          placeholder={storedKey === "set" ? "Leave blank to keep the current key" : undefined}
           {...invalid("api-key")}
           className={`${field} ${dataBox}`}
         />
@@ -125,14 +119,14 @@ export function ModelForm({
             {keyTyped ? (
               <strong className="font-medium text-foreground">
                 The key you typed wasn&apos;t saved. Enter it again
-                {keepable ? ", or leave this blank to keep the current one" : ""}.{" "}
+                {storedKey === "set" ? ", or leave this blank to keep the current one" : ""}.{" "}
               </strong>
             ) : null}
-            {keyUnreadable && !keyTyped ? (
+            {storedKey === "unreadable" && !keyTyped ? (
               <strong className="font-medium text-foreground">Enter this model&apos;s key and save. </strong>
             ) : null}
             Stored encrypted, and never shown again.{" "}
-            {keyHint(hasKey, keyUnreadable)}
+            {keyHint[storedKey]}
           </>,
         )}
       </div>

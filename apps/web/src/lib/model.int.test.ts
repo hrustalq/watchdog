@@ -120,7 +120,7 @@ describe("the Model screen", () => {
 
       const shown = await getModel(db, encryptionKey, workspaceId);
 
-      expect(shown?.hasKey).toBe(true);
+      expect(shown?.storedKey).toBe("set");
       expect(JSON.stringify(shown)).not.toContain(apiKey);
       expect(JSON.stringify(shown)).not.toContain(present(apiKeyCiphertext));
     });
@@ -132,8 +132,8 @@ describe("the Model screen", () => {
       const readable = await getModel(db, encryptionKey, workspaceId);
       const unreadable = await getModel(db, Buffer.alloc(32, 9), workspaceId);
 
-      expect(readable).toMatchObject({ hasKey: true, keyUnreadable: false });
-      expect(unreadable).toMatchObject({ hasKey: true, keyUnreadable: true });
+      expect(readable?.storedKey).toBe("set");
+      expect(unreadable?.storedKey).toBe("unreadable");
       await expect(lastFailedCall(db, workspaceId)).resolves.toBeUndefined();
     });
 
@@ -144,14 +144,14 @@ describe("the Model screen", () => {
 
       await saveModel(db, changed, workspaceId, input({ apiKey }));
 
-      expect(await getModel(db, changed, workspaceId)).toMatchObject({ hasKey: true, keyUnreadable: false });
+      expect((await getModel(db, changed, workspaceId))?.storedKey).toBe("set");
     });
 
     it("has nothing to read when a model has no key", async () => {
       const workspaceId = await newWorkspace();
       await save(workspaceId, { baseUrl: "http://ollama.test:11434/v1" });
 
-      expect(await getModel(db, Buffer.alloc(32, 9), workspaceId)).toMatchObject({ hasKey: false, keyUnreadable: false });
+      expect((await getModel(db, Buffer.alloc(32, 9), workspaceId))?.storedKey).toBe("none");
     });
 
     it("lets a local model have no key", async () => {
@@ -160,7 +160,7 @@ describe("the Model screen", () => {
       await save(workspaceId, { baseUrl: "http://ollama.test:11434/v1" });
 
       expect(await active(workspaceId)).toMatchObject({ apiKeyCiphertext: null });
-      expect((await getModel(db, encryptionKey, workspaceId))?.hasKey).toBe(false);
+      expect((await getModel(db, encryptionKey, workspaceId))?.storedKey).toBe("none");
     });
 
     it("stores the prices and the flag, with a blank price as none", async () => {
