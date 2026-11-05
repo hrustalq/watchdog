@@ -1,0 +1,60 @@
+import { X } from "lucide-react";
+import { field } from "@/components/field-classes";
+import { maxCategoryLength } from "@/lib/corrections";
+import { correctCategoriesAction } from "../../actions";
+import { CorrectionButton, CorrectionStatus } from "../../correction-status";
+import { SubmitButton } from "../../sign-in/submit-button";
+
+/**
+ * The Item's Categories, each with its remove button, and a box to add one. Two forms, because Enter in
+ * the box would otherwise press the first remove button.
+ */
+export function CorrectCategories({ itemId, categories }: { itemId: string; categories: string[] }) {
+  const result = `Categories now: ${categories.length === 0 ? "none" : categories.join(", ")}`;
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <form action={correctCategoriesAction} className="has-data-pending:opacity-60">
+        <input type="hidden" name="itemId" value={itemId} />
+        <CorrectionStatus result={result} />
+        {categories.length === 0 ? (
+          <span className="text-muted-foreground">None</span>
+        ) : (
+          <ul aria-label="Categories" className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {categories.map((category) => (
+              <li
+                key={category}
+                className="flex min-w-0 items-center gap-0.5 rounded-sm border pl-1.5 font-mono text-xs break-all"
+              >
+                {category}
+                <CorrectionButton type="submit" name="remove" value={category} variant="ghost" size="icon-xs">
+                  <X aria-hidden="true" />
+                  <span className="sr-only">Remove the Category {category}</span>
+                </CorrectionButton>
+              </li>
+            ))}
+          </ul>
+        )}
+      </form>
+      <form action={correctCategoriesAction} className="flex items-center gap-2 has-data-pending:opacity-60">
+        <input type="hidden" name="itemId" value={itemId} />
+        <CorrectionStatus result={result} />
+        <input
+          type="text"
+          name="add"
+          required
+          aria-invalid={false}
+          maxLength={maxCategoryLength}
+          pattern=".*\S.*"
+          title="A Category can't be blank."
+          autoComplete="off"
+          aria-label="Add a Category"
+          placeholder="Add a Category"
+          className={`${field} w-48`}
+        />
+        <SubmitButton variant="outline" pendingLabel="Adding…" className="w-auto">
+          Add
+        </SubmitButton>
+      </form>
+    </div>
+  );
+}

@@ -275,8 +275,13 @@ Character: precise and quiet; the action is clear from the label and position, n
 ### Category chip (`apps/web/src/components/rating.tsx`)
 - **Style:** `rounded-sm`, hairline border, Data type at 0.75rem, no fill. Categories are open-ended, so they get no signal or chart color.
 
+### Correction controls (`apps/web/src/app/correct-rating.tsx`, `apps/web/src/app/items/[id]/correct-categories.tsx`)
+- **Feed row:** plain chips by default, because a Correction is rare and a row is for scanning. "Correct Ratings" next to Top and Latest turns on editing mode, which is in the URL (`?edit=1`), and "Done" turns it off. In editing mode each chip sits between two 24px ghost buttons, a level down and a level up. A row gets four buttons rather than the whole scale, because each is a tab stop. At either end of the scale the button stays focusable and inert, with only its glyph dimmed, so reaching the end loses neither focus nor the focus ring. An unrated row shows a "Rate" link to the Item instead.
+- **Item:** always shows its controls. A rated Item has the whole scale on each axis as 24px buttons, one click to any level, with the current level in Panel Ink. An unrated Item has two selects and "Save Rating", because a Rating has both axes and a guess at the other one would be taught to the Agent as the user's judgement. Each Category chip has its own remove button, and a text box adds one.
+- **States:** a form dims to 60% while it saves, and its buttons do nothing until the save is done, because each posts a level worked out from what the page shows. A screen reader hears "Saving the Correction" and then the resulting state, such as "Now Severity 4 of 5, Importance 3 of 5". When rows move, the list ignores clicks for 500ms, so a repeat click can't land on a different Item, and editing mode pauses the Feed's refresh, so nothing else moves them. All of it works without JavaScript.
+
 ### Feed row
-- **Style:** Flat on Graphite Floor, hairline between rows, Raised Graphite on hover. Layout: Title with the timestamp in Data type right-aligned; then the summary, or the excerpt until there is one, up to two lines; then the Rating chips, Categories, Source and Backfill. A source glyph before the Title is still to build.
+- **Style:** Flat on Graphite Floor, hairline between rows, Raised Graphite on hover. Layout: Title with the timestamp in Data type right-aligned; then the summary, or the excerpt until there is one, up to two lines; then the Rating chips with their Correction controls, Categories, Source and Backfill. A source glyph before the Title is still to build.
 - **States:** Unread (still to build) is shown by weight (Title 600 vs 500), not by color. High-severity rows add the lamp only; the row background never turns red.
 
 ### Inputs / Fields (to build)

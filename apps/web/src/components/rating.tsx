@@ -29,6 +29,24 @@ function Reading({ axis, value }: { axis: string; value: number }) {
   );
 }
 
+export function SeverityChip({ id, value }: { id?: string; value: number }) {
+  const { tone, lamp } = severityLook(value);
+  return (
+    <span id={id} className={`${chip} ${tone}`}>
+      <span aria-hidden="true" className={`size-1.5 rounded-full ${lamp}`} />
+      <Reading axis="Severity" value={value} />
+    </span>
+  );
+}
+
+export function ImportanceChip({ id, value }: { id?: string; value: number }) {
+  return (
+    <span id={id} className={`${chip} border-transparent ${value >= 4 ? "text-foreground" : "text-muted-foreground"}`}>
+      <Reading axis="Importance" value={value} />
+    </span>
+  );
+}
+
 /**
  * Both axes, each named in words with its level, so neither depends on colour. Only Severity gets a
  * signal colour: Importance says what matters to the user, not that something is wrong.
@@ -51,16 +69,10 @@ export function Rating({
       </span>
     );
   }
-  const { tone, lamp } = severityLook(severity);
   return (
     <span id={id} className="inline-flex flex-wrap items-center gap-1.5">
-      <span className={`${chip} ${tone}`}>
-        <span aria-hidden="true" className={`size-1.5 rounded-full ${lamp}`} />
-        <Reading axis="Severity" value={severity} />
-      </span>
-      <span className={`${chip} border-transparent ${importance >= 4 ? "text-foreground" : "text-muted-foreground"}`}>
-        <Reading axis="Importance" value={importance} />
-      </span>
+      <SeverityChip value={severity} />
+      <ImportanceChip value={importance} />
     </span>
   );
 }

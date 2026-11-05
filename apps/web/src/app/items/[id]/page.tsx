@@ -1,20 +1,25 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Suspense } from "react";
-import { CategoryList, Rating } from "@/components/rating";
+import { Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { Button } from "@/components/ui/button";
 import { itemWithLog, manualRunIn } from "@/lib/feed";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
+import { RatingControls } from "../../correct-rating";
 import { kindLabel, modelLink } from "../../rules/words";
 import { Notice } from "../../sign-in/notice";
 import { SubmitButton } from "../../sign-in/submit-button";
 import { runExtractorRuleAction } from "./actions";
+import { CorrectCategories } from "./correct-categories";
 import { RunStatus } from "./run-status";
 
 export const metadata: Metadata = { title: "Item · Watchdog" };
+
+// The data is read without Suspense, so the Item is in the first HTML, which is how it and its
+// Correction forms work without JavaScript.
+export const instant = false;
 
 export default function ItemPage({ params, searchParams }: PageProps<"/items/[id]">) {
   return (
@@ -32,9 +37,7 @@ export default function ItemPage({ params, searchParams }: PageProps<"/items/[id
         <span aria-current="page">Item</span>
       </nav>
       <main className="mx-auto flex w-full max-w-3xl flex-col px-4 py-8">
-        <Suspense fallback={<div aria-busy="true" className="h-48 rounded-lg bg-muted" />}>
-          <ItemDetail params={params} searchParams={searchParams} />
-        </Suspense>
+        <ItemDetail params={params} searchParams={searchParams} />
       </main>
     </div>
   );
@@ -54,22 +57,20 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
     {
       term: "Rating",
       detail: (
-        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <Rating severity={found.severity} importance={found.importance} />
-          <a href="#log" className={inlineLink}>
-            See the Log
-          </a>
-        </span>
+        <div id="rating" className="flex scroll-mt-4 flex-col items-start gap-2">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <Rating severity={found.severity} importance={found.importance} />
+            <a href="#log" className={inlineLink}>
+              See the Log
+            </a>
+          </span>
+          <RatingControls itemId={found.id} severity={found.severity} importance={found.importance} />
+        </div>
       ),
     },
     {
       term: "Categories",
-      detail:
-        found.categories.length === 0 ? (
-          <Missing>None</Missing>
-        ) : (
-          <CategoryList categories={found.categories.map(({ category }) => category)} />
-        ),
+      detail: <CorrectCategories itemId={found.id} categories={found.categories.map(({ category }) => category)} />,
     },
     { term: "Source", detail: found.source.name },
     { term: "Author", detail: found.author ?? <Missing>None given</Missing> },
