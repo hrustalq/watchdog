@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentExtractorRule } from "../rules/schema.ts";
-import { ratingSchema } from "./rating.ts";
+import { ratingMeaning, ratingSchema, ratingTask } from "./rating.ts";
 
 const rated = { summary: "A summary", reasoning: "Because", severity: 3, importance: 3 };
 
@@ -58,5 +58,41 @@ describe("ratingSchema", () => {
 
     expect(schema.safeParse({ ...rated, field_plan: 5 }).success).toBe(true);
     expect(schema.safeParse({ ...rated, field_plan: "Pro" }).success).toBe(false);
+  });
+});
+
+describe("ratingTask", () => {
+  it("sends the Agent the Rating scale, word for word", () => {
+    expect(ratingTask([], "en")).toContain(`Severity, how urgent or harmful the Item is:
+5: act today, e.g. an outage, or a security advisory in something the user depends on.
+4: act this week, e.g. a serious bug, or a breaking change about to reach the user.
+3: plan for it this month, e.g. a bug with a workaround, or a deprecation with a date.
+2: minor, with no deadline, e.g. a cosmetic bug or a small complaint.
+1: nothing urgent or harmful, e.g. a feature request, a competitor's launch, or routine news.
+
+Importance, how much the Item matters to the user:
+5: directly about the user's product, or a key competitor or customer.
+4: about something else the Profile names, e.g. another competitor, a dependency or a tracked market.
+3: about the user's field in general, and useful to know, e.g. a trend or a product in an adjacent space.
+2: only loosely related, e.g. general news that touches one of the user's interests.
+1: unrelated to anything in the Profile, e.g. off-topic posts or spam.
+
+Judge importance`);
+  });
+});
+
+describe("ratingMeaning", () => {
+  it.each([
+    ["severity", 5, "act today"],
+    ["severity", 4, "act this week"],
+    ["severity", 1, "nothing urgent or harmful"],
+    ["importance", 5, "directly about the user's product, or a key competitor or customer"],
+    ["importance", 2, "only loosely related"],
+  ] as const)("says what %s %i means, without its example", (axis, level, meaning) => {
+    expect(ratingMeaning(axis, level)).toBe(meaning);
+  });
+
+  it.each([0, 6])("refuses level %i, which isn't on the scale", (level) => {
+    expect(() => ratingMeaning("severity", level)).toThrow();
   });
 });

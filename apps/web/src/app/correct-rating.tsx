@@ -1,22 +1,21 @@
 // The controls that correct a Rating (DESIGN.md, "Correction controls"). They're plain forms, so they
 // work without JavaScript. Each button posts one axis and the action keeps the other at its current
 // level, and the buttons stay focusable at either end of the scale, so focus isn't lost by reaching it.
+import { type RatingAxis, ratingMeaning, ratingScale } from "@watchdog/core";
 import { Minus, Plus } from "lucide-react";
-import { field } from "@/components/field-classes";
+import { field, label } from "@/components/field-classes";
 import { ImportanceChip, SeverityChip } from "@/components/rating";
 import { correctRatingAction } from "./actions";
 import { CorrectionButton, CorrectionStatus } from "./correction-status";
 import { SubmitButton } from "./sign-in/submit-button";
-
-const axes = { severity: "Severity", importance: "Importance" };
-type Axis = keyof typeof axes;
 
 const levels = [1, 2, 3, 4, 5];
 
 /** Dims while saving, which `CorrectionStatus` signals. */
 const saving = "has-data-pending:opacity-60";
 
-function Step({ axis, current, step, title }: { axis: Axis; current: number; step: -1 | 1; title: string }) {
+function Step({ axis, current, step, title }: { axis: RatingAxis; current: number; step: -1 | 1; title: string }) {
+  const { name } = ratingScale[axis];
   const lower = step < 0;
   const level = current + step;
   const inScale = level >= 1 && level <= 5;
@@ -33,8 +32,8 @@ function Step({ axis, current, step, title }: { axis: Axis; current: number; ste
       <Glyph aria-hidden="true" className={inScale ? undefined : "opacity-50"} />
       <span className="sr-only">
         {inScale
-          ? `${lower ? "Lower" : "Raise"} ${axes[axis]} to ${String(level)}: ${title}`
-          : `${axes[axis]} is at its ${lower ? "lowest" : "highest"}: ${title}`}
+          ? `${lower ? "Lower" : "Raise"} ${name} to ${String(level)}, ${ratingMeaning(axis, level)}: ${title}`
+          : `${name} is at its ${lower ? "lowest" : "highest"}, ${ratingMeaning(axis, current)}: ${title}`}
       </span>
     </CorrectionButton>
   );
@@ -84,53 +83,92 @@ export function RatingStepper({
   );
 }
 
-function Scale({ axis, current }: { axis: Axis; current: number }) {
+function Scale({ axis, current }: { axis: RatingAxis; current: number }) {
+  const { name } = ratingScale[axis];
+  const meaning = ratingMeaning(axis, current);
   return (
-    <div role="group" aria-label={`Correct ${axes[axis]}`} className="flex items-center gap-1">
-      <span aria-hidden="true" className="w-18 text-xs font-medium tracking-[0.01em] text-muted-foreground">
-        {axes[axis]}
-      </span>
-      {levels.map((level) => (
-        <CorrectionButton
-          key={level}
-          // The current level posts nothing, and stays focusable after its click made it current.
-          {...(level === current ? { type: "button" } : { type: "submit", name: axis, value: String(level) })}
-          size="icon-xs"
-          variant={level === current ? "default" : "ghost"}
-          aria-current={level === current ? "true" : undefined}
-          // Forced colors drop the fill, which would hide which level is the current one.
-          className={`font-mono ${level === current ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]" : ""}`}
-        >
-          <span aria-hidden="true">{level}</span>
-          <span className="sr-only">{`Set ${axes[axis]} to ${String(level)} of 5`}</span>
-        </CorrectionButton>
-      ))}
+    <div className="flex w-full flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+      <div role="group" aria-label={`Correct ${name}`} className="flex shrink-0 items-center gap-1">
+        <span aria-hidden="true" className={`w-18 ${label} text-muted-foreground`}>
+          {name}
+        </span>
+        {levels.map((level) => (
+          <CorrectionButton
+            key={level}
+            // The current level posts nothing, and stays focusable after its click made it current.
+            {...(level === current ? { type: "button" } : { type: "submit", name: axis, value: String(level) })}
+            size="icon-xs"
+            variant={level === current ? "default" : "ghost"}
+            aria-current={level === current ? "true" : undefined}
+            // Forced colors drop the fill, which would hide which level is the current one.
+            className={`font-mono ${level === current ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]" : ""}`}
+          >
+            <span aria-hidden="true">{level}</span>
+            <span className="sr-only">{`Set ${name} to ${String(level)} of 5, ${ratingMeaning(axis, level)}`}</span>
+          </CorrectionButton>
+        ))}
+      </div>
+      {/* Lines up under the buttons on a phone. One text node for a screen reader, as on the chips. */}
+      <p className={`pl-19 ${label} text-muted-foreground first-letter:uppercase sm:pl-0`}>
+        <span className="sr-only">{`${name}: ${meaning}`}</span>
+        <span aria-hidden="true">{meaning}</span>
+      </p>
     </div>
   );
 }
 
-function Choice({ axis }: { axis: Axis }) {
+function Choice({ axis }: { axis: RatingAxis }) {
   return (
-    <label className="flex items-center gap-2 text-xs font-medium tracking-[0.01em] text-muted-foreground">
-      {axes[axis]}
+    // Under its label on a phone, because a meaning needs all the width there is.
+    <label className={`flex w-full flex-col gap-1 ${label} text-muted-foreground sm:flex-row sm:items-center`}>
+      <span className="w-18 shrink-0">{ratingScale[axis].name}</span>
       {/* Empty is where it starts, not a mistake, and the browser still refuses to submit it. */}
       <select
         name={axis}
         required
         aria-invalid={false}
         defaultValue=""
-        className={`${field} w-auto bg-background text-foreground invalid:text-muted-foreground`}
+        // A select sizes itself to its longest option, and the longest meaning is wider than a phone.
+        className={`${field} min-w-0 bg-background text-foreground invalid:text-muted-foreground`}
       >
         <option value="" disabled>
           Choose
         </option>
         {levels.map((level) => (
           <option key={level} value={level}>
-            {level} of 5
+            {`${String(level)} of 5, ${ratingMeaning(axis, level)}`}
           </option>
         ))}
       </select>
     </label>
+  );
+}
+
+/** Every level's meaning, for a user who sees only the current one and shouldn't have to correct to learn another. */
+function ScaleGuide() {
+  return (
+    <details className="w-full">
+      <summary
+        className={`w-fit cursor-pointer rounded-sm ${label} text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30`}
+      >
+        What the levels mean
+      </summary>
+      <div className="mt-2 flex flex-col gap-3">
+        {Object.values(ratingScale).map(({ name, about, levels: scale }) => (
+          <div key={name} className="flex flex-col gap-1">
+            <p className={`${label} text-muted-foreground`}>{`${name}, ${about}`}</p>
+            <ul className="flex flex-col gap-1 text-sm">
+              {scale.map(({ level, meaning }) => (
+                <li key={level} className="flex gap-2">
+                  <span className="font-mono">{level}</span>
+                  <span className="first-letter:uppercase">{meaning}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -166,6 +204,7 @@ export function RatingControls({
           <Scale axis="importance" current={importance} />
         </>
       )}
+      <ScaleGuide />
     </form>
   );
 }
