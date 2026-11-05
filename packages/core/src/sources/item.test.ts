@@ -2,11 +2,28 @@ import { describe, expect, it } from "vitest";
 import { htmlToText } from "./item.ts";
 
 describe("htmlToText", () => {
-  it("stays linear on openers that never close", () => {
-    const start = performance.now();
-    for (const opener of ["<!--", "<a ", "<p ", "<script>"]) htmlToText(opener.repeat(250_000));
-    expect(performance.now() - start).toBeLessThan(1000);
-  });
+  // Compares two runs on the same machine, because a limit in milliseconds fails on a slow runner. On
+  // 8 times the input, linear code takes about 8 times as long and quadratic code about 64 times, so
+  // the limit sits between them. It measures CPU time, because a busy machine pausing the process
+  // distorts the clock, and more on a long run than a short one. The fastest of a few runs counts.
+  it.each(["<!--", "<a ", "<p ", "<script>"])(
+    "stays linear on %s openers that never close",
+    (opener) => {
+      const small = opener.repeat(5_000);
+      const large = opener.repeat(40_000);
+      const cpuTimeOf = (html: string) => {
+        const before = process.cpuUsage();
+        htmlToText(html);
+        const { user, system } = process.cpuUsage(before);
+        return user + system;
+      };
+      const times = [0, 1, 2].map(() => ({ small: cpuTimeOf(small), large: cpuTimeOf(large) }));
+      const growth = Math.min(...times.map((time) => time.large)) / Math.min(...times.map((time) => time.small));
+      expect(growth).toBeLessThan(22);
+    },
+    // Only quadratic code needs this long, and then the assertion is what should report it.
+    300_000,
+  );
 
   it("drops an unclosed comment and script to the end", () => {
     expect(htmlToText("<p>Kept</p><!-- open")).toBe("Kept");
