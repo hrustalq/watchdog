@@ -4,19 +4,63 @@ import { z } from "zod";
 import type { AgentExtractorRule } from "../rules/schema.ts";
 import { storableText } from "./call-agent.ts";
 
-const anchors = `Severity, how urgent or harmful the Item is:
-5: act today, e.g. an outage, or a security advisory in something the user depends on.
-4: act this week, e.g. a serious bug, or a breaking change about to reach the user.
-3: plan for it this month, e.g. a bug with a workaround, or a deprecation with a date.
-2: minor, with no deadline, e.g. a cosmetic bug or a small complaint.
-1: nothing urgent or harmful, e.g. a feature request, a competitor's launch, or routine news.
+/** The one Rating scale: the Agent's prompt and the correction controls both read it. */
+export const ratingScale = {
+  severity: {
+    name: "Severity",
+    about: "how urgent or harmful the Item is",
+    levels: [
+      { level: 5, meaning: "act today", example: "an outage, or a security advisory in something the user depends on" },
+      { level: 4, meaning: "act this week", example: "a serious bug, or a breaking change about to reach the user" },
+      { level: 3, meaning: "plan for it this month", example: "a bug with a workaround, or a deprecation with a date" },
+      { level: 2, meaning: "minor, with no deadline", example: "a cosmetic bug or a small complaint" },
+      {
+        level: 1,
+        meaning: "nothing urgent or harmful",
+        example: "a feature request, a competitor's launch, or routine news",
+      },
+    ],
+  },
+  importance: {
+    name: "Importance",
+    about: "how much the Item matters to the user",
+    levels: [
+      { level: 5, meaning: "directly about the user's product, or a key competitor or customer" },
+      {
+        level: 4,
+        meaning: "about something else the Profile names",
+        example: "another competitor, a dependency or a tracked market",
+      },
+      {
+        level: 3,
+        meaning: "about the user's field in general, and useful to know",
+        example: "a trend or a product in an adjacent space",
+      },
+      { level: 2, meaning: "only loosely related", example: "general news that touches one of the user's interests" },
+      { level: 1, meaning: "unrelated to anything in the Profile", example: "off-topic posts or spam" },
+    ],
+  },
+};
 
-Importance, how much the Item matters to the user:
-5: directly about the user's product, or a key competitor or customer.
-4: about something else the Profile names, e.g. another competitor, a dependency or a tracked market.
-3: about the user's field in general, and useful to know, e.g. a trend or a product in an adjacent space.
-2: only loosely related, e.g. general news that touches one of the user's interests.
-1: unrelated to anything in the Profile, e.g. off-topic posts or spam.`;
+export type RatingAxis = keyof typeof ratingScale;
+
+/** What a level means. The database and the output schema both keep a level on the scale. */
+export function ratingMeaning(axis: RatingAxis, level: number) {
+  const found = ratingScale[axis].levels.find((entry) => entry.level === level);
+  if (found === undefined) throw new RangeError(`${axis} has no level ${String(level)}`);
+  return found.meaning;
+}
+
+/** A level's meaning and example together, as the Agent reads them. */
+export const ratingAnchor = ({ meaning, example }: { meaning: string; example?: string | undefined }) =>
+  example === undefined ? meaning : `${meaning}, e.g. ${example}`;
+
+const anchors = Object.values(ratingScale)
+  .map(({ name, about, levels }) => {
+    const lines = levels.map((entry) => `${String(entry.level)}: ${ratingAnchor(entry)}.`);
+    return `${name}, ${about}:\n${lines.join("\n")}`;
+  })
+  .join("\n\n");
 
 // Blank as stored, since storing drops what Postgres refuses.
 const text = z.string().refine((value) => storableText(value).trim() !== "", "This can't be blank.");
