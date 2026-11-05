@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCost, monthLabel, parseMonth, shiftMonth } from "./usage.ts";
+import { formatCost, isFloor, monthLabel, parseMonth, shiftMonth, type UsageTally } from "./usage.ts";
 
 describe("the month in the URL", () => {
   const now = new Date("2026-11-05T12:00:00.000Z");
@@ -37,5 +37,26 @@ describe("an estimated cost", () => {
     expect(formatCost(1234.5)).toBe("1,234.5000");
     expect(formatCost(0)).toBe("0.0000");
     expect(formatCost(0.000_003)).toBe("<0.0001");
+  });
+});
+
+describe("whether a cost is only a floor", () => {
+  const tally: UsageTally = {
+    calls: 3,
+    failed: 0,
+    inputTokens: 10,
+    outputTokens: 1,
+    withoutTokens: 0,
+    unpricedCalls: 0,
+    cost: 1,
+  };
+
+  it("isn't when every call is in it", () => {
+    expect(isFloor(tally)).toBe(false);
+  });
+
+  it("is when a call had no prices, or came back with no token counts", () => {
+    expect(isFloor({ ...tally, unpricedCalls: 1 })).toBe(true);
+    expect(isFloor({ ...tally, withoutTokens: 1 })).toBe(true);
   });
 });

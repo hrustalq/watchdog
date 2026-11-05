@@ -100,12 +100,21 @@ describe("the Usage screen", () => {
       const model = await newModel(workspaceId);
       await call(model);
       await call(model, { inputTokens: null, outputTokens: null });
-      await call(model, { inputTokens: 50, outputTokens: null });
+      await call(model, { inputTokens: 50, outputTokens: null, status: "invalid_output" });
 
       const { models, total } = await usageForMonth(db, workspaceId, month);
 
       expect(models[0]).toMatchObject({ calls: 3, withoutTokens: 2, inputTokens: 150, outputTokens: 10 });
       expect(total).toMatchObject({ calls: 3, withoutTokens: 2 });
+    });
+
+    it("don't call a refused attempt understated, since no answer came with counts to report", async () => {
+      const workspaceId = await newWorkspace();
+      await call(await newModel(workspaceId), { status: "error", inputTokens: null, outputTokens: null });
+
+      const { total } = await usageForMonth(db, workspaceId, month);
+
+      expect(total).toMatchObject({ calls: 1, failed: 1, withoutTokens: 0 });
     });
 
     it("add up across models", async () => {
@@ -231,6 +240,18 @@ describe("the Usage screen", () => {
         { purpose: "test-connection", calls: 1, failed: 0, inputTokens: 1, outputTokens: 1 },
       ]);
     });
+  });
+
+  it("keeps rows with the same size in one order", async () => {
+    const workspaceId = await newWorkspace();
+    const model = await newModel(workspaceId);
+    await call(model, { purpose: "test-connection", inputTokens: null, outputTokens: null });
+    await call(model, { purpose: "classify", inputTokens: null, outputTokens: null });
+    await call(model, { purpose: "compile-rule", inputTokens: null, outputTokens: null });
+
+    const { purposes } = await usageForMonth(db, workspaceId, month);
+
+    expect(purposes.map(({ purpose }) => purpose)).toEqual(["classify", "compile-rule", "test-connection"]);
   });
 
   describe("the estimated cost", () => {

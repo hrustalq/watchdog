@@ -5,6 +5,7 @@ import { hasActiveModel } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import {
   formatCost,
+  isFloor,
   monthLabel,
   parseMonth,
   purposeLabel,
@@ -38,8 +39,6 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
   const month = parseMonth(params.month, now);
   const { db } = server();
   const { models, purposes, total, firstMonth } = await usageForMonth(db, workspace.id, month);
-  // Only an empty month offers to add a model, so a month with calls doesn't ask.
-  const hasModel = models.length > 0 || (await hasActiveModel(db, workspace.id));
   const older = firstMonth !== undefined && firstMonth < month ? shiftMonth(month, -1) : undefined;
   const newer = month < current ? shiftMonth(month, 1) : undefined;
 
@@ -84,8 +83,8 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
             <p>Months are in UTC. Every attempt counts as a call, a retry included.</p>
             {total.withoutTokens === 0 ? null : (
               <p>
-                {calls(total.withoutTokens)} reported no token counts, so token totals and estimated costs may be
-                understated.
+                {calls(total.withoutTokens)} came back without token counts, so token totals may be understated
+                {total.cost === null ? "." : ", and ≥ marks an estimate that leaves them out."}
               </p>
             )}
             {total.unpricedCalls === 0 || total.cost === null ? null : (
@@ -95,7 +94,11 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
         </div>
 
         {total.calls === 0 ? (
-          <EmptyMonth label={monthLabel(month)} neverCalled={firstMonth === undefined} hasModel={hasModel} />
+          <EmptyMonth
+            label={monthLabel(month)}
+            neverCalled={firstMonth === undefined}
+            hasModel={await hasActiveModel(db, workspace.id)}
+          />
         ) : (
           <>
             <UsageTable
@@ -144,8 +147,8 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
             />
             {total.cost === null ? null : (
               <p className={notes}>
-                Estimated cost is tokens times each model&apos;s prices as they&apos;re set now, in the currency you entered
-                them in. It isn&apos;t your provider&apos;s bill.
+                Estimated cost is tokens times each model&apos;s prices as they&apos;re set now, taking every price to be in
+                one currency. It isn&apos;t your provider&apos;s bill.
               </p>
             )}
           </>
@@ -180,6 +183,23 @@ const columnHead = "px-4 py-2 text-right font-medium whitespace-nowrap";
 // Stays in view while a phone scrolls the readings, so each one still says whose it is.
 const firstColumn = "sticky left-0 bg-background px-4 py-2 text-left align-top";
 
+function CostCell({ tally, none }: { tally: UsageTally; none: React.ReactNode }) {
+  if (tally.cost === null) {
+    return <td className="px-4 py-2 text-right align-top text-sm whitespace-nowrap text-muted-foreground">{none}</td>;
+  }
+  return (
+    <td className={reading}>
+      {isFloor(tally) ? (
+        <>
+          <span aria-hidden="true">≥ </span>
+          <span className="sr-only">At least </span>
+        </>
+      ) : null}
+      {formatCost(tally.cost)}
+    </td>
+  );
+}
+
 function UsageTable({
   id,
   title,
@@ -197,20 +217,7 @@ function UsageTable({
 }) {
   const readings = (tally: UsageTally, none: React.ReactNode) => (
     <>
-      {showCost && tally.cost !== null ? (
-        <td className={reading}>
-          {tally.unpricedCalls > 0 ? (
-            <>
-              <span aria-hidden="true">≥ </span>
-              <span className="sr-only">At least </span>
-            </>
-          ) : null}
-          {formatCost(tally.cost)}
-        </td>
-      ) : null}
-      {showCost && tally.cost === null ? (
-        <td className="px-4 py-2 text-right align-top text-sm whitespace-nowrap text-muted-foreground">{none}</td>
-      ) : null}
+      {showCost ? <CostCell tally={tally} none={none} /> : null}
       {(["calls", "failed", "inputTokens", "outputTokens"] as const).map((column) => (
         <td key={column} className={reading}>
           {tally[column].toLocaleString("en-US")}

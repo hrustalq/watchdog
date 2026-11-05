@@ -41,13 +41,20 @@ export interface UsageTally {
   failed: number;
   inputTokens: number;
   outputTokens: number;
-  /** Calls missing a token count, whose tokens the totals can't include. */
+  /**
+   * Calls that got an answer missing a token count, whose tokens the totals can't include. A refused
+   * attempt isn't one: it has no answer to report on, and counting those would make this warning
+   * appear after every wrong key.
+   */
   withoutTokens: number;
   /** Calls on a model without both prices, whose cost `cost` can't include. */
   unpricedCalls: number;
   /** What the priced calls cost. Null when none of them were. */
   cost: number | null;
 }
+
+/** Whether a cost leaves calls out, so the real one can only be higher. */
+export const isFloor = (tally: UsageTally) => tally.unpricedCalls > 0 || tally.withoutTokens > 0;
 
 const add = (a: UsageTally, b: UsageTally): UsageTally => ({
   calls: a.calls + b.calls,
@@ -59,7 +66,7 @@ const add = (a: UsageTally, b: UsageTally): UsageTally => ({
   cost: a.cost === null && b.cost === null ? null : (a.cost ?? 0) + (b.cost ?? 0),
 });
 
-/** One row per key, largest first. Other fields come from the key's first row, so read only what the key decides. */
+/** One row per key, largest first. Other fields come from the key's first row, so the caller narrows the type. */
 function rollUp<Row extends UsageTally>(rows: Row[], keyOf: (row: Row) => string) {
   const groups = new Map<string, Row>();
   for (const row of rows) {
@@ -67,7 +74,9 @@ function rollUp<Row extends UsageTally>(rows: Row[], keyOf: (row: Row) => string
     groups.set(keyOf(row), seen === undefined ? row : { ...seen, ...add(seen, row) });
   }
   const tokens = (row: Row) => row.inputTokens + row.outputTokens;
-  return [...groups.values()].toSorted((a, b) => tokens(b) - tokens(a) || b.calls - a.calls);
+  return [...groups.values()].toSorted(
+    (a, b) => tokens(b) - tokens(a) || b.calls - a.calls || keyOf(a).localeCompare(keyOf(b)),
+  );
 }
 
 const count = (filter: SQL) => sql<number>`count(*) filter (where ${filter})`.mapWith(Number);
@@ -92,7 +101,9 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
         failed: count(sql`${agentCall.status} <> 'ok'`),
         inputTokens: sum(agentCall.inputTokens),
         outputTokens: sum(agentCall.outputTokens),
-        withoutTokens: count(sql`${agentCall.inputTokens} is null or ${agentCall.outputTokens} is null`),
+        withoutTokens: count(
+          sql`${agentCall.status} <> 'error' and (${agentCall.inputTokens} is null or ${agentCall.outputTokens} is null)`,
+        ),
       })
       .from(agentCall)
       .innerJoin(modelConfig, eq(agentCall.modelConfigId, modelConfig.id))
@@ -130,9 +141,12 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
     unpricedCalls: 0,
     cost: null,
   };
+  type Row = (typeof rows)[number];
+  const models: (UsageTally & Omit<Row, "purpose">)[] = rollUp(rows, (row) => row.id);
+  const purposes: (UsageTally & Pick<Row, "purpose">)[] = rollUp(rows, (row) => row.purpose);
   return {
-    models: rollUp(rows, (row) => row.id),
-    purposes: rollUp(rows, (row) => row.purpose),
+    models,
+    purposes,
     total: rows.reduce<UsageTally>(add, nothing),
     firstMonth: first === undefined ? undefined : monthOf(first.at),
   };
