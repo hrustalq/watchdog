@@ -7,6 +7,7 @@ import {
   eq,
   extractorRule,
   item,
+  itemCategory,
   itemField,
   itemLog,
   migrate,
@@ -16,7 +17,7 @@ import {
   workspace,
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { feedPage, feedPageSize, itemWithLog, parseCursor } from "./feed.ts";
 
 const now = new Date("2026-11-03T15:00:00Z");
@@ -214,6 +215,53 @@ describe("Feed", () => {
     expect((await feedPage(db, seeded.workspaceId)).items.map((row) => row.id)).toEqual([itemId]);
   });
 
+  it("gives a row its Rating, sorted Categories and summary, loading the whole page in one query", async () => {
+    const seeded = await seed();
+    const [rated, unrated] = await insertItems(seeded, [{ capturedAt: hoursAgo(1) }, { capturedAt: hoursAgo(2) }]);
+    // No rated_at, as after a Correction: the Rating is whatever severity and importance hold.
+    await db
+      .update(item)
+      .set({ severity: 4, importance: 2, summary: "What it says" })
+      .where(eq(item.id, present(rated)));
+    await db.insert(itemCategory).values([
+      { itemId: present(rated), category: "release" },
+      { itemId: present(rated), category: "bug-report" },
+    ]);
+
+    const query = vi.spyOn(db.$client, "query");
+    const { items } = await feedPage(db, seeded.workspaceId);
+    expect(query).toHaveBeenCalledTimes(1);
+    query.mockRestore();
+
+    expect(items[0]).toMatchObject({
+      id: rated,
+      severity: 4,
+      importance: 2,
+      categories: ["bug-report", "release"],
+      excerpt: "What it says",
+    });
+    expect(items[1]).toMatchObject({
+      id: unrated,
+      severity: null,
+      importance: null,
+      categories: [],
+      excerpt: "An entry.",
+    });
+  });
+
+  it("caps a row's summary, which a model can run on", async () => {
+    const seeded = await seed();
+    const [id] = await insertItems(seeded, [{}]);
+    await db
+      .update(item)
+      .set({ summary: "x".repeat(5000) })
+      .where(eq(item.id, present(id)));
+
+    const { items } = await feedPage(db, seeded.workspaceId);
+
+    expect(items[0]?.excerpt).toHaveLength(300);
+  });
+
   it("shows only the Workspace's own Items", async () => {
     const ours = await seed();
     const theirs = await seed();
@@ -279,6 +327,38 @@ describe("Feed", () => {
       { name: "cve", value: "CVE-1", extractorRule: { name: "CVEs" } },
       { name: "tags", value: ["a", "b"], extractorRule: null },
     ]);
+  });
+
+  it("loads an Item's Rating, sorted Categories and summary, keeping the original text", async () => {
+    const seeded = await seed();
+    const [id] = await insertItems(seeded, [{}]);
+    await db
+      .update(item)
+      .set({ severity: 5, importance: 3, summary: "<b>What</b> it says" })
+      .where(eq(item.id, present(id)));
+    await db.insert(itemCategory).values([
+      { itemId: present(id), category: "release" },
+      { itemId: present(id), category: "bug-report" },
+    ]);
+
+    const loaded = await itemWithLog(db, seeded.workspaceId, present(id));
+
+    expect(loaded).toMatchObject({
+      severity: 5,
+      importance: 3,
+      summary: "<b>What</b> it says",
+      body: "An entry.",
+      categories: [{ category: "bug-report" }, { category: "release" }],
+    });
+  });
+
+  it("leaves an unrated Item with no Rating, Categories or summary", async () => {
+    const seeded = await seed();
+    const [id] = await insertItems(seeded, [{}]);
+
+    const loaded = await itemWithLog(db, seeded.workspaceId, present(id));
+
+    expect(loaded).toMatchObject({ severity: null, importance: null, summary: null, categories: [] });
   });
 
   it("treats another Workspace's Item, or an id that isn't one, as missing", async () => {

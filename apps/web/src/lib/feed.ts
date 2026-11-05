@@ -1,6 +1,6 @@
 // The Feed as the Workspace screen reads it, in the Latest view (docs: Processing pipeline, "Feed").
 // Every query is scoped to the Workspace, so another Workspace's Item id behaves like a missing one.
-import { and, type Db, desc, eq, item, source, sql } from "@watchdog/db";
+import { and, type Db, desc, eq, item, itemCategory, source, sql } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 export const feedPageSize = 50;
@@ -63,8 +63,14 @@ export async function feedPage(db: Db, workspaceId: string, before?: FeedCursor)
       publishedAt: item.publishedAt,
       capturedAt: item.capturedAt,
       isBackfill: item.isBackfill,
-      // A row shows one or two lines of it, and body can be 32 KB.
-      excerpt: sql<string>`left(${item.body}, 300)`,
+      severity: item.severity,
+      importance: item.importance,
+      // In the page's one query, so a page of rows doesn't add a query per row.
+      categories: sql<string[]>`array(
+        select ${itemCategory.category} from ${itemCategory}
+        where ${itemCategory.itemId} = ${item.id} order by ${itemCategory.category})`,
+      // The summary once the Agent has written one. A row shows two lines at most, and either can be long.
+      excerpt: sql<string>`left(coalesce(${item.summary}, ${item.body}), 300)`,
       // The last row's sort keys, in the shape parseCursor reads.
       cursor: sql<string>`concat_ws('_', ${stamp(item.capturedAt)},
         coalesce(${stamp(item.publishedAt)}, '-infinity'), ${item.id})`,
@@ -101,14 +107,21 @@ export function manualRunIn(log: LogRow[], runId: unknown) {
   return { id: newest.id, message: newest.message, failed: "failed" in newest.data };
 }
 
-/** An Item's envelope with its Source's name, its extracted fields and its Log, oldest first, or undefined. */
+/**
+ * An Item's envelope with its Rating and summary, its Source's name, its Categories, its extracted
+ * fields and its Log, oldest first, or undefined.
+ */
 export function itemWithLog(db: Db, workspaceId: string, itemId: string) {
   if (!isUuid(itemId)) return Promise.resolve(undefined);
   return db.query.item.findFirst({
     where: and(eq(item.workspaceId, workspaceId), eq(item.id, itemId)),
-    columns: { raw: false, summary: false, workspaceId: false, sourceId: false, externalId: false },
+    columns: { raw: false, workspaceId: false, sourceId: false, externalId: false },
     with: {
       source: { columns: { name: true } },
+      categories: {
+        columns: { category: true },
+        orderBy: (row, { asc }) => [asc(row.category)],
+      },
       fields: {
         columns: { name: true, value: true },
         with: { extractorRule: { columns: { name: true } } },
