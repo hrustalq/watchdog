@@ -6,6 +6,7 @@ import { Timestamp } from "@/components/timestamp";
 import { feedPage, parseCursor, parseTopCursor, topPage, type FeedItem } from "@/lib/feed";
 import { hasActiveModel } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
+import { cn } from "@/lib/utils";
 import { signOut } from "./actions";
 import { RatingStepper } from "./correct-rating";
 import { FeedRefresher } from "./feed-refresher";
@@ -91,15 +92,16 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
         {/* On every page, since a Rating can arrive for an Item on an older one. The key starts it
             afresh on each page, so paging isn't announced as Items arriving. It sits first, so it stays
             mounted when the empty state gives way to the list. */}
-        <FeedRefresher key={[latest, fallback, before?.id].join()} ids={items.map((row) => row.id)} />
+        <FeedRefresher key={[latest, fallback, before?.id].join()} ids={items.map((row) => row.id)} paused={edit} />
         <div className="flex flex-col gap-1">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <h1 className="text-headline">Feed</h1>
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-3">
               {items.length === 0 ? null : (
+                // Outline in both states, because the only fill here says which view is selected.
                 <Link
                   href={feedHref(latest, !edit, typeof params.before === "string" ? params.before : undefined)}
-                  className={buttonVariants({ variant: edit ? "default" : "outline" })}
+                  className={cn(buttonVariants({ variant: "outline" }))}
                 >
                   {edit ? "Done" : "Correct Ratings"}
                 </Link>

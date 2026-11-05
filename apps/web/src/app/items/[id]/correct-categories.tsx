@@ -1,8 +1,8 @@
 import { X } from "lucide-react";
 import { field } from "@/components/field-classes";
-import { Button } from "@/components/ui/button";
+import { maxCategoryLength } from "@/lib/corrections";
 import { correctCategoriesAction } from "../../actions";
-import { CorrectionStatus } from "../../correction-status";
+import { CorrectionButton, CorrectionStatus } from "../../correction-status";
 import { SubmitButton } from "../../sign-in/submit-button";
 
 /**
@@ -26,10 +26,10 @@ export function CorrectCategories({ itemId, categories }: { itemId: string; cate
                 className="flex min-w-0 items-center gap-0.5 rounded-sm border pl-1.5 font-mono text-xs break-all"
               >
                 {category}
-                <Button type="submit" name="remove" value={category} variant="ghost" size="icon-xs">
+                <CorrectionButton type="submit" name="remove" value={category} variant="ghost" size="icon-xs">
                   <X aria-hidden="true" />
                   <span className="sr-only">Remove the Category {category}</span>
-                </Button>
+                </CorrectionButton>
               </li>
             ))}
           </ul>
@@ -43,7 +43,9 @@ export function CorrectCategories({ itemId, categories }: { itemId: string; cate
           name="add"
           required
           aria-invalid={false}
-          maxLength={100}
+          maxLength={maxCategoryLength}
+          pattern=".*\S.*"
+          title="A Category can't be blank."
           autoComplete="off"
           aria-label="Add a Category"
           placeholder="Add a Category"

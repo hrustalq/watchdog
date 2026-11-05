@@ -207,7 +207,7 @@ describe("Corrections", () => {
       ]);
     });
 
-    it("drops the Correction when the user goes back to the original, and keeps the Item corrected", async () => {
+    it("is no Correction any more when the user goes back to the original", async () => {
       const seeded = await seed();
       const itemId = await capture(seeded, { severity: 4, importance: 3 });
       await correctRating(db, seeded.workspaceId, itemId, { severity: 2 });
@@ -215,7 +215,7 @@ describe("Corrections", () => {
       await correctRating(db, seeded.workspaceId, itemId, { severity: 4 });
 
       expect(await correctionsOf(seeded.workspaceId)).toEqual([]);
-      expect((await reload(itemId)).ratingCorrectedAt).not.toBeNull();
+      expect((await reload(itemId)).ratingCorrectedAt).toBeNull();
       expect((await logOf(itemId)).map((row) => row.message)).toEqual([
         "Corrected the Rating from Severity 4, Importance 3 to Severity 2, Importance 3",
         "Corrected the Rating from Severity 2, Importance 3 to Severity 4, Importance 3",
@@ -296,7 +296,7 @@ describe("Corrections", () => {
       ]);
     });
 
-    it("drops the Correction when the Categories go back to the original", async () => {
+    it("is no Correction any more when the Categories go back to the original", async () => {
       const seeded = await seed();
       const itemId = await capture(seeded);
       await addCategories(itemId, "news");
@@ -305,7 +305,25 @@ describe("Corrections", () => {
       await correctCategories(db, seeded.workspaceId, itemId, { remove: "lead" });
 
       expect(await correctionsOf(seeded.workspaceId)).toEqual([]);
-      expect((await reload(itemId)).categoriesCorrectedAt).not.toBeNull();
+      expect((await reload(itemId)).categoriesCorrectedAt).toBeNull();
+    });
+
+    it("still classifies an Item whose job was waiting while a Category was added and removed", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await db.insert(classifier).values({
+        workspaceId: seeded.workspaceId,
+        name: "Sort",
+        kind: "agent",
+        definition: { classifier: "Sort", prompt: "Sort it", categories: ["agent-said"] },
+      });
+      const itemId = await capture(seeded);
+      await correctCategories(db, seeded.workspaceId, itemId, { add: "misclick" });
+      await correctCategories(db, seeded.workspaceId, itemId, { remove: "misclick" });
+
+      await processItem(db, itemId, answering({ json: { categories: ["agent-said"] } }).deps);
+
+      expect(await categoriesOf(itemId)).toEqual(["agent-said"]);
     });
 
     it("keeps a Rating Correction and a Category Correction as separate rows", async () => {

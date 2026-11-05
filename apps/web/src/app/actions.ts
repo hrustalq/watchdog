@@ -21,7 +21,8 @@ export async function signOut() {
  */
 async function showCorrection(itemId: string) {
   // The Feed and the Item both show it, and Back would otherwise reuse the page from before it.
-  revalidatePath("/", "layout");
+  revalidatePath("/");
+  revalidatePath(`/items/${itemId}`);
   const requestHeaders = await headers();
   if (!requestHeaders.has("next-action")) {
     redirect(`${returnTo(requestHeaders.get(pathHeader))}#item-${itemId}`);

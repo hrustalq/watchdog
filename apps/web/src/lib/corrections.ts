@@ -14,7 +14,7 @@ import {
   type Tx,
 } from "@watchdog/db";
 
-const maxCategoryLength = 100;
+export const maxCategoryLength = 100;
 
 /** Locks the Item, because a job can be storing an Agent's answer to it. */
 async function lockItem(tx: Tx, workspaceId: string, itemId: string) {
@@ -52,8 +52,9 @@ async function record(
       // The Agent reads the most recent Corrections by created_at, and this is the newest judgement.
       set: { ...copies, after, createdAt: sql`now()` },
     });
-  // Back at the original, nothing is corrected, so a reverted misclick doesn't reach the Agent.
-  await tx
+  // Back at the original, nothing is corrected, so a reverted misclick neither reaches the Agent nor
+  // stops the pipeline from finishing the Item.
+  const reverted = await tx
     .delete(correction)
     .where(
       and(
@@ -61,7 +62,14 @@ async function record(
         eq(correction.kind, kind),
         sql`${correction.before} = ${correction.after}`,
       ),
-    );
+    )
+    .returning({ id: correction.id });
+  if (reverted.length > 0) {
+    await tx
+      .update(item)
+      .set(kind === "rating" ? { ratingCorrectedAt: null } : { categoriesCorrectedAt: null })
+      .where(eq(item.id, target.id));
+  }
   await tx.insert(itemLog).values({ itemId: target.id, stage: "correct", message, data: { kind, before, after } });
 }
 

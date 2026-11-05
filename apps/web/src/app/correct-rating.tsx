@@ -2,11 +2,10 @@
 // work without JavaScript. Each button posts one axis and the action keeps the other at its current
 // level, and the buttons stay focusable at either end of the scale, so focus isn't lost by reaching it.
 import { Minus, Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { field } from "@/components/field-classes";
 import { ImportanceChip, SeverityChip } from "@/components/rating";
 import { correctRatingAction } from "./actions";
-import { CorrectionStatus } from "./correction-status";
+import { CorrectionButton, CorrectionStatus } from "./correction-status";
 import { SubmitButton } from "./sign-in/submit-button";
 
 const axes = { severity: "Severity", importance: "Importance" };
@@ -23,7 +22,7 @@ function Step({ axis, current, step, title }: { axis: Axis; current: number; ste
   const inScale = level >= 1 && level <= 5;
   const Glyph = lower ? Minus : Plus;
   return (
-    <Button
+    <CorrectionButton
       variant="ghost"
       size="icon-xs"
       {...(inScale
@@ -37,7 +36,7 @@ function Step({ axis, current, step, title }: { axis: Axis; current: number; ste
           ? `${lower ? "Lower" : "Raise"} ${axes[axis]} to ${String(level)}: ${title}`
           : `${axes[axis]} is at its ${lower ? "lowest" : "highest"}: ${title}`}
       </span>
-    </Button>
+    </CorrectionButton>
   );
 }
 
@@ -92,7 +91,7 @@ function Scale({ axis, current }: { axis: Axis; current: number }) {
         {axes[axis]}
       </span>
       {levels.map((level) => (
-        <Button
+        <CorrectionButton
           key={level}
           // The current level posts nothing, and stays focusable after its click made it current.
           {...(level === current ? { type: "button" } : { type: "submit", name: axis, value: String(level) })}
@@ -104,7 +103,7 @@ function Scale({ axis, current }: { axis: Axis; current: number }) {
         >
           <span aria-hidden="true">{level}</span>
           <span className="sr-only">{`Set ${axes[axis]} to ${String(level)} of 5`}</span>
-        </Button>
+        </CorrectionButton>
       ))}
     </div>
   );
