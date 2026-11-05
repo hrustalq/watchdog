@@ -1,6 +1,6 @@
 "use server";
 
-import { redirect } from "next/navigation";
+import { redirect, RedirectType } from "next/navigation";
 import { saveProfile } from "@/lib/profile";
 import { requireWorkspace, server } from "@/lib/server";
 
@@ -19,6 +19,7 @@ export async function saveProfileAction(formData: FormData) {
   const { workspace } = await requireWorkspace();
   const input = { body: text(formData, "body"), language: text(formData, "language") };
   const result = await saveProfile(server().db, workspace.id, input);
-  if ("saved" in result) redirect("/profile?saved=1");
+  // Replaced, because Back to the page before the save could save its old values over the new ones.
+  if ("saved" in result) redirect("/profile?saved=1", RedirectType.replace);
   redirect(result.problem === "too-long" ? "/profile?error=too-long" : "/profile");
 }
