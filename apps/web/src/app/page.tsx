@@ -141,6 +141,7 @@ function FeedList({ items }: { items: FeedItem[] }) {
             <h2 className="text-title min-w-0 break-words">
               <Link
                 href={`/items/${row.id}`}
+                aria-describedby={`rating-${row.id}`}
                 className="rounded-sm outline-none after:absolute after:inset-0 focus-visible:after:ring-3 focus-visible:after:ring-inset focus-visible:after:ring-ring/30"
               >
                 {row.title ?? "Untitled Item"}
@@ -163,12 +164,12 @@ function FeedList({ items }: { items: FeedItem[] }) {
             </p>
           )}
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium tracking-[0.01em]">
-            <Rating severity={row.severity} importance={row.importance} />
+            <Rating id={`rating-${row.id}`} severity={row.severity} importance={row.importance} />
+            <CategoryList categories={row.categories} />
             <span className="min-w-0 break-words text-muted-foreground">{row.sourceName}</span>
             {row.isBackfill ? (
               <span className="rounded-sm bg-muted px-1.5 py-0.5">Backfill</span>
             ) : null}
-            <CategoryList categories={row.categories} />
           </div>
         </li>
       ))}

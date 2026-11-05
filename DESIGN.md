@@ -253,7 +253,7 @@ Crisp and engineered. One radius family derived from `--radius: 0.5rem`, identic
 
 ## Components
 
-Only the Button exists in code (`apps/web/src/components/ui/button.tsx`, Base UI + cva). Other components follow this character as they are added from shadcn.
+The Button (`apps/web/src/components/ui/button.tsx`, Base UI + cva) and the chips below exist in code. Other components follow this character as they are added from shadcn.
 
 ### Buttons
 Character: precise and quiet; the action is clear from the label and position, not loud color.
@@ -266,13 +266,18 @@ Character: precise and quiet; the action is clear from the label and position, n
 - **Focus:** Border switches to Focus Grey with a 3px halo at 30%. Pressed state nudges down 1px. Disabled: 50% opacity, no pointer events. Invalid: red border with a red halo.
 - **Sizes:** xs 24px, sm 28px, default 32px, lg 36px; matching square icon sizes.
 
-### Severity chip (to build)
-- **Style:** `rounded-sm`, Label type. High: Alarm Red text on a 15% red tint with a solid 6px Alarm Red lamp. Medium: same pattern in Caution Amber. Low: Dimmed Readout text, no tint, hollow lamp.
-- **Rule:** The lamp and the word always appear together, so severity never relies on color alone.
+### Rating chips (`apps/web/src/components/rating.tsx`)
+- **Severity:** `rounded-sm`, Label type, the word, the level and the scale ("Severity 4/5"), with the level in Data type. High (4–5): Alarm Red text on a 10% red tint with a solid 6px Alarm Red lamp. Medium (3): same pattern in Caution Amber. Low (1–2): Dimmed Readout text, no tint, hollow lamp. The tint stays at 10% because 15% drops Alarm Red below 4.5:1 on a hovered row.
+- **Importance:** Same shape and words, with no lamp, no fill and no signal color, because it says what matters and not that something is wrong. High (4–5): Readout White. Otherwise: Dimmed Readout.
+- **Unrated:** The word on a dashed hairline, with no number and no lamp, so it can't read as an error or a low score.
+- **Rule:** The word, the level and the scale always appear together, and screen readers hear "Severity 4 of 5", so a Rating never relies on color alone. In forced colors a filled lamp is drawn in `CanvasText`, so it doesn't vanish.
 
-### Feed row (to build)
-- **Style:** Flat on Graphite Floor, hairline between rows, Raised Graphite on hover. Layout: source glyph, Title, Body excerpt (one line), severity chip, timestamp in Data type right-aligned.
-- **States:** Unread is shown by weight (Title 600 vs 500), not by color. High-severity rows add the lamp only; the row background never turns red.
+### Category chip (`apps/web/src/components/rating.tsx`)
+- **Style:** `rounded-sm`, hairline border, Data type at 0.75rem, no fill. Categories are open-ended, so they get no signal or chart color.
+
+### Feed row
+- **Style:** Flat on Graphite Floor, hairline between rows, Raised Graphite on hover. Layout: Title with the timestamp in Data type right-aligned; then the summary, or the excerpt until there is one, up to two lines; then the Rating chips, Categories, Source and Backfill. A source glyph before the Title is still to build.
+- **States:** Unread (still to build) is shown by weight (Title 600 vs 500), not by color. High-severity rows add the lamp only; the row background never turns red.
 
 ### Inputs / Fields (to build)
 - **Style:** 32px, `rounded-lg`, Instrument Well or transparent fill, 1px `input` border.

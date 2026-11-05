@@ -2,15 +2,25 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CategoryList, Rating } from "./rating.tsx";
 
-/** What a reader gets with colour taken away: the text, which is also what a screen reader reads. */
 const words = (html: string) => html.replace(/<[^>]*>/g, "");
+/** What a sighted reader gets with colour taken away. */
+const visible = (html: string) => words(html.replace(/<span class="sr-only">[^<]*<\/span>/g, ""));
+/** What a screen reader reads, each reading one text node. */
+const spoken = (html: string) =>
+  [...html.matchAll(/<span class="sr-only">([^<]*)<\/span>/g)].map(([, text]) => text);
 
 describe("Rating", () => {
-  it("names both axes in words, on the 1–5 scale, whatever the colour", () => {
+  it("names both axes and shows the scale, whatever the colour", () => {
     for (const severity of [1, 2, 3, 4, 5]) {
       const html = renderToStaticMarkup(<Rating severity={severity} importance={2} />);
-      expect(words(html)).toBe(`Severity ${String(severity)} of 5Importance 2 of 5`);
+      expect(visible(html)).toBe(`Severity ${String(severity)}/5Importance 2/5`);
+      expect(spoken(html)).toEqual([`Severity ${String(severity)} of 5`, "Importance 2 of 5"]);
     }
+  });
+
+  it("carries an id for a row's link to point at, rated or not", () => {
+    expect(renderToStaticMarkup(<Rating id="r" severity={1} importance={1} />)).toContain('id="r"');
+    expect(renderToStaticMarkup(<Rating id="r" severity={null} importance={null} />)).toContain('id="r"');
   });
 
   it("gives Severity the signal colours: high is red, medium amber, low neither", () => {

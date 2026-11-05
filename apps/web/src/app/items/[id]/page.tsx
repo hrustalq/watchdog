@@ -58,7 +58,16 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
           <Rating severity={found.severity} importance={found.importance} />
           {found.severity === null ? (
             <Missing>
-              {found.processedAt === null ? "The pipeline hasn't finished with this Item yet." : "The Log says why."}
+              {found.processedAt === null ? (
+                "The pipeline hasn't finished with this Item yet."
+              ) : (
+                <>
+                  <a href="#log" className={inlineLink}>
+                    The Log
+                  </a>{" "}
+                  says why.
+                </>
+              )}
             </Missing>
           ) : null}
         </span>
@@ -68,7 +77,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
       term: "Categories",
       detail:
         found.categories.length === 0 ? (
-          <Missing>None yet</Missing>
+          <Missing>{found.processedAt === null ? "None yet" : "None"}</Missing>
         ) : (
           <CategoryList categories={found.categories.map(({ category }) => category)} />
         ),
@@ -180,7 +189,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
         )}
       </section>
       <section aria-labelledby="log" className="flex flex-col gap-3">
-        <h2 id="log" className="text-title">
+        <h2 id="log" className="scroll-mt-4 text-title">
           Log
         </h2>
         <ol className="divide-y rounded-lg border bg-muted font-mono text-[0.8125rem]">
