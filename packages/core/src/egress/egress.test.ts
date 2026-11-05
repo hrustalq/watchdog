@@ -278,7 +278,8 @@ describe("createEgressFetch", () => {
   });
 
   it("fails reading a body that is still incomplete at the timeout", async () => {
-    const fetch = createEgressFetch(selfHosted("public.test"), { lookup, timeoutMs: 100 });
+    // Long enough for the headers to arrive on a loaded runner, so the timer fires during the body.
+    const fetch = createEgressFetch(selfHosted("public.test"), { lookup, timeoutMs: 2_000 });
     const response = await fetch(reach("/stalls"));
     await expect(response.text()).rejects.toThrow(EgressLimitError);
   });
