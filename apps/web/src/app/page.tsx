@@ -9,6 +9,7 @@ import { requireWorkspace, server } from "@/lib/server";
 import { signOut } from "./actions";
 import { RatingStepper } from "./correct-rating";
 import { FeedRefresher } from "./feed-refresher";
+import { HeaderMenu } from "./header-menu";
 import { modelLink } from "./rules/words";
 
 // The data is read without Suspense, so the Feed is in the first HTML, which is how it and its
@@ -47,8 +48,7 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
   const hasModel = fallback && caption && (await hasActiveModel(db, workspace.id));
   return (
     <div className="flex flex-1 flex-col">
-      {/* Below md the links get a row of their own, under the name and Sign out, which they'd otherwise crush. */}
-      <header className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b px-4 py-2 md:h-12 md:flex-nowrap md:gap-4 md:py-0">
+      <header className="relative flex h-12 items-center justify-between gap-2 border-b px-4 md:gap-4">
         <p className="flex min-w-0 flex-1 items-baseline gap-2">
           {/* Until there's room for both, the name needs it more than its label does. */}
           <span className="hidden text-xs font-medium tracking-[0.01em] text-muted-foreground lg:inline">
@@ -57,33 +57,21 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
           <span className="truncate text-title">{workspace.name}</span>
         </p>
         <span className="hidden truncate text-sm text-muted-foreground lg:inline">{user.email}</span>
-        {/* The negative margin lines the first link's text up with the name above it. */}
-        <nav
-          aria-label="Workspace"
-          className="order-last -ml-3 flex w-full flex-wrap items-center gap-1 md:order-none md:ml-0 md:w-auto md:shrink-0 md:flex-nowrap md:gap-3"
-        >
-          <Link href="/sources" className={buttonVariants({ variant: "ghost" })}>
-            Sources
-          </Link>
-          <Link href="/rules" className={buttonVariants({ variant: "ghost" })}>
-            Rules
-          </Link>
-          <Link href="/profile" className={buttonVariants({ variant: "ghost" })}>
-            Profile
-          </Link>
-          <Link href="/model" className={buttonVariants({ variant: "ghost" })}>
-            Model
-          </Link>
-          <Link href="/usage" className={buttonVariants({ variant: "ghost" })}>
-            Usage
-          </Link>
-          {admin ? (
-            <Link href="/settings" className={buttonVariants({ variant: "ghost" })}>
-              Settings
-            </Link>
-          ) : null}
+        {/* Below md the links would crush the name, so they and Sign out wait behind the menu. */}
+        <nav aria-label="Workspace" className="shrink-0 md:hidden">
+          <HeaderMenu>
+            <HeaderLinks admin={admin} />
+            <form action={signOut} className="mt-1 border-t pt-1">
+              <Button type="submit" variant="ghost" className="w-full justify-start">
+                Sign out
+              </Button>
+            </form>
+          </HeaderMenu>
         </nav>
-        <form action={signOut} className="shrink-0">
+        <nav aria-label="Workspace" className="hidden shrink-0 items-center gap-3 md:flex">
+          <HeaderLinks admin={admin} />
+        </nav>
+        <form action={signOut} className="hidden shrink-0 md:block">
           <Button type="submit" variant="outline">
             Sign out
           </Button>
@@ -139,6 +127,15 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
       </main>
     </div>
   );
+}
+
+function HeaderLinks({ admin }: { admin: boolean }) {
+  const links = ["Sources", "Rules", "Profile", "Model", "Usage", ...(admin ? ["Settings"] : [])];
+  return links.map((label) => (
+    <Link key={label} href={`/${label.toLowerCase()}`} className={buttonVariants({ variant: "ghost" })}>
+      {label}
+    </Link>
+  ));
 }
 
 /** Top or Latest. The URL holds the choice, so it survives a reload and "Show older". */
