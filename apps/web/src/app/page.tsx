@@ -89,24 +89,24 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
           ids={items.map((row) => row.id)}
         />
         <div className="flex flex-col gap-1">
-          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+          <div className="flex items-center justify-between gap-4">
             <h1 className="text-headline">Feed</h1>
-            <div className="flex flex-wrap items-center gap-2">
-              {before === undefined ? null : (
-                <Link href={latest ? "/?view=latest" : "/"} className={buttonVariants({ variant: "ghost" })}>
-                  {latest ? "Back to the newest" : "Back to the top"}
-                </Link>
-              )}
-              <ViewControl latest={latest} />
-            </div>
+            <ViewControl latest={latest} />
           </div>
-          {before === undefined && !fallbackNotice ? (
+          {before === undefined ? (
             <p className="text-sm text-muted-foreground">
-              {latest ? "Latest first" : "Rated Items from the last 7 days, most important first"}
+              <FeedCaption latest={latest} fallback={fallbackNotice} hasModel={hasModel} />
             </p>
-          ) : null}
+          ) : (
+            // The negative margin lines the link's text up with the heading above it.
+            <Link
+              href={latest ? "/?view=latest" : "/"}
+              className={`${buttonVariants({ variant: "ghost" })} -ml-3 self-start`}
+            >
+              {latest ? "Back to the newest" : "Back to the first page"}
+            </Link>
+          )}
         </div>
-        {fallbackNotice ? <FallbackNotice hasModel={hasModel} /> : null}
         <FeedBody items={items} paged={before !== undefined} sources={sources} />
         {older === null ? null : (
           <Link
@@ -126,8 +126,9 @@ function ViewControl({ latest }: { latest: boolean }) {
   const view = (href: string, label: string, selected: boolean) => (
     <Link
       href={href}
-      aria-current={selected ? "page" : undefined}
-      className={buttonVariants({ variant: selected ? "default" : "ghost" })}
+      aria-current={selected ? "true" : undefined}
+      // Forced colors drop the fill, which would leave the two views looking the same.
+      className={`${buttonVariants({ variant: selected ? "default" : "ghost" })} ${selected ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]" : ""}`}
     >
       {label}
     </Link>
@@ -140,25 +141,22 @@ function ViewControl({ latest }: { latest: boolean }) {
   );
 }
 
-/** Says why Top is showing Latest order: no Item in its window has a Rating. */
-function FallbackNotice({ hasModel }: { hasModel: boolean }) {
+/** What the list shows, including why Top is showing Latest order when no Item in its window is rated. */
+function FeedCaption({ latest, fallback, hasModel }: { latest: boolean; fallback: boolean; hasModel: boolean }) {
+  if (latest) return "Latest first";
+  if (!fallback) return "Rated Items from the last 7 days, ranked by Importance and Severity";
+  if (hasModel) return "Showing Latest order, because no Item captured in the last 7 days has a Rating.";
+  // A model only rates what's captured after it's added, so the link promises new Items only.
   return (
-    <p className="rounded-lg border px-4 py-3 text-sm text-muted-foreground">
-      {hasModel ? (
-        "Showing Latest order, because no Item captured in the last 7 days has a Rating yet."
-      ) : (
-        <>
-          Showing Latest order, because Top ranks rated Items and this Workspace has no model to rate
-          them.{" "}
-          <Link
-            href="/model"
-            className="rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
-          >
-            Add a model
-          </Link>
-        </>
-      )}
-    </p>
+    <>
+      Showing Latest order, because Top ranks rated Items and this Workspace has no model.{" "}
+      <Link
+        href="/model"
+        className="rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+      >
+        Add a model to rate new Items
+      </Link>
+    </>
   );
 }
 
