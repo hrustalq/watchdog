@@ -48,20 +48,20 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
   const hasModel = fallback && caption && (await hasActiveModel(db, workspace.id));
   return (
     <div className="flex flex-1 flex-col">
-      {/* On a phone the links get a row of their own, under the name and Sign out. */}
-      <header className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b px-4 py-2 sm:h-12 sm:flex-nowrap sm:gap-4 sm:py-0">
+      {/* Below md the links get a row of their own, under the name and Sign out, which they'd otherwise crush. */}
+      <header className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b px-4 py-2 md:h-12 md:flex-nowrap md:gap-4 md:py-0">
         <p className="flex min-w-0 flex-1 items-baseline gap-2">
-          {/* On a phone the name needs the room more than its label does. */}
-          <span className="hidden text-xs font-medium tracking-[0.01em] text-muted-foreground sm:inline">
+          {/* Until there's room for both, the name needs it more than its label does. */}
+          <span className="hidden text-xs font-medium tracking-[0.01em] text-muted-foreground lg:inline">
             Workspace
           </span>
           <span className="truncate text-title">{workspace.name}</span>
         </p>
-        <span className="hidden truncate text-sm text-muted-foreground sm:inline">{user.email}</span>
+        <span className="hidden truncate text-sm text-muted-foreground lg:inline">{user.email}</span>
         {/* The negative margin lines the first link's text up with the name above it. */}
         <nav
           aria-label="Workspace"
-          className="order-last -ml-3 flex w-full flex-wrap items-center gap-1 sm:order-none sm:ml-0 sm:w-auto sm:shrink-0 sm:flex-nowrap sm:gap-3"
+          className="order-last -ml-3 flex w-full flex-wrap items-center gap-1 md:order-none md:ml-0 md:w-auto md:shrink-0 md:flex-nowrap md:gap-3"
         >
           <Link href="/sources" className={buttonVariants({ variant: "ghost" })}>
             Sources
@@ -74,6 +74,9 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
           </Link>
           <Link href="/model" className={buttonVariants({ variant: "ghost" })}>
             Model
+          </Link>
+          <Link href="/usage" className={buttonVariants({ variant: "ghost" })}>
+            Usage
           </Link>
           {admin ? (
             <Link href="/settings" className={buttonVariants({ variant: "ghost" })}>

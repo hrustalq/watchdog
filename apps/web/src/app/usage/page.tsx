@@ -1,0 +1,290 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { buttonVariants } from "@/components/ui/button";
+import { hasActiveModel } from "@/lib/rules";
+import { requireWorkspace, server } from "@/lib/server";
+import {
+  formatCost,
+  isFloor,
+  monthLabel,
+  parseMonth,
+  purposeLabel,
+  shiftMonth,
+  usageForMonth,
+  type UsageTally,
+} from "@/lib/usage";
+import { cn } from "@/lib/utils";
+import { modelLink } from "../rules/words";
+
+export const metadata: Metadata = { title: "Usage · Watchdog" };
+
+// The data is read without Suspense, because there's nothing to show until it's there and the month
+// links then work without JavaScript.
+export const instant = false;
+
+/** The month's URL. The current month has none of its own, so a saved link keeps following it. */
+const monthHref = (month: string, current: string) => (month === current ? "/usage" : `/usage?month=${month}`);
+
+const textLink =
+  "inline-flex min-h-6 items-center rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+const notes = "flex max-w-[70ch] flex-col gap-1 text-sm text-muted-foreground";
+const noPrices = "No prices";
+
+const calls = (count: number) => `${count.toLocaleString("en-US")} ${count === 1 ? "call" : "calls"}`;
+
+export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
+  const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
+  const now = new Date();
+  const current = parseMonth(undefined, now);
+  const month = parseMonth(params.month, now);
+  const { db } = server();
+  const { models, purposes, total, firstMonth } = await usageForMonth(db, workspace.id, month);
+  const older = firstMonth !== undefined && firstMonth < month ? shiftMonth(month, -1) : undefined;
+  const newer = month < current ? shiftMonth(month, 1) : undefined;
+
+  return (
+    <div className="flex flex-1 flex-col">
+      <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
+        <Link
+          href="/"
+          className="rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+        >
+          Workspace
+        </Link>
+        <span aria-hidden="true" className="text-muted-foreground">
+          /
+        </span>
+        <span aria-current="page">Usage</span>
+      </nav>
+      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-8">
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <h1 className="text-headline">Usage</h1>
+            {older === undefined && newer === undefined ? null : (
+              <nav aria-label="Month" className="flex flex-wrap gap-2">
+                {older === undefined ? null : (
+                  <Link href={monthHref(older, current)} className={cn(buttonVariants({ variant: "outline" }))}>
+                    <span aria-hidden="true">←</span> {monthLabel(older)}
+                  </Link>
+                )}
+                {newer === undefined ? null : (
+                  <Link href={monthHref(newer, current)} className={cn(buttonVariants({ variant: "outline" }))}>
+                    {monthLabel(newer)} <span aria-hidden="true">→</span>
+                  </Link>
+                )}
+              </nav>
+            )}
+          </div>
+          <p className="text-title">
+            {monthLabel(month)}
+            {month === current ? <span className="font-normal text-muted-foreground"> so far</span> : null}
+          </p>
+          <div className={notes}>
+            <p>Months are in UTC. Every attempt counts as a call, a retry included.</p>
+            {total.withoutTokens === 0 ? null : (
+              <p>
+                {calls(total.withoutTokens)} came back without token counts, so token totals may be understated
+                {total.cost === null ? "." : ", and ≥ marks an estimate that leaves them out."}
+              </p>
+            )}
+            {total.unpricedCalls === 0 || total.cost === null ? null : (
+              <p>{calls(total.unpricedCalls)} ran on a model without prices, so ≥ marks an estimate that leaves them out.</p>
+            )}
+          </div>
+        </div>
+
+        {total.calls === 0 ? (
+          <EmptyMonth
+            label={monthLabel(month)}
+            neverCalled={firstMonth === undefined}
+            hasModel={await hasActiveModel(db, workspace.id)}
+          />
+        ) : (
+          <>
+            <UsageTable
+              id="by-model"
+              title="By model"
+              rowHead="Model"
+              rows={models.map((model) => ({
+                key: model.id,
+                tally: model,
+                label: (
+                  <>
+                    <span className="font-mono text-[0.8125rem] wrap-anywhere">{model.modelName}</span>
+                    <span className="block font-mono text-xs wrap-anywhere text-muted-foreground">{model.baseUrl}</span>
+                    {model.archived ? (
+                      <span className="mt-1 inline-block rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium tracking-[0.01em]">
+                        Archived
+                      </span>
+                    ) : null}
+                  </>
+                ),
+                // Only the active model's prices can still be changed. The link has no hash for the
+                // field: the Model screen loads it in Suspense, so the browser wouldn't scroll to it.
+                noCost: model.archived ? (
+                  noPrices
+                ) : (
+                  <Link href={modelLink} className={textLink}>
+                    Set prices
+                  </Link>
+                ),
+              }))}
+              total={models.length > 1 ? total : undefined}
+              showCost
+            />
+            <UsageTable
+              id="by-purpose"
+              title="By purpose"
+              rowHead="Purpose"
+              rows={purposes.map((row) => ({
+                key: row.purpose,
+                tally: row,
+                label: purposeLabel[row.purpose],
+                noCost: noPrices,
+              }))}
+              // Models carries the link to set prices, so with none set this column would say nothing.
+              showCost={purposes.some((row) => row.cost !== null)}
+            />
+            {total.cost === null ? null : (
+              <p className={notes}>
+                Estimated cost is tokens times each model&apos;s prices as they&apos;re set now, taking every price to be in
+                one currency. It isn&apos;t your provider&apos;s bill.
+              </p>
+            )}
+          </>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function EmptyMonth({ label, neverCalled, hasModel }: { label: string; neverCalled: boolean; hasModel: boolean }) {
+  const words = "mt-2 max-w-md text-sm text-muted-foreground";
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center py-16 text-center">
+      <h2 className="text-headline">{neverCalled ? "No Agent calls yet" : `No Agent calls in ${label}`}</h2>
+      {hasModel && neverCalled ? (
+        <p className={words}>Calls show up here once the Agent rates an Item or you test the connection.</p>
+      ) : null}
+      {hasModel ? null : (
+        <>
+          <p className={words}>The Agent runs on a model you bring, and this Workspace has none.</p>
+          <Link href={modelLink} className={`${buttonVariants()} mt-6`}>
+            Add a model
+          </Link>
+        </>
+      )}
+    </div>
+  );
+}
+
+const reading = "px-4 py-2 text-right align-top font-mono text-[0.8125rem] whitespace-nowrap";
+const columnHead = "px-4 py-2 text-right font-medium whitespace-nowrap";
+// Stays in view while a phone scrolls the readings, so each one still says whose it is.
+const firstColumn = "sticky left-0 bg-background px-4 py-2 text-left align-top";
+
+function CostCell({ tally, none }: { tally: UsageTally; none: React.ReactNode }) {
+  if (tally.cost === null) {
+    return <td className="px-4 py-2 text-right align-top text-sm whitespace-nowrap text-muted-foreground">{none}</td>;
+  }
+  return (
+    <td className={reading}>
+      {isFloor(tally) ? (
+        <>
+          <span aria-hidden="true">≥ </span>
+          <span className="sr-only">At least </span>
+        </>
+      ) : null}
+      {formatCost(tally.cost)}
+    </td>
+  );
+}
+
+function UsageTable({
+  id,
+  title,
+  rowHead,
+  rows,
+  total,
+  showCost,
+}: {
+  id: string;
+  title: string;
+  rowHead: string;
+  rows: { key: string; label: React.ReactNode; tally: UsageTally; noCost: React.ReactNode }[];
+  total?: UsageTally | undefined;
+  showCost: boolean;
+}) {
+  const readings = (tally: UsageTally, none: React.ReactNode) => (
+    <>
+      {showCost ? <CostCell tally={tally} none={none} /> : null}
+      {(["calls", "failed", "inputTokens", "outputTokens"] as const).map((column) => (
+        <td key={column} className={reading}>
+          {tally[column].toLocaleString("en-US")}
+        </td>
+      ))}
+    </>
+  );
+  return (
+    <div className="flex flex-col gap-2">
+      <h2 id={id} className="text-title">
+        {title}
+      </h2>
+      {/* Six columns don't fit a phone, so this scrolls by itself, with the cost first to be seen. */}
+      <div
+        role="region"
+        aria-labelledby={id}
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- so a keyboard can scroll it
+        tabIndex={0}
+        className="overflow-x-auto rounded-lg border outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+      >
+        <table className="w-full min-w-xl text-sm">
+          <thead className="border-b text-xs tracking-[0.01em] text-muted-foreground">
+            <tr>
+              <th scope="col" className={cn(firstColumn, "font-medium")}>
+                {rowHead}
+              </th>
+              {showCost ? (
+                <th scope="col" className={columnHead}>
+                  Estimated cost
+                </th>
+              ) : null}
+              <th scope="col" className={columnHead}>
+                Calls
+              </th>
+              <th scope="col" className={columnHead}>
+                Failed
+              </th>
+              <th scope="col" className={columnHead}>
+                Input tokens
+              </th>
+              <th scope="col" className={columnHead}>
+                Output tokens
+              </th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.map((row) => (
+              <tr key={row.key}>
+                <th scope="row" className={cn(firstColumn, "min-w-40 font-normal")}>
+                  {row.label}
+                </th>
+                {readings(row.tally, row.noCost)}
+              </tr>
+            ))}
+          </tbody>
+          {total === undefined ? null : (
+            <tfoot className="border-t font-medium">
+              <tr>
+                <th scope="row" className={cn(firstColumn, "font-medium")}>
+                  Total
+                </th>
+                {readings(total, noPrices)}
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
+    </div>
+  );
+}
