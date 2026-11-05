@@ -177,7 +177,9 @@ describe("ruleFromYaml", () => {
     expect(() => ruleFromYaml("classifier: a\nwhen: &w { not: *w }\nassign: [b]\n")).toThrow();
   });
 
-  it("throws on nesting too deep to parse, so a caller's catch sees it", () => {
+  // This checks what's thrown, not how fast. The parser makes an error per unclosed bracket, and CI
+  // has taken from 1.3 to over 7 seconds to get through them, so Vitest's 5 seconds is too tight.
+  it("throws on nesting too deep to parse, so a caller's catch sees it", { timeout: 60_000 }, () => {
     const deep = `classifier: a\nwhen: ${"[".repeat(100_000)}\nassign: [b]\n`;
     expect(() => ruleFromYaml(deep)).toThrow();
   });

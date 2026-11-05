@@ -209,7 +209,7 @@ describe("Rules", () => {
       ["YAML nested too deeply", "[".repeat(20_000), /./],
       ["nothing at all", "", /starts with/],
       ["a list", "- a\n", /starts with/],
-    ])("refuses %s as a whole", async (_, yaml, message) => {
+    ])("refuses %s as a whole", { timeout: 60_000 }, async (_, yaml, message) => {
       const [problem] = await problems(yaml);
       expect(problem?.path).toBe("");
       expect(problem?.message).toMatch(message);
