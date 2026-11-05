@@ -1,6 +1,6 @@
 export { type AgentResult, callAgent, readApiKey, testModelConnection } from "./agent/call-agent.ts";
 export { loadProfile } from "./agent/profile.ts";
-export { type RatingAxis, ratingMeaning, ratingScale } from "./agent/rating.ts";
+export { type RatingAxis, ratingAnchor, ratingMeaning, ratingScale } from "./agent/rating.ts";
 export { type AgentFetch, createAgentFetch } from "./agent/provider.ts";
 export { loadConfig, type Config } from "./config.ts";
 export {

@@ -51,12 +51,13 @@ export function ratingMeaning(axis: RatingAxis, level: number) {
   return found.meaning;
 }
 
+/** A level's meaning and example together, as the Agent reads them. */
+export const ratingAnchor = ({ meaning, example }: { meaning: string; example?: string | undefined }) =>
+  example === undefined ? meaning : `${meaning}, e.g. ${example}`;
+
 const anchors = Object.values(ratingScale)
   .map(({ name, about, levels }) => {
-    const lines = levels.map(
-      ({ level, meaning, example }) =>
-        `${String(level)}: ${meaning}${example === undefined ? "" : `, e.g. ${example}`}.`,
-    );
+    const lines = levels.map((entry) => `${String(entry.level)}: ${ratingAnchor(entry)}.`);
     return `${name}, ${about}:\n${lines.join("\n")}`;
   })
   .join("\n\n");

@@ -1,7 +1,7 @@
 // The controls that correct a Rating (DESIGN.md, "Correction controls"). They're plain forms, so they
 // work without JavaScript. Each button posts one axis and the action keeps the other at its current
 // level, and the buttons stay focusable at either end of the scale, so focus isn't lost by reaching it.
-import { type RatingAxis, ratingMeaning, ratingScale } from "@watchdog/core";
+import { type RatingAxis, ratingAnchor, ratingMeaning, ratingScale } from "@watchdog/core";
 import { Minus, Plus } from "lucide-react";
 import { field, label } from "@/components/field-classes";
 import { ImportanceChip, SeverityChip } from "@/components/rating";
@@ -149,19 +149,25 @@ function ScaleGuide() {
   return (
     <details className="w-full">
       <summary
-        className={`w-fit cursor-pointer rounded-sm ${label} text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30`}
+        className={`w-fit cursor-pointer rounded-sm py-1 ${label} text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30`}
       >
         What the levels mean
       </summary>
-      <div className="mt-2 flex flex-col gap-3">
+      <div className="mt-1 flex flex-col gap-3">
         {Object.values(ratingScale).map(({ name, about, levels: scale }) => (
           <div key={name} className="flex flex-col gap-1">
             <p className={`${label} text-muted-foreground`}>{`${name}, ${about}`}</p>
             <ul className="flex flex-col gap-1 text-sm">
-              {scale.map(({ level, meaning }) => (
-                <li key={level} className="flex gap-2">
-                  <span className="font-mono">{level}</span>
-                  <span className="first-letter:uppercase">{meaning}</span>
+              {scale.map((entry) => (
+                <li key={entry.level} className="flex gap-2">
+                  {/* One text node for a screen reader, as on the chips. */}
+                  <span className="sr-only">{`${String(entry.level)} of 5: ${ratingAnchor(entry)}`}</span>
+                  <span aria-hidden="true" className="font-mono">
+                    {entry.level}
+                  </span>
+                  <span aria-hidden="true" className="first-letter:uppercase">
+                    {ratingAnchor(entry)}
+                  </span>
                 </li>
               ))}
             </ul>

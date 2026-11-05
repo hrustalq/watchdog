@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentExtractorRule } from "../rules/schema.ts";
-import { ratingMeaning, ratingSchema, ratingTask } from "./rating.ts";
+import { ratingAnchor, ratingMeaning, ratingSchema, ratingTask } from "./rating.ts";
 
 const rated = { summary: "A summary", reasoning: "Because", severity: 3, importance: 3 };
 
@@ -94,5 +94,15 @@ describe("ratingMeaning", () => {
 
   it.each([0, 6])("refuses level %i, which isn't on the scale", (level) => {
     expect(() => ratingMeaning("severity", level)).toThrow();
+  });
+});
+
+describe("ratingAnchor", () => {
+  it("gives a level's meaning with its example", () => {
+    expect(ratingAnchor({ meaning: "act today", example: "an outage" })).toBe("act today, e.g. an outage");
+  });
+
+  it("gives only the meaning of a level with no example", () => {
+    expect(ratingAnchor({ meaning: "directly about the user's product" })).toBe("directly about the user's product");
   });
 });
