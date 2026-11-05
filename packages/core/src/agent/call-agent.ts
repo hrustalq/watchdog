@@ -107,8 +107,7 @@ export async function callAgent<Schema extends z.ZodObject>(
     return {
       ok: false,
       reason: "unreadable_key",
-      message:
-        "Watchdog can't read the stored API key, which happens when WATCHDOG_ENCRYPTION_KEY changes. Enter the key again on the Model screen.",
+      message: "Watchdog can't read the stored API key. Enter the key again on the Model screen.",
     };
   }
 

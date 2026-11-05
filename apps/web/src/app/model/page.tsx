@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { Timestamp } from "@/components/timestamp";
+import { buttonVariants } from "@/components/ui/button";
 import {
   getModel,
   lastFailedCall,
@@ -101,7 +102,9 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
     <>
       {param("saved") === "1" ? (
         <Notice role="status" className={noticeClass}>
-          Model saved. Test the connection to check that it works.
+          {model?.keyUnreadable === true
+            ? "Model saved, but its API key is still unreadable."
+            : "Model saved. Test the connection to check that it works."}
         </Notice>
       ) : null}
       {param("saved") === "key-left-behind" ? (
@@ -137,8 +140,9 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
             test={test === "ok" && (failure?.recovered === false || model.keyUnreadable) ? undefined : test}
             modelName={model.modelName}
           />
-          {model.keyUnreadable ? <UnreadableKey justTested={test === "unreadable-key"} /> : null}
-          {failure === undefined ? null : (
+          {model.keyUnreadable ? <UnreadableKey justTested={test === "unreadable-key"} mode={mode} /> : null}
+          {/* An older failure, or "A later call worked", says nothing about a key that can't be read. */}
+          {failure === undefined || model.keyUnreadable ? null : (
             <FailedCall
               failure={failure}
               // A test that just failed is why the user is reading this line.
@@ -147,16 +151,23 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
             />
           )}
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex flex-col gap-1">
-              <form action={testConnectionAction}>
-                <SubmitButton variant="outline" pendingLabel="Testing…" className="sm:w-auto">
-                  Test connection
-                </SubmitButton>
-              </form>
-              <p className="text-xs text-muted-foreground">
-                One small call to the saved model, which your provider bills as usual.
-              </p>
-            </div>
+            {/* A test can't help while the key is unreadable: it makes no call, and the screen already knows. */}
+            {model.keyUnreadable ? (
+              <a href="#api-key" className={`${buttonVariants()} w-full sm:w-auto`}>
+                Enter the key again
+              </a>
+            ) : (
+              <div className="flex flex-col gap-1">
+                <form action={testConnectionAction}>
+                  <SubmitButton variant="outline" pendingLabel="Testing…" className="sm:w-auto">
+                    Test connection
+                  </SubmitButton>
+                </form>
+                <p className="text-xs text-muted-foreground">
+                  One small call to the saved model, which your provider bills as usual.
+                </p>
+              </div>
+            )}
             <RemoveModel name={model.modelName} />
           </div>
         </section>
@@ -166,11 +177,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
         <h2 id="model-form" className="text-title">
           {model === undefined ? "Add a model" : "Change the model"}
         </h2>
-        <p className="text-sm text-muted-foreground">
-          {model === undefined
-            ? "Bring your own model to get Items rated and Agent-backed rules running. Without one, deterministic rules still run and Items stay unrated."
-            : "A new provider type, base URL or model name replaces this model. Usage history keeps the old one."}
-        </p>
+        <p className="text-sm text-muted-foreground">{formIntro(model)}</p>
         {/* A new key on the saved values remounts nothing, so React's own form reset clears the field. */}
         <ModelForm
           key={JSON.stringify(values)}
@@ -183,6 +190,15 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
       </section>
     </>
   );
+}
+
+function formIntro(model: Awaited<ReturnType<typeof getModel>>) {
+  if (model === undefined) {
+    return "Bring your own model to get Items rated and Agent-backed rules running. Without one, deterministic rules still run and Items stay unrated.";
+  }
+  return model.keyUnreadable
+    ? "Enter the API key below. Leaving the rest as it is keeps this model."
+    : "A new provider type, base URL or model name replaces this model. Usage history keeps the old one.";
 }
 
 function keyStatus({ hasKey, keyUnreadable }: { hasKey: boolean; keyUnreadable: boolean }) {
@@ -213,32 +229,39 @@ function TestResult({ test, modelName }: { test: TestOutcome | undefined; modelN
   }
 }
 
-const alarmLine = "flex items-start gap-2 text-sm text-alarm";
-const alarmLamp = <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />;
-
-/** Takes focus only after a test: a page that merely loads with this shouldn't move it. */
-function UnreadableKey({ justTested }: { justTested: boolean }) {
+/** Something to fix. It takes focus only after a test: a page that merely loads with it shouldn't move it. */
+function AlarmLine({ takeFocus, children }: { takeFocus: boolean; children: React.ReactNode }) {
+  const className = "flex items-start gap-2 text-sm text-alarm";
   const line = (
     <>
-      {alarmLamp}
-      <span className="min-w-0">
-        Watchdog can&apos;t read the stored API key, which happens when WATCHDOG_ENCRYPTION_KEY changes. Agent calls fail
-        until you{" "}
-        <a href="#api-key" className={keyLink}>
-          enter the key again
-        </a>
-        .
-      </span>
+      <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
+      {children}
     </>
   );
-  return justTested ? (
-    <Notice role="alert" className={alarmLine}>
+  return takeFocus ? (
+    <Notice role="alert" className={className}>
       {line}
     </Notice>
   ) : (
-    <p className={alarmLine}>{line}</p>
+    <p className={className}>{line}</p>
   );
 }
+
+/** Only whoever runs a self-hosted Watchdog can change the variable, or put its old value back. */
+const UnreadableKey = ({ justTested, mode }: { justTested: boolean; mode: "hosted" | "self-hosted" }) => (
+  <AlarmLine takeFocus={justTested}>
+    <span className="min-w-0 break-words">
+      Watchdog can&apos;t read the stored API key
+      {mode === "self-hosted" ? (
+        <>
+          , which happens when <span className="font-mono text-[0.8125rem]">WATCHDOG_ENCRYPTION_KEY</span> changes
+        </>
+      ) : null}
+      . New Items stay unrated until you enter the key again, and deterministic rules keep running.
+      {mode === "self-hosted" ? " If the change was a mistake, put the old value back instead." : null}
+    </span>
+  </AlarmLine>
+);
 
 function FailedCall({
   failure,
@@ -258,19 +281,7 @@ function FailedCall({
     </span>
   );
   if (failure.recovered) return <p className="text-sm text-muted-foreground">{words}</p>;
-  const line = (
-    <>
-      {alarmLamp}
-      {words}
-    </>
-  );
-  return justFailed ? (
-    <Notice role="alert" className={alarmLine}>
-      {line}
-    </Notice>
-  ) : (
-    <p className={alarmLine}>{line}</p>
-  );
+  return <AlarmLine takeFocus={justFailed}>{words}</AlarmLine>;
 }
 
 /** Remove, then a confirmation in the page that says what goes with it, as on Sources. */

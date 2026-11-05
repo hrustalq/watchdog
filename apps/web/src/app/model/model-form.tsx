@@ -14,7 +14,7 @@ export interface ModelFormValues {
 
 function keyHint(hasKey: boolean, keyUnreadable: boolean) {
   if (keyUnreadable) {
-    return "Watchdog can't read the stored key, so enter it again. Leaving this blank keeps the unreadable one.";
+    return "Left blank, the unreadable key stays.";
   }
   return hasKey
     ? "Changing the provider type or the host needs the key again, because Watchdog won't send a key to another address."
@@ -23,8 +23,8 @@ function keyHint(hasKey: boolean, keyUnreadable: boolean) {
 
 /**
  * Sets the Workspace's model. The key field is never filled in: the page only knows whether a key
- * is set, and a blank field keeps it. A key that can't be read isn't worth keeping, so the form
- * asks for it instead of offering to.
+ * is set, and a blank field keeps it. That holds for a key that can't be read too, so there the
+ * form asks for the key instead of offering to keep it.
  */
 export function ModelForm({
   values,
@@ -107,7 +107,7 @@ export function ModelForm({
 
       <div className="flex flex-col gap-2">
         <label htmlFor="api-key" className={labelClass}>
-          API key <span className="font-normal text-muted-foreground">(optional)</span>
+          API key {keyUnreadable ? null : <span className="font-normal text-muted-foreground">(optional)</span>}
         </label>
         <input
           id="api-key"
@@ -127,6 +127,9 @@ export function ModelForm({
                 The key you typed wasn&apos;t saved. Enter it again
                 {keepable ? ", or leave this blank to keep the current one" : ""}.{" "}
               </strong>
+            ) : null}
+            {keyUnreadable && !keyTyped ? (
+              <strong className="font-medium text-foreground">Enter this model&apos;s key and save. </strong>
             ) : null}
             Stored encrypted, and never shown again.{" "}
             {keyHint(hasKey, keyUnreadable)}
