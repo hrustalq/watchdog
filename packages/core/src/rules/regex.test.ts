@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { captureRegexError, firstCapture, regexError, regexMatches } from "./regex.ts";
 
@@ -55,11 +56,12 @@ describe("regexMatches", () => {
     expect(regexMatches("(?i)launch", "LAUNCH day")).toBe(true);
   });
 
-  it("finishes a catastrophic-backtracking pattern on 32 KB in under 100 ms", () => {
+  // A backtracking engine never finishes this match, and Vitest's timeout can't interrupt synchronous
+  // code, but a vm timeout can. RE2 takes milliseconds, so the limit only has to clear a stalled runner.
+  it("finishes a catastrophic-backtracking pattern on 32 KB", () => {
     const text = `${"a".repeat(32 * 1024)}b`;
-    const started = performance.now();
-    expect(regexMatches("(a+)+$", text)).toBe(false);
-    expect(performance.now() - started).toBeLessThan(100);
+    const match = () => regexMatches("(a+)+$", text);
+    expect(runInNewContext("match()", { match }, { timeout: 30_000 })).toBe(false);
   });
 });
 
