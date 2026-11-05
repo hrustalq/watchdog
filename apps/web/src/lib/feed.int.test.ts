@@ -492,15 +492,19 @@ describe("Feed", () => {
       async function planOf(before: ReturnType<typeof parseTopCursor>) {
         const query = vi.spyOn(db.$client, "query");
         await topPage(db, seeded.workspaceId, before);
-        const [config, params] = query.mock.calls[0] as unknown as [{ text: string }, unknown[]];
+        const [config, params]: unknown[] = query.mock.calls[0] ?? [];
         query.mockRestore();
+        if (typeof config !== "object" || config === null || !("text" in config)) throw new Error("No query");
         const client = await db.$client.connect();
         try {
           // Tiny tables make these scans cheapest, so forbid them to see what the order can use.
           await client.query("begin");
           await client.query("set local enable_seqscan = off");
           await client.query("set local enable_bitmapscan = off");
-          const plan = await client.query<{ "QUERY PLAN": string }>(`explain ${config.text}`, params);
+          const plan = await client.query<{ "QUERY PLAN": string }>(
+            `explain ${String(config.text)}`,
+            Array.isArray(params) ? params : [],
+          );
           await client.query("rollback");
           return plan.rows.map((row) => row["QUERY PLAN"]).join("\n");
         } finally {

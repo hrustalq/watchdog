@@ -48,6 +48,9 @@ test("a new install signs in, adds an RSS Source and sees its Items in the Feed"
     }
     // Captured in the same poll as the two above, so it would be on the page by now.
     await expect(item("E-Maj 5.0.1"), "an entry older than 7 days was captured").toHaveCount(0);
+    // No model here, so Top shows Latest order and says why.
+    await expect(page.getByText("this Workspace has no model to rate them")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Add a model" })).toHaveAttribute("href", "/model");
   });
 
   await test.step("open an Item and see its capture Log row", async () => {
