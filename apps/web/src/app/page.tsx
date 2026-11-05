@@ -4,10 +4,12 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { eq, source } from "@watchdog/db";
 import { CategoryList, Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
-import { feedPage, parseCursor, type FeedItem } from "@/lib/feed";
+import { feedPage, parseCursor, parseTopCursor, topPage, type FeedItem } from "@/lib/feed";
+import { hasActiveModel } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { signOut } from "./actions";
 import { FeedRefresher } from "./feed-refresher";
+import { modelLink } from "./rules/words";
 
 export default function WorkspacePage({ searchParams }: PageProps<"/">) {
   return (
@@ -19,15 +21,25 @@ export default function WorkspacePage({ searchParams }: PageProps<"/">) {
 
 async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchParams">) {
   const [{ user, workspace, admin }, params] = await Promise.all([requireWorkspace(), searchParams]);
-  // A malformed cursor is ignored, so the page is the newest one and keeps refreshing.
-  const before = parseCursor(params.before);
+  const latest = params.view === "latest";
+  // A malformed cursor is ignored, so the page is the view's first one and keeps refreshing.
+  const latestBefore = latest ? parseCursor(params.before) : undefined;
+  const topBefore = latest ? undefined : parseTopCursor(params.before);
+  const before = latestBefore ?? topBefore;
   const { db } = server();
-  const { items, older } = await feedPage(db, workspace.id, before);
-  // Only an empty newest page needs to know whether there's anything to watch.
+  const { items, older, fallback } = latest
+    ? { ...(await feedPage(db, workspace.id, latestBefore)), fallback: false }
+    : await topPage(db, workspace.id, topBefore);
+  // Only an empty first page needs to know whether there's anything to watch.
   const sources =
     items.length === 0 && before === undefined
       ? await db.$count(source, eq(source.workspaceId, workspace.id))
       : 0;
+  // With no Items the empty state has the Feed's whole story, so Top has no order to explain.
+  const caption = before === undefined && !(fallback && items.length === 0);
+  const hasModel = fallback && caption && (await hasActiveModel(db, workspace.id));
+  // Top's fallback pages through Latest, so its "Show older" goes there.
+  const olderView = latest || fallback ? "view=latest&" : "";
   return (
     <div className="flex flex-1 flex-col">
       {/* On a phone the links get a row of their own, under the name and Sign out. */}
@@ -73,21 +85,31 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
         {/* On every page, since a Rating can arrive for an Item on an older one. The key starts it
             afresh on each page, so paging isn't announced as Items arriving. It sits first, so it stays
             mounted when the empty state gives way to the list. */}
-        <FeedRefresher key={before?.id} ids={items.map((row) => row.id)} />
-        <div className="flex items-baseline justify-between gap-4">
-          <h1 className="text-headline">Feed</h1>
-          {before === undefined ? (
-            <p className="text-sm text-muted-foreground">Latest first</p>
-          ) : (
-            <Link href="/" className={buttonVariants({ variant: "ghost" })}>
-              Back to the newest
+        <FeedRefresher key={[latest, fallback, before?.id].join()} ids={items.map((row) => row.id)} />
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between gap-4">
+            <h1 className="text-headline">Feed</h1>
+            <ViewControl latest={latest} />
+          </div>
+          {caption ? (
+            <p className="text-sm text-muted-foreground">
+              <FeedCaption latest={latest} fallback={fallback} hasModel={hasModel} />
+            </p>
+          ) : null}
+          {before === undefined ? null : (
+            // The negative margin lines the link's text up with the heading above it.
+            <Link
+              href={latest ? "/?view=latest" : "/"}
+              className={`${buttonVariants({ variant: "ghost" })} -ml-3 self-start`}
+            >
+              {latest ? "Back to the newest" : "Back to the first page"}
             </Link>
           )}
         </div>
         <FeedBody items={items} paged={before !== undefined} sources={sources} />
         {older === null ? null : (
           <Link
-            href={`/?before=${older}`}
+            href={`/?${olderView}before=${older}`}
             className={`${buttonVariants({ variant: "outline" })} self-center`}
           >
             Show older
@@ -95,6 +117,45 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
         )}
       </main>
     </div>
+  );
+}
+
+/** Top or Latest. The URL holds the choice, so it survives a reload and "Show older". */
+function ViewControl({ latest }: { latest: boolean }) {
+  const view = (href: string, label: string, selected: boolean) => (
+    <Link
+      href={href}
+      aria-current={selected ? "true" : undefined}
+      // Forced colors drop the fill, which would leave the two views looking the same.
+      className={`${buttonVariants({ variant: selected ? "default" : "ghost" })} ${selected ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]" : ""}`}
+    >
+      {label}
+    </Link>
+  );
+  return (
+    <nav aria-label="Feed view" className="flex gap-1">
+      {view("/", "Top", !latest)}
+      {view("/?view=latest", "Latest", latest)}
+    </nav>
+  );
+}
+
+/** What the list shows, including why Top is showing Latest order when no Item in its window is rated. */
+function FeedCaption({ latest, fallback, hasModel }: { latest: boolean; fallback: boolean; hasModel: boolean }) {
+  if (latest) return "Latest first";
+  if (!fallback) return "Rated Items captured in the last 7 days, ranked by Importance and Severity";
+  if (hasModel) return "Showing Latest order, because no Item captured in the last 7 days has a Rating.";
+  // A model only rates what's captured after it's added, so the link promises new Items only.
+  return (
+    <>
+      Showing Latest order, because Top ranks rated Items and this Workspace has no model.{" "}
+      <Link
+        href={modelLink}
+        className="rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+      >
+        Add a model to rate new Items
+      </Link>
+    </>
   );
 }
 

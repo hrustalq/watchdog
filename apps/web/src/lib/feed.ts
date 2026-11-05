@@ -1,6 +1,7 @@
-// The Feed as the Workspace screen reads it, in the Latest view (docs: Processing pipeline, "Feed").
-// Every query is scoped to the Workspace, so another Workspace's Item id behaves like a missing one.
-import { and, type Db, desc, eq, item, itemCategory, source, sql } from "@watchdog/db";
+// The Feed as the Workspace screen reads it, in its Top and Latest views (docs: Processing pipeline,
+// "Feed"). Every query is scoped to the Workspace, so another Workspace's Item id behaves like a
+// missing one.
+import { and, type Db, desc, eq, isNotNull, item, itemCategory, source, type SQL, sql } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 export const feedPageSize = 50;
@@ -44,17 +45,22 @@ export function parseCursor(value: unknown) {
 
 export type FeedCursor = NonNullable<ReturnType<typeof parseCursor>>;
 
+/** The sort keys of a Top "Show older" cursor, `<top_score>_<captured_at>_<id>`, or undefined. */
+export function parseTopCursor(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const [score = "", captured = "", id = "", ...rest] = value.split("_");
+  const valid = rest.length === 0 && /^\d{1,2}$/.test(score) && isStamp(captured) && isUuid(id);
+  return valid ? { score, captured, id } : undefined;
+}
+
+type TopCursor = NonNullable<ReturnType<typeof parseTopCursor>>;
+
 /**
- * One page of the Feed, newest first, and the cursor for the page after it (null on the last).
+ * One page of rows in the given order, and the cursor for the page after it (null on the last).
  * The cursor is built in SQL from the last Item's keys, keeping captured_at's microseconds that a
  * JS Date drops, so "Show older" can't skip or repeat an Item as new ones arrive.
  */
-export async function feedPage(db: Db, workspaceId: string, before?: FeedCursor) {
-  const after =
-    before === undefined
-      ? undefined
-      : sql`${latestKey} < (
-          ${before.captured}::timestamptz, ${before.published}::timestamptz, ${before.id}::uuid)`;
+async function readPage(db: Db, cursor: SQL<string>, where: SQL | undefined, order: SQL[]) {
   const rows = await db
     .select({
       id: item.id,
@@ -71,18 +77,59 @@ export async function feedPage(db: Db, workspaceId: string, before?: FeedCursor)
         where ${itemCategory.itemId} = ${item.id} order by ${itemCategory.category})`,
       // The summary once the Agent has written one. A row shows two lines at most, and either can be long.
       excerpt: sql<string>`left(coalesce(${item.summary}, ${item.body}), 300)`,
-      // The last row's sort keys, in the shape parseCursor reads.
-      cursor: sql<string>`concat_ws('_', ${stamp(item.capturedAt)},
-        coalesce(${stamp(item.publishedAt)}, '-infinity'), ${item.id})`,
+      cursor,
     })
     .from(item)
     .innerJoin(source, eq(source.id, item.sourceId))
-    .where(and(eq(item.workspaceId, workspaceId), after))
-    .orderBy(desc(item.capturedAt), sql`${published} desc`, desc(item.id))
+    .where(where)
+    .orderBy(...order)
     .limit(feedPageSize + 1);
   const items = rows.slice(0, feedPageSize).map(({ cursor: _, ...row }) => row);
   const older = rows.length > feedPageSize ? (rows[feedPageSize - 1]?.cursor ?? null) : null;
   return { items, older };
+}
+
+/** One page of the Latest view, newest first. */
+export function feedPage(db: Db, workspaceId: string, before?: FeedCursor) {
+  const after =
+    before === undefined
+      ? undefined
+      : sql`${latestKey} < (
+          ${before.captured}::timestamptz, ${before.published}::timestamptz, ${before.id}::uuid)`;
+  return readPage(
+    db,
+    // The last row's sort keys, in the shape parseCursor reads.
+    sql<string>`concat_ws('_', ${stamp(item.capturedAt)},
+      coalesce(${stamp(item.publishedAt)}, '-infinity'), ${item.id})`,
+    and(eq(item.workspaceId, workspaceId), after),
+    [desc(item.capturedAt), sql`${published} desc`, desc(item.id)],
+  );
+}
+
+/**
+ * One page of the Top view: rated Items captured in the last 7 days, highest top_score first, then
+ * newest captured, then id. `fallback` means the Workspace has none, so this is Latest's first page
+ * and `older` is a cursor for Latest. The keys are all non-null for a rated Item, so the keyset
+ * cursor is one row comparison.
+ */
+export async function topPage(db: Db, workspaceId: string, before?: TopCursor) {
+  const page = await readPage(
+    db,
+    sql<string>`concat_ws('_', ${item.topScore}, ${stamp(item.capturedAt)}, ${item.id})`,
+    and(
+      eq(item.workspaceId, workspaceId),
+      isNotNull(item.topScore),
+      sql`${item.capturedAt} >= now() - interval '7 days'`,
+      before === undefined
+        ? undefined
+        : sql`(${item.topScore}, ${item.capturedAt}, ${item.id}) < (
+            ${before.score}::smallint, ${before.captured}::timestamptz, ${before.id}::uuid)`,
+    ),
+    [desc(item.topScore), desc(item.capturedAt), desc(item.id)],
+  );
+  return page.items.length === 0 && before === undefined
+    ? { ...(await feedPage(db, workspaceId)), fallback: true }
+    : { ...page, fallback: false };
 }
 
 export type FeedItem = Awaited<ReturnType<typeof feedPage>>["items"][number];

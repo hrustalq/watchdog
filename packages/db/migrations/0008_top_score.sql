@@ -1,0 +1,2 @@
+ALTER TABLE "item" ADD COLUMN "top_score" smallint GENERATED ALWAYS AS (2 * "importance" + "severity") STORED;--> statement-breakpoint
+CREATE INDEX "item_top_idx" ON "item" USING btree ("workspace_id","top_score" DESC NULLS FIRST,"captured_at" DESC NULLS FIRST,"id" DESC NULLS FIRST) WHERE "item"."top_score" is not null;

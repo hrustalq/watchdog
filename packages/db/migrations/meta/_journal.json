@@ -57,6 +57,13 @@
       "when": 1793833163956,
       "tag": "0007_agent_call_failure_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793892892759,
+      "tag": "0008_top_score",
+      "breakpoints": true
     }
   ]
 }

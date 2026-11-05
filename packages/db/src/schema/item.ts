@@ -48,6 +48,8 @@ export const item = pgTable(
     /** The Rating, 1–5 on each axis. Null until rated. */
     severity: smallint("severity"),
     importance: smallint("importance"),
+    /** What the Feed's Top order ranks by, null until rated. A Correction changes it with the Rating. */
+    topScore: smallint("top_score").generatedAlwaysAs(sql`2 * "importance" + "severity"`),
     /** Set when the classify call succeeds, so a retry of the job doesn't call the model again. */
     classifiedAt: timestamp("classified_at", { withTimezone: true }),
     ratedAt: timestamp("rated_at", { withTimezone: true }),
@@ -76,6 +78,16 @@ export const item = pgTable(
       sql`coalesce(${table.publishedAt}, '-infinity') desc`,
       table.id.desc().nullsFirst(),
     ),
+    // The Feed's Top order: rated Items only, so every key is non-null and the keyset cursor is one
+    // row comparison again.
+    index("item_top_idx")
+      .on(
+        table.workspaceId,
+        table.topScore.desc().nullsFirst(),
+        table.capturedAt.desc().nullsFirst(),
+        table.id.desc().nullsFirst(),
+      )
+      .where(sql`${table.topScore} is not null`),
   ],
 );
 

@@ -21,6 +21,8 @@ test("a new install signs in, adds an RSS Source and sees its Items in the Feed"
     await page.goto(await magicLink(email));
     await page.getByRole("button", { name: "Sign in to Watchdog" }).click();
     await expect(page.getByRole("heading", { name: "Nothing is being watched yet" })).toBeVisible();
+    // With no Items, Top has no order to describe.
+    await expect(page.getByText("Rated Items captured")).toHaveCount(0);
   });
 
   await test.step("add the fixture feed as an RSS Source", async () => {
@@ -48,6 +50,9 @@ test("a new install signs in, adds an RSS Source and sees its Items in the Feed"
     }
     // Captured in the same poll as the two above, so it would be on the page by now.
     await expect(item("E-Maj 5.0.1"), "an entry older than 7 days was captured").toHaveCount(0);
+    // No model here, so Top shows Latest order and says why.
+    await expect(page.getByText("this Workspace has no model")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Add a model to rate new Items" })).toHaveAttribute("href", "/model");
   });
 
   await test.step("open an Item and see its capture Log row", async () => {
