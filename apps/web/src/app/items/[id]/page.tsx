@@ -56,20 +56,9 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
       detail: (
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Rating severity={found.severity} importance={found.importance} />
-          {found.severity === null ? (
-            <Missing>
-              {found.processedAt === null ? (
-                "The pipeline hasn't finished with this Item yet."
-              ) : (
-                <>
-                  <a href="#log" className={inlineLink}>
-                    The Log
-                  </a>{" "}
-                  says why.
-                </>
-              )}
-            </Missing>
-          ) : null}
+          <a href="#log" className={inlineLink}>
+            See the Log
+          </a>
         </span>
       ),
     },
@@ -77,7 +66,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
       term: "Categories",
       detail:
         found.categories.length === 0 ? (
-          <Missing>{found.processedAt === null ? "None yet" : "None"}</Missing>
+          <Missing>None</Missing>
         ) : (
           <CategoryList categories={found.categories.map(({ category }) => category)} />
         ),
@@ -123,7 +112,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
           <h2 id="summary" className="text-title">
             Summary
           </h2>
-          <p className="max-w-[70ch] text-base leading-[1.6] break-words whitespace-pre-line">{found.summary}</p>
+          <p className={readingText}>{found.summary}</p>
         </section>
       )}
       <section aria-labelledby="original" className="flex flex-col gap-3">
@@ -133,9 +122,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
         {found.body === "" ? (
           <p className="text-sm text-muted-foreground">The Source gave no text for this Item.</p>
         ) : (
-          <p className="max-w-[70ch] text-base leading-[1.6] break-words whitespace-pre-line">
-            {found.body}
-          </p>
+          <p className={readingText}>{found.body}</p>
         )}
       </section>
       <section aria-labelledby="fields" className="flex flex-col gap-3">
@@ -209,6 +196,8 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
 
 const inlineLink =
   "rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+
+const readingText = "max-w-[70ch] text-base leading-[1.6] break-words whitespace-pre-line";
 
 function RunOutcome({ message, failed }: { message: string; failed: boolean }) {
   return failed ? (

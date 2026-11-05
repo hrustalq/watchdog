@@ -70,9 +70,10 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
         </form>
       </header>
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8">
-        {/* On every page, since a Rating can arrive for an Item on an older one. It sits first, so it
-            stays mounted when the empty state gives way to the list. */}
-        <FeedRefresher ids={items.map((row) => row.id)} />
+        {/* On every page, since a Rating can arrive for an Item on an older one. The key starts it
+            afresh on each page, so paging isn't announced as Items arriving. It sits first, so it stays
+            mounted when the empty state gives way to the list. */}
+        <FeedRefresher key={before?.id} ids={items.map((row) => row.id)} />
         <div className="flex items-baseline justify-between gap-4">
           <h1 className="text-headline">Feed</h1>
           {before === undefined ? (
