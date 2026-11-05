@@ -5,10 +5,11 @@ import { eq, source } from "@watchdog/db";
 import { CategoryList, Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { feedPage, parseCursor, parseTopCursor, topPage, type FeedItem } from "@/lib/feed";
-import { getModel } from "@/lib/model";
+import { hasActiveModel } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { signOut } from "./actions";
 import { FeedRefresher } from "./feed-refresher";
+import { modelLink } from "./rules/words";
 
 export default function WorkspacePage({ searchParams }: PageProps<"/">) {
   return (
@@ -34,9 +35,9 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
     items.length === 0 && before === undefined
       ? await db.$count(source, eq(source.workspaceId, workspace.id))
       : 0;
-  // With no Items the empty state has the Feed's whole story, so there's no order to explain.
-  const fallbackNotice = fallback && items.length > 0;
-  const hasModel = fallbackNotice && (await getModel(db, workspace.id)) !== undefined;
+  // With no Items the empty state has the Feed's whole story, so Top has no order to explain.
+  const caption = before === undefined && !(fallback && items.length === 0);
+  const hasModel = fallback && caption && (await hasActiveModel(db, workspace.id));
   // Top's fallback pages through Latest, so its "Show older" goes there.
   const olderView = latest || fallback ? "view=latest&" : "";
   return (
@@ -84,20 +85,18 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
         {/* On every page, since a Rating can arrive for an Item on an older one. The key starts it
             afresh on each page, so paging isn't announced as Items arriving. It sits first, so it stays
             mounted when the empty state gives way to the list. */}
-        <FeedRefresher
-          key={`${latest ? "latest" : "top"}:${before?.id ?? ""}`}
-          ids={items.map((row) => row.id)}
-        />
+        <FeedRefresher key={[latest, fallback, before?.id].join()} ids={items.map((row) => row.id)} />
         <div className="flex flex-col gap-1">
           <div className="flex items-center justify-between gap-4">
             <h1 className="text-headline">Feed</h1>
             <ViewControl latest={latest} />
           </div>
-          {before === undefined ? (
+          {caption ? (
             <p className="text-sm text-muted-foreground">
-              <FeedCaption latest={latest} fallback={fallbackNotice} hasModel={hasModel} />
+              <FeedCaption latest={latest} fallback={fallback} hasModel={hasModel} />
             </p>
-          ) : (
+          ) : null}
+          {before === undefined ? null : (
             // The negative margin lines the link's text up with the heading above it.
             <Link
               href={latest ? "/?view=latest" : "/"}
@@ -144,14 +143,14 @@ function ViewControl({ latest }: { latest: boolean }) {
 /** What the list shows, including why Top is showing Latest order when no Item in its window is rated. */
 function FeedCaption({ latest, fallback, hasModel }: { latest: boolean; fallback: boolean; hasModel: boolean }) {
   if (latest) return "Latest first";
-  if (!fallback) return "Rated Items from the last 7 days, ranked by Importance and Severity";
+  if (!fallback) return "Rated Items captured in the last 7 days, ranked by Importance and Severity";
   if (hasModel) return "Showing Latest order, because no Item captured in the last 7 days has a Rating.";
   // A model only rates what's captured after it's added, so the link promises new Items only.
   return (
     <>
       Showing Latest order, because Top ranks rated Items and this Workspace has no model.{" "}
       <Link
-        href="/model"
+        href={modelLink}
         className="rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
       >
         Add a model to rate new Items

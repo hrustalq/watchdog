@@ -21,6 +21,8 @@ test("a new install signs in, adds an RSS Source and sees its Items in the Feed"
     await page.goto(await magicLink(email));
     await page.getByRole("button", { name: "Sign in to Watchdog" }).click();
     await expect(page.getByRole("heading", { name: "Nothing is being watched yet" })).toBeVisible();
+    // With no Items, Top has no order to describe.
+    await expect(page.getByText("Rated Items captured")).toHaveCount(0);
   });
 
   await test.step("add the fixture feed as an RSS Source", async () => {
