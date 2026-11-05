@@ -8,6 +8,7 @@ import { feedPage, parseCursor, parseTopCursor, topPage, type FeedItem } from "@
 import { hasActiveModel } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { signOut } from "./actions";
+import { RatingStepper } from "./correct-rating";
 import { FeedRefresher } from "./feed-refresher";
 import { modelLink } from "./rules/words";
 
@@ -197,13 +198,18 @@ function FeedList({ items }: { items: FeedItem[] }) {
   return (
     <ol className="divide-y overflow-hidden rounded-lg border">
       {items.map((row) => (
-        // The title's link covers the row, so the whole row opens the Item.
-        <li key={row.id} className="relative flex flex-col gap-1 px-4 py-3 hover:bg-card">
+        // The title's link covers the row, so the whole row opens the Item. A Correction posted without
+        // JavaScript comes back to the row's id.
+        <li key={row.id} id={`item-${row.id}`} className="relative flex scroll-mt-4 flex-col gap-1 px-4 py-3 hover:bg-card">
           <div className="flex flex-col gap-x-4 sm:flex-row sm:items-baseline sm:justify-between">
             <h2 className="text-title min-w-0 break-words">
               <Link
                 href={`/items/${row.id}`}
-                aria-describedby={`rating-${row.id}`}
+                aria-describedby={
+                  row.severity === null || row.importance === null
+                    ? `rating-${row.id}`
+                    : `rating-${row.id}-severity rating-${row.id}-importance`
+                }
                 className="rounded-sm outline-none after:absolute after:inset-0 focus-visible:after:ring-3 focus-visible:after:ring-inset focus-visible:after:ring-ring/30"
               >
                 {row.title ?? "Untitled Item"}
@@ -226,7 +232,26 @@ function FeedList({ items }: { items: FeedItem[] }) {
             </p>
           )}
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium tracking-[0.01em]">
-            <Rating id={`rating-${row.id}`} severity={row.severity} importance={row.importance} />
+            {row.severity === null || row.importance === null ? (
+              <>
+                <Rating id={`rating-${row.id}`} severity={row.severity} importance={row.importance} />
+                {/* An unrated Item takes both axes at once, which needs more room than a row has. */}
+                <Link
+                  href={`/items/${row.id}#rating`}
+                  className="relative rounded-sm underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+                >
+                  Rate<span className="sr-only"> {row.title ?? "Untitled Item"}</span>
+                </Link>
+              </>
+            ) : (
+              <RatingStepper
+                itemId={row.id}
+                title={row.title ?? "Untitled Item"}
+                chipId={`rating-${row.id}`}
+                severity={row.severity}
+                importance={row.importance}
+              />
+            )}
             <CategoryList categories={row.categories} />
             <span className="min-w-0 break-words text-muted-foreground">{row.sourceName}</span>
             {row.isBackfill ? (
