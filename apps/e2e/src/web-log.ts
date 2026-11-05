@@ -30,9 +30,16 @@ async function linkFromWebLog(what: string, find: (log: string) => string | unde
 export const setupLink = () =>
   linkFromWebLog("setup link", (log) => log.match(/^https?:\/\/\S+\/setup\?token=\S+$/gm)?.at(-1));
 
-/** The link in the last sign-in mail printed for `email`. */
-export const magicLink = (email: string) =>
-  linkFromWebLog(`magic link for ${email} (with SMTP set in .env, it was mailed instead)`, (log) => {
+// A link works once, and Docker can take a moment to pass a new line to the log.
+const returned = new Set<string>();
+
+/** The link in the last sign-in mail printed for `email`, once it isn't one this returned before. */
+export async function magicLink(email: string) {
+  const link = await linkFromWebLog(`magic link for ${email} (with SMTP set in .env, it was mailed instead)`, (log) => {
     const mail = log.lastIndexOf(`To: ${email}\n`);
-    return mail === -1 ? undefined : /https?:\/\/\S+\/sign-in\/confirm\?\S+/.exec(log.slice(mail))?.[0];
+    const found = mail === -1 ? undefined : /https?:\/\/\S+\/sign-in\/confirm\?\S+/.exec(log.slice(mail))?.[0];
+    return found === undefined || returned.has(found) ? undefined : found;
   });
+  returned.add(link);
+  return link;
+}
