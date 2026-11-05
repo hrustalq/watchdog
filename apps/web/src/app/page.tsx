@@ -6,7 +6,6 @@ import { Timestamp } from "@/components/timestamp";
 import { feedPage, parseCursor, parseTopCursor, topPage, type FeedItem } from "@/lib/feed";
 import { hasActiveModel } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
-import { cn } from "@/lib/utils";
 import { signOut } from "./actions";
 import { RatingStepper } from "./correct-rating";
 import { FeedRefresher } from "./feed-refresher";
@@ -104,7 +103,7 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
                 // Outline in both states, because the only fill here says which view is selected.
                 <Link
                   href={feedHref(latest, !edit, typeof params.before === "string" ? params.before : undefined)}
-                  className={cn(buttonVariants({ variant: "outline" }))}
+                  className={buttonVariants({ variant: "outline" })}
                 >
                   {edit ? "Done" : "Correct Ratings"}
                 </Link>

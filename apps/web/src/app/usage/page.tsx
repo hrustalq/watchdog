@@ -63,12 +63,12 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
             {older === undefined && newer === undefined ? null : (
               <nav aria-label="Month" className="flex flex-wrap gap-2">
                 {older === undefined ? null : (
-                  <Link href={monthHref(older, current)} className={cn(buttonVariants({ variant: "outline" }))}>
+                  <Link href={monthHref(older, current)} className={buttonVariants({ variant: "outline" })}>
                     <span aria-hidden="true">←</span> {monthLabel(older)}
                   </Link>
                 )}
                 {newer === undefined ? null : (
-                  <Link href={monthHref(newer, current)} className={cn(buttonVariants({ variant: "outline" }))}>
+                  <Link href={monthHref(newer, current)} className={buttonVariants({ variant: "outline" })}>
                     {monthLabel(newer)} <span aria-hidden="true">→</span>
                   </Link>
                 )}
