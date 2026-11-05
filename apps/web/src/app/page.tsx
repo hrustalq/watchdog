@@ -75,6 +75,9 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
           <Link href="/model" className={buttonVariants({ variant: "ghost" })}>
             Model
           </Link>
+          <Link href="/usage" className={buttonVariants({ variant: "ghost" })}>
+            Usage
+          </Link>
           {admin ? (
             <Link href="/settings" className={buttonVariants({ variant: "ghost" })}>
               Settings
