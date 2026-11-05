@@ -1,6 +1,6 @@
 // The extract-and-rate stage (docs: Processing pipeline, "Stages"; Agent and LLM integration, "Calls
 // per Item").
-import { and, type Db, eq, extractorRule, inArray, isNull, item, itemLog, type Tx } from "@watchdog/db";
+import { and, correction, type Db, eq, extractorRule, inArray, isNull, item, itemLog, type Tx } from "@watchdog/db";
 import type { z } from "zod";
 import { type AgentFailure, callAgent, storableMessage, storableText } from "../agent/call-agent.ts";
 import { recentCorrections } from "../agent/corrections.ts";
@@ -89,10 +89,13 @@ async function storeAnswer(tx: Tx, target: Target, rules: ParsedRule[], answer: 
   const { severity, importance } = answer;
   // The Log holds a readable sentence, and a model can run on.
   const reasoning = storableMessage(answer.reasoning);
+  const summary = storableText(answer.summary);
+  await tx.update(item).set({ summary }).where(eq(item.id, itemId));
+  // A Correction made before this copied a null, and the Agent would read that example without a summary.
   await tx
-    .update(item)
-    .set({ summary: storableText(answer.summary) })
-    .where(eq(item.id, itemId));
+    .update(correction)
+    .set({ itemSummary: summary })
+    .where(and(eq(correction.itemId, itemId), isNull(correction.itemSummary)));
   // A corrected Rating wins, and this is what makes sure of it.
   const rating = await tx
     .update(item)
