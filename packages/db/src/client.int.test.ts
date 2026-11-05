@@ -21,7 +21,7 @@ describe("closeDb", () => {
 
     await closeDb(db);
     expect(open).toBe(0);
-  }, 30_000);
+  });
 
   it("resolves at once for a client that never connected", async () => {
     const db = createDb(postgres.url);
