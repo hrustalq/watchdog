@@ -138,7 +138,7 @@ export async function storeExtraction(
   const fields = stored.map((row) => row.name);
   const refused = values
     .filter(({ name }) => !fields.includes(name))
-    .map(({ name }) => ({ name, reason: "an earlier rule already filled it" }));
+    .map(({ name }) => ({ name, reason: "another rule already filled it" }));
   const allProblems = [...problems, ...refused];
 
   const outcomes = [

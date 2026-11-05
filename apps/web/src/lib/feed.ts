@@ -81,7 +81,27 @@ export async function feedPage(db: Db, workspaceId: string, before?: FeedCursor)
 
 export type FeedItem = Awaited<ReturnType<typeof feedPage>>["items"][number];
 
-/** An Item's envelope with its Source's name and its Log, oldest first, or undefined. */
+interface LogRow {
+  id: number;
+  message: string;
+  data: unknown;
+}
+
+const isManual = (row: LogRow): row is LogRow & { data: object } =>
+  typeof row.data === "object" && row.data !== null && "manual" in row.data;
+
+/**
+ * The manual run a URL names, from the Item's own Log, so a URL can only point at what this page
+ * already shows. A provider's reason is too long and too private to go in the URL itself. Only the
+ * newest run counts, so an old URL can't put a success above a later failure.
+ */
+export function manualRunIn(log: LogRow[], runId: unknown) {
+  const newest = log.findLast(isManual);
+  if (newest === undefined || String(newest.id) !== runId) return undefined;
+  return { id: newest.id, message: newest.message, failed: "failed" in newest.data };
+}
+
+/** An Item's envelope with its Source's name, its extracted fields and its Log, oldest first, or undefined. */
 export function itemWithLog(db: Db, workspaceId: string, itemId: string) {
   if (!isUuid(itemId)) return Promise.resolve(undefined);
   return db.query.item.findFirst({
@@ -89,8 +109,13 @@ export function itemWithLog(db: Db, workspaceId: string, itemId: string) {
     columns: { raw: false, summary: false, workspaceId: false, sourceId: false, externalId: false },
     with: {
       source: { columns: { name: true } },
+      fields: {
+        columns: { name: true, value: true },
+        with: { extractorRule: { columns: { name: true } } },
+        orderBy: (field, { asc }) => [asc(field.name)],
+      },
       log: {
-        columns: { id: true, at: true, stage: true, message: true },
+        columns: { id: true, at: true, stage: true, message: true, data: true },
         orderBy: (log, { asc }) => [asc(log.at), asc(log.id)],
       },
     },

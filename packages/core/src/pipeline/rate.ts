@@ -58,7 +58,7 @@ async function finish(db: Db, itemId: string, now: () => Date, work: (tx: Tx) =>
  * What a field found, the shape `toExtraction` reads. Null and blank mean the Item has none. A model's
  * answer can hold what Postgres refuses, and asking again wouldn't change that.
  */
-function foundIn(answer: Record<string, unknown>, name: string): unknown[] {
+export function foundIn(answer: Record<string, unknown>, name: string): unknown[] {
   return [answer[fieldKey(name)]]
     .flat()
     .map((value) => (typeof value === "string" ? storableText(value) : value))

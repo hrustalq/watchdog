@@ -1189,7 +1189,7 @@ describe("processItem", () => {
 
       expect(await fieldsOf(itemId)).toMatchObject([{ name: "plan", value: "post" }]);
       const log = await logOf(itemId, "extract");
-      expect(log.at(-1)?.message).toBe("Extractor Rule agent stored nothing for plan: an earlier rule already filled it");
+      expect(log.at(-1)?.message).toBe("Extractor Rule agent stored nothing for plan: another rule already filled it");
     });
 
     it("skips a rule that no longer parses, notes it once and calls for the others", async () => {
@@ -1721,7 +1721,7 @@ describe("processItem", () => {
       expect(await fieldsOf(itemId)).toEqual([{ itemId, name: "cve", value: "CVE-1", extractorRuleId: first }]);
       expect((await extractLog(itemId)).map((row) => row.message)).toEqual([
         "Extractor Rule first extracted cve",
-        "Extractor Rule second stored nothing for cve: an earlier rule already filled it",
+        "Extractor Rule second stored nothing for cve: another rule already filled it",
       ]);
     });
 

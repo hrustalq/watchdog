@@ -1,6 +1,20 @@
 import { createServer } from "node:http";
 import { createEgressFetch, loadConfig, pollSource } from "@watchdog/core";
-import { closeDb, createDb, type Db, eq, item, itemLog, migrate, source, sql, user, workspace } from "@watchdog/db";
+import {
+  closeDb,
+  createDb,
+  type Db,
+  eq,
+  extractorRule,
+  item,
+  itemField,
+  itemLog,
+  migrate,
+  source,
+  sql,
+  user,
+  workspace,
+} from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { feedPage, feedPageSize, itemWithLog, parseCursor } from "./feed.ts";
@@ -243,6 +257,27 @@ describe("Feed", () => {
     expect(loaded?.log.map((row) => [row.stage, row.message])).toEqual([
       ["capture", "Captured from Hacker News"],
       ["capture", "Later"],
+    ]);
+  });
+
+  it("loads an Item's extracted fields by name, each with the rule that filled it", async () => {
+    const seeded = await seed();
+    const [id] = await insertItems(seeded, [{}]);
+    const [rule] = await db
+      .insert(extractorRule)
+      .values({ workspaceId: seeded.workspaceId, name: "CVEs", kind: "deterministic", definition: {} })
+      .returning();
+    await db.insert(itemField).values([
+      // A deleted rule leaves its field with no rule.
+      { itemId: present(id), name: "tags", value: ["a", "b"] },
+      { itemId: present(id), name: "cve", value: "CVE-1", extractorRuleId: present(rule).id },
+    ]);
+
+    const loaded = await itemWithLog(db, seeded.workspaceId, present(id));
+
+    expect(loaded?.fields).toEqual([
+      { name: "cve", value: "CVE-1", extractorRule: { name: "CVEs" } },
+      { name: "tags", value: ["a", "b"], extractorRule: null },
     ]);
   });
 
