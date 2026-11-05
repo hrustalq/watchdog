@@ -71,6 +71,8 @@ test("a new install signs in, adds an RSS Source and sees its Items in the Feed"
 // because a hard load remounts the page and hides what Next.js keeps across navigations (Activity).
 // It runs before the rate limit test below, which uses up the sign-in bucket.
 test("the Rules editor keeps a draft only where it should, with and without JavaScript", async ({ page, browser }) => {
+  // Two log reads and a wait for hydration leave too little of the default for the rest on a slow runner.
+  test.setTimeout(120_000);
   const email = "smoke@example.com";
   // A page a client navigation left behind is still in the DOM, hidden, with the same ids. So one
   // input can hold both pages' labels, and getByRole would read its name as "Name Name".
@@ -190,8 +192,8 @@ test("the Rules editor keeps a draft only where it should, with and without Java
     await noScript.getByRole("button", { name: "Save rule" }).click();
     await expect(noScript).toHaveURL(/[?&]draft=/);
     await expect(box).toHaveValue(rule("("));
-    // getByText skips <noscript>, and the HTML escapes the apostrophe.
-    expect(await noScript.content()).toMatch(/isn(?:'|&#x27;)t a regular expression/);
+    // Not the page's HTML, which holds the reason in React's data even when nothing shows it.
+    await expect(box).toHaveAccessibleDescription(reason);
 
     await box.fill(rule("(?i)launch"));
     await noScript.getByRole("button", { name: "Save rule" }).click();

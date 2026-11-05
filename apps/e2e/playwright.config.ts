@@ -6,6 +6,8 @@ export default defineConfig({
   forbidOnly: true,
   // Above the two 15-second log reads, so a missing link fails with its own message.
   timeout: 60_000,
+  // Most checks wait on a server round trip, and a loaded CI runner has stalled for several seconds.
+  expect: { timeout: 15_000 },
   // The HTML report never opens by itself, so a failed run can't hang waiting on it.
   reporter: [["list"], ["html", { open: "never" }]],
   use: { trace: "retain-on-failure" },
