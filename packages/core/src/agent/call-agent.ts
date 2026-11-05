@@ -58,7 +58,7 @@ const storableTokens = (count: number | undefined) =>
   count !== undefined && Number.isInteger(count) && count >= 0 && count <= maxInteger ? count : null;
 
 /** Postgres refuses a NUL and half a surrogate pair, and a provider's error can hold either. */
-const storableMessage = (message: string) => message.replaceAll("\0", "").slice(0, 1000).toWellFormed();
+export const storableMessage = (message: string) => message.replaceAll("\0", "").slice(0, 1000).toWellFormed();
 
 const rowStatus = { invalid_output: "invalid_output", blocked: "error", error: "error" } as const;
 

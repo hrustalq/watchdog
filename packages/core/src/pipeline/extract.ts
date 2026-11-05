@@ -4,7 +4,7 @@ import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
 import { jsonPathValues, maxFieldValues } from "../rules/jsonpath.ts";
 import { firstCapture } from "../rules/regex.ts";
 import { type DeterministicExtractorRule, deterministicExtractorRuleSchema } from "../rules/schema.ts";
-import { deterministicRulesFor } from "./deterministic-rules.ts";
+import { rulesFor, rulesInLog } from "./rules-for-item.ts";
 
 type Field = DeterministicExtractorRule["fields"][number];
 type Value = string | number;
@@ -92,15 +92,17 @@ export function extractFields(fields: readonly Field[], source: ExtractionSource
  * Runs the Workspace's enabled deterministic Extractor Rules on an Item, oldest first, so the first
  * rule to fill a field is the one its row names. A Condition reads the Categories from the table, so
  * it sees every Classifier that ran before this stage, deterministic or Agent-backed (GitHub issue
- * #79).
+ * #79). A retry skips the rules it already logged, and a rule whose Condition failed before a failed
+ * classify call gets another chance with the Categories the retry assigned.
  */
 export async function runDeterministicExtractorRules(
   tx: Tx,
   itemId: string,
   target: ConditionItem & ExtractionSource,
 ) {
-  const rules = await deterministicRulesFor(tx, extractorRule, itemId);
+  const rules = await rulesFor(tx, extractorRule, itemId, "deterministic");
   if (rules.length === 0) return;
+  const alreadyRun = await rulesInLog(tx, itemId, "extract", "extractorRuleId");
 
   const assigned = await tx
     .select({ category: itemCategory.category })
@@ -112,6 +114,7 @@ export async function runDeterministicExtractorRules(
     tx.insert(itemLog).values({ itemId, stage: "extract", message, data });
 
   for (const rule of rules) {
+    if (alreadyRun.has(rule.id)) continue;
     const parsed = deterministicExtractorRuleSchema.safeParse(rule.definition);
     if (!parsed.success) {
       await log(`Skipped Extractor Rule ${rule.name}: its definition no longer parses`, {
