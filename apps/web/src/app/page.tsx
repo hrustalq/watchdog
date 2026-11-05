@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { eq, source } from "@watchdog/db";
+import { CategoryList, Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { feedPage, parseCursor, type FeedItem } from "@/lib/feed";
 import { requireWorkspace, server } from "@/lib/server";
@@ -69,9 +70,9 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
         </form>
       </header>
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8">
-        {/* Only the newest page changes as Items arrive. It sits first, so it stays mounted when the
-            empty state gives way to the list. */}
-        {before === undefined ? <FeedRefresher ids={items.map((row) => row.id)} /> : null}
+        {/* On every page, since a Rating can arrive for an Item on an older one. It sits first, so it
+            stays mounted when the empty state gives way to the list. */}
+        <FeedRefresher ids={items.map((row) => row.id)} />
         <div className="flex items-baseline justify-between gap-4">
           <h1 className="text-headline">Feed</h1>
           {before === undefined ? (
@@ -157,16 +158,18 @@ function FeedList({ items }: { items: FeedItem[] }) {
             </p>
           </div>
           {row.excerpt === "" ? null : (
-            <p className="line-clamp-1 max-w-[70ch] text-sm break-words text-muted-foreground">
+            <p className="line-clamp-2 max-w-[70ch] text-sm break-words text-muted-foreground">
               {row.excerpt}
             </p>
           )}
-          <p className="flex flex-wrap items-center gap-2 text-xs font-medium tracking-[0.01em]">
-            <span className="text-muted-foreground">{row.sourceName}</span>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium tracking-[0.01em]">
+            <Rating severity={row.severity} importance={row.importance} />
+            <span className="min-w-0 break-words text-muted-foreground">{row.sourceName}</span>
             {row.isBackfill ? (
               <span className="rounded-sm bg-muted px-1.5 py-0.5">Backfill</span>
             ) : null}
-          </p>
+            <CategoryList categories={row.categories} />
+          </div>
         </li>
       ))}
     </ol>

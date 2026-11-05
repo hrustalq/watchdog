@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
+import { CategoryList, Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { Button } from "@/components/ui/button";
 import { itemWithLog, manualRunIn } from "@/lib/feed";
@@ -50,6 +51,28 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
   const run = manualRunIn(found.log, runId);
 
   const envelope = [
+    {
+      term: "Rating",
+      detail: (
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <Rating severity={found.severity} importance={found.importance} />
+          {found.severity === null ? (
+            <Missing>
+              {found.processedAt === null ? "The pipeline hasn't finished with this Item yet." : "The Log says why."}
+            </Missing>
+          ) : null}
+        </span>
+      ),
+    },
+    {
+      term: "Categories",
+      detail:
+        found.categories.length === 0 ? (
+          <Missing>None yet</Missing>
+        ) : (
+          <CategoryList categories={found.categories.map(({ category }) => category)} />
+        ),
+    },
     { term: "Source", detail: found.source.name },
     { term: "Author", detail: found.author ?? <Missing>None given</Missing> },
     {
@@ -86,13 +109,26 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
           ))}
         </dl>
       </header>
-      {found.body === "" ? (
-        <p className="text-sm text-muted-foreground">The Source gave no text for this Item.</p>
-      ) : (
-        <p className="max-w-[70ch] text-base leading-[1.6] break-words whitespace-pre-line">
-          {found.body}
-        </p>
+      {found.summary === null ? null : (
+        <section aria-labelledby="summary" className="flex flex-col gap-3">
+          <h2 id="summary" className="text-title">
+            Summary
+          </h2>
+          <p className="max-w-[70ch] text-base leading-[1.6] break-words whitespace-pre-line">{found.summary}</p>
+        </section>
       )}
+      <section aria-labelledby="original" className="flex flex-col gap-3">
+        <h2 id="original" className="text-title">
+          Original text
+        </h2>
+        {found.body === "" ? (
+          <p className="text-sm text-muted-foreground">The Source gave no text for this Item.</p>
+        ) : (
+          <p className="max-w-[70ch] text-base leading-[1.6] break-words whitespace-pre-line">
+            {found.body}
+          </p>
+        )}
+      </section>
       <section aria-labelledby="fields" className="flex flex-col gap-3">
         <h2 id="fields" className="text-title">
           Extracted fields
@@ -152,7 +188,8 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
             <li key={row.id} className="flex flex-col gap-x-4 px-3 py-2 sm:flex-row">
               <Timestamp at={row.at} seconds className="shrink-0 text-muted-foreground" />
               <span className="shrink-0 sm:w-16">{row.stage}</span>
-              <span className="min-w-0 break-words">{row.message}</span>
+              {/* A model's validation failure runs over several lines. */}
+              <span className="min-w-0 break-words whitespace-pre-line">{row.message}</span>
             </li>
           ))}
         </ol>

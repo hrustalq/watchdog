@@ -3,12 +3,13 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
-/** How often an open Feed checks for new Items. */
+/** How often an open Feed checks for changes. */
 const interval = 30_000;
 
 /**
  * Re-renders the Feed from the server every 30 seconds while the tab is visible, and once when it
- * becomes visible again, so new Items appear without a reload. Screen readers hear how many arrived.
+ * becomes visible again, so new Items and what the pipeline adds to them appear without a reload.
+ * Screen readers hear how many Items arrived.
  */
 export function FeedRefresher({ ids }: { ids: string[] }) {
   const router = useRouter();
