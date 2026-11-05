@@ -13,4 +13,10 @@ describe("buttonVariants", () => {
     expect(classes()).toContain("border-transparent");
     expect(classes({ variant: "ghost" })).toContain("border-transparent");
   });
+
+  it("forwards size and a call site's className, which overrides the variant's", () => {
+    const merged = classes({ variant: "outline", size: "lg", className: "border-ring mt-6" });
+    expect(merged).toEqual(expect.arrayContaining(["h-9", "border-ring", "mt-6"]));
+    expect(merged).not.toContain("border-border");
+  });
 });
