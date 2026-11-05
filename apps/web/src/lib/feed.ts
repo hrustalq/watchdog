@@ -81,19 +81,24 @@ export async function feedPage(db: Db, workspaceId: string, before?: FeedCursor)
 
 export type FeedItem = Awaited<ReturnType<typeof feedPage>>["items"][number];
 
-const isManual = (data: unknown): data is { manual: unknown } =>
-  typeof data === "object" && data !== null && "manual" in data;
+interface LogRow {
+  id: number;
+  message: string;
+  data: unknown;
+}
+
+const isManual = (row: LogRow): row is LogRow & { data: object } =>
+  typeof row.data === "object" && row.data !== null && "manual" in row.data;
 
 /**
  * The manual run a URL names, from the Item's own Log, so a URL can only point at what this page
  * already shows. A provider's reason is too long and too private to go in the URL itself. Only the
- * newest run counts: Back mustn't put a success above a later failure.
+ * newest run counts, so an old URL can't put a success above a later failure.
  */
-export function manualRunIn(log: { id: number; message: string; data: unknown }[], runId: unknown) {
-  const newest = log.findLast((row) => isManual(row.data));
-  const data = newest?.data;
-  if (newest === undefined || String(newest.id) !== runId || !isManual(data)) return undefined;
-  return { id: newest.id, message: newest.message, failed: "failed" in data };
+export function manualRunIn(log: LogRow[], runId: unknown) {
+  const newest = log.findLast(isManual);
+  if (newest === undefined || String(newest.id) !== runId) return undefined;
+  return { id: newest.id, message: newest.message, failed: "failed" in newest.data };
 }
 
 /** An Item's envelope with its Source's name, its extracted fields and its Log, oldest first, or undefined. */

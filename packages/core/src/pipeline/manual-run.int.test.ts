@@ -67,7 +67,15 @@ describe("runExtractorRuleByHand", () => {
     const sourceId = present(src).id;
     const [created] = await db
       .insert(item)
-      .values({ workspaceId, sourceId, externalId: "1", title: "Fixes CVE-1", body: "Body", raw: {} })
+      .values({
+        workspaceId,
+        sourceId,
+        externalId: "1",
+        title: "Fixes CVE-1",
+        body: "Body",
+        raw: { count: "many" },
+        processedAt: new Date(),
+      })
       .returning();
     return { workspaceId, itemId: present(created).id };
   }
@@ -174,6 +182,35 @@ describe("runExtractorRuleByHand", () => {
     );
   });
 
+  it("keeps a field's earlier value when this run couldn't store a new one", async () => {
+    const seeded = await seed();
+    const ruleId = await saveRule(seeded, "Counts", [{ name: "count", type: "integer", jsonpath: "$.count" }]);
+    await db.insert(itemField).values({ itemId: seeded.itemId, name: "count", value: 7, extractorRuleId: ruleId });
+
+    await run(seeded, ruleId);
+
+    expect(await fieldsOf(seeded)).toEqual([{ name: "count", value: 7, ruleId }]);
+    expect((await logOf(seeded)).at(-1)?.message).toBe(
+      "Manual run: Extractor Rule Counts stored nothing for count: it holds a string, which can't convert to integer",
+    );
+  });
+
+  it("takes over a field whose rule was deleted when it finds a value, and otherwise leaves it", async () => {
+    const seeded = await seed();
+    const ruleId = await saveRule(seeded, "CVEs", [fromTitle("cve"), fromTitle("empty", "(nothing)")]);
+    await db.insert(itemField).values([
+      { itemId: seeded.itemId, name: "cve", value: "stale" },
+      { itemId: seeded.itemId, name: "empty", value: "kept" },
+    ]);
+
+    await run(seeded, ruleId);
+
+    expect(await fieldsOf(seeded)).toEqual([
+      { name: "cve", value: "CVE-1", ruleId },
+      { name: "empty", value: "kept", ruleId: null },
+    ]);
+  });
+
   it("runs a disabled rule, and one saved after the Item was captured", async () => {
     const seeded = await seed();
     const ruleId = await saveRule(seeded, "CVEs", [fromTitle("cve")]);
@@ -229,6 +266,25 @@ describe("runExtractorRuleByHand", () => {
   });
 
   describe("when the run fails", () => {
+    it("waits for the pipeline to finish with the Item, and makes no call", async () => {
+      const seeded = await seed();
+      const ruleId = await saveAgentRule(seeded, "Plans", [{ name: "plan", type: "string" }]);
+      await addModel(seeded);
+      await db.update(item).set({ processedAt: null }).where(eq(item.id, seeded.itemId));
+
+      const runId = await run(seeded, ruleId);
+
+      expect(await callsOf(seeded)).toEqual([]);
+      expect(await fieldsOf(seeded)).toEqual([]);
+      expect(await logOf(seeded)).toMatchObject([
+        {
+          id: runId,
+          message: "Manual run: Extractor Rule Plans failed: the pipeline hasn't finished with this Item yet",
+          data: { manual: true, failed: true },
+        },
+      ]);
+    });
+
     it("logs the provider's reason, keeps the earlier values and doesn't retry", async () => {
       const seeded = await seed();
       const ruleId = await saveAgentRule(seeded, "Plans", [{ name: "plan", type: "string" }]);
@@ -279,6 +335,7 @@ describe("runExtractorRuleByHand", () => {
           data: { manual: true, failed: true },
         },
       ]);
+      expect((await logOf(seeded))[0]?.data).toHaveProperty("issues");
     });
 
     it("stores nothing for a rule deleted during the call", async () => {

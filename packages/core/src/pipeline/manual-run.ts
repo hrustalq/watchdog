@@ -1,5 +1,20 @@
 // The manual Extractor Rule run on one Item (docs: Processing pipeline, "Manual runs").
-import { and, type Db, eq, extractorRule, item, itemField, itemLog, source, type Tx } from "@watchdog/db";
+import {
+  and,
+  type Db,
+  eq,
+  extractorRule,
+  inArray,
+  isNull,
+  item,
+  itemField,
+  itemLog,
+  notInArray,
+  or,
+  source,
+  type Tx,
+} from "@watchdog/db";
+import type { z } from "zod";
 import { callAgent, storableMessage } from "../agent/call-agent.ts";
 import { recentCorrections } from "../agent/corrections.ts";
 import { loadProfile } from "../agent/profile.ts";
@@ -36,8 +51,9 @@ function withItem<Result>(db: Db, itemId: string, work: (tx: Tx) => Promise<Resu
 /**
  * Runs one Extractor Rule on one Item, enabled or not. Choosing the Item is the user's decision, so
  * neither the rule's Condition nor when it was saved applies. Its results replace what it stored on the
- * Item before, and a failure leaves those in place. Returns the id of the run's Log row, or undefined
- * when the Item or the rule isn't in this Workspace.
+ * Item before, and a failure leaves those in place. It waits until the pipeline has finished with the
+ * Item, because a job that is still running decides which rule keeps a field. Returns the id of the
+ * run's Log row, or undefined when the Item or the rule isn't in this Workspace.
  */
 export async function runExtractorRuleByHand(
   db: Db,
@@ -58,7 +74,9 @@ export async function runExtractorRuleByHand(
     logRun(tx, itemId, `Extractor Rule ${rule.name} failed: ${reason}`, { ...named, ...data, failed: true });
   const fail = (reason: string, data?: Record<string, unknown>) =>
     withItem(db, itemId, (tx) => failure(tx, reason, data));
-  const unreadable = "its definition no longer parses";
+  const unreadable = (error: z.ZodError) =>
+    fail("its definition no longer parses", { issues: error.issues.map((issue) => issue.message) });
+  if (target.processedAt === null) return fail("the pipeline hasn't finished with this Item yet");
 
   const store = (extraction: Extraction) =>
     withItem(db, itemId, async (tx) => {
@@ -69,9 +87,18 @@ export async function runExtractorRuleByHand(
         .where(eq(extractorRule.id, rule.id))
         .for("key share");
       if (kept.length === 0) return failure(tx, "the rule was deleted during the run");
-      await tx
-        .delete(itemField)
-        .where(and(eq(itemField.itemId, itemId), eq(itemField.extractorRuleId, rule.id)));
+      const couldNotStore = extraction.problems.map(({ name }) => name);
+      const filled = extraction.values.map(({ name }) => name);
+      await tx.delete(itemField).where(
+        and(
+          eq(itemField.itemId, itemId),
+          or(
+            and(eq(itemField.extractorRuleId, rule.id), notInArray(itemField.name, couldNotStore)),
+            // No rule holds a field whose rule was deleted, so it can't count as filled by another.
+            and(isNull(itemField.extractorRuleId), inArray(itemField.name, filled)),
+          ),
+        ),
+      );
       let logged: number | undefined;
       const log = async (message: string, data: Record<string, unknown>) => {
         logged = await logRun(tx, itemId, message, data);
@@ -82,11 +109,11 @@ export async function runExtractorRuleByHand(
 
   if (rule.kind === "deterministic") {
     const parsed = deterministicExtractorRuleSchema.safeParse(rule.definition);
-    return parsed.success ? store(extractFields(parsed.data.fields, target)) : fail(unreadable);
+    return parsed.success ? store(extractFields(parsed.data.fields, target)) : unreadable(parsed.error);
   }
 
   const parsed = agentExtractorRuleSchema.safeParse(rule.definition);
-  if (!parsed.success) return fail(unreadable);
+  if (!parsed.success) return unreadable(parsed.error);
   const model = await activeModel(db, workspaceId);
   if (model === undefined) return fail("this Workspace has no model");
   const definition = parsed.data;

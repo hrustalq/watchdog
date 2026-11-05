@@ -1,6 +1,7 @@
 "use server";
 
 import { runExtractorRuleByHand } from "@watchdog/core";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requireWorkspace, server } from "@/lib/server";
 import { isUuid } from "@/lib/uuid";
@@ -22,5 +23,7 @@ export async function runExtractorRuleAction(itemId: unknown, ruleId: unknown) {
           { fetch: agentFetch, encryptionKey },
         )
       : undefined;
+  // Back would otherwise reuse the page from before this run, with its old fields and Log.
+  revalidatePath(`/items/${itemId}`);
   redirect(runId === undefined ? `/items/${itemId}` : `/items/${itemId}?run=${String(runId)}`);
 }
