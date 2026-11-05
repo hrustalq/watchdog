@@ -29,35 +29,41 @@ async function WorkspaceScreen({ searchParams }: Pick<PageProps<"/">, "searchPar
       : 0;
   return (
     <div className="flex flex-1 flex-col">
-      <header className="flex h-12 items-center justify-between gap-2 border-b px-4 sm:gap-4">
-        <p className="flex min-w-0 items-baseline gap-2">
+      {/* On a phone the links get a row of their own, under the name and Sign out. */}
+      <header className="flex min-h-12 flex-wrap items-center justify-between gap-2 border-b px-4 py-2 sm:h-12 sm:flex-nowrap sm:gap-4 sm:py-0">
+        <p className="flex min-w-0 flex-1 items-baseline gap-2">
           {/* On a phone the name needs the room more than its label does. */}
           <span className="hidden text-xs font-medium tracking-[0.01em] text-muted-foreground sm:inline">
             Workspace
           </span>
           <span className="truncate text-title">{workspace.name}</span>
         </p>
-        <div className="flex shrink-0 items-center gap-1 sm:gap-3">
-          <span className="hidden truncate text-sm text-muted-foreground sm:inline">
-            {user.email}
-          </span>
+        <span className="hidden truncate text-sm text-muted-foreground sm:inline">{user.email}</span>
+        {/* The negative margin lines the first link's text up with the name above it. */}
+        <nav
+          aria-label="Workspace"
+          className="order-last -ml-3 flex w-full flex-wrap items-center gap-1 sm:order-none sm:ml-0 sm:w-auto sm:shrink-0 sm:flex-nowrap sm:gap-3"
+        >
           <Link href="/sources" className={buttonVariants({ variant: "ghost" })}>
             Sources
           </Link>
           <Link href="/rules" className={buttonVariants({ variant: "ghost" })}>
             Rules
           </Link>
+          <Link href="/model" className={buttonVariants({ variant: "ghost" })}>
+            Model
+          </Link>
           {admin ? (
             <Link href="/settings" className={buttonVariants({ variant: "ghost" })}>
               Settings
             </Link>
           ) : null}
-          <form action={signOut}>
-            <Button type="submit" variant="outline">
-              Sign out
-            </Button>
-          </form>
-        </div>
+        </nav>
+        <form action={signOut} className="shrink-0">
+          <Button type="submit" variant="outline">
+            Sign out
+          </Button>
+        </form>
       </header>
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8">
         {/* Only the newest page changes as Items arrive. It sits first, so it stays mounted when the
