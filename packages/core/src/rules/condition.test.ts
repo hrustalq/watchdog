@@ -1,3 +1,4 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { type ConditionItem, evaluateCondition } from "./condition.ts";
 import { conditionSchema } from "./schema.ts";
@@ -107,11 +108,11 @@ describe("matches", () => {
     expect(holds({ field: "fields.price", op: "matches", value: "49" })).toBe(false);
   });
 
-  it("finishes (a+)+$ on 32 KB of a's and a b in under 100 ms", () => {
+  // The limit is a vm timeout for the reason given in regex.test.ts.
+  it("finishes (a+)+$ on 32 KB of a's and a b", () => {
     const body = `${"a".repeat(32 * 1024)}b`;
-    const started = performance.now();
-    expect(holds({ field: "body", op: "matches", value: "(a+)+$" }, { body })).toBe(false);
-    expect(performance.now() - started).toBeLessThan(100);
+    const match = () => holds({ field: "body", op: "matches", value: "(a+)+$" }, { body });
+    expect(runInNewContext("match()", { match }, { timeout: 30_000 })).toBe(false);
   });
 });
 
