@@ -1,6 +1,6 @@
 // A Workspace's model, as the Model screen reads and changes it (ADR 0005). Every query is scoped to
 // the Workspace, and nothing here returns the key or its ciphertext to the page.
-import { type AgentFetch, decryptSecret, encryptSecret, testModelConnection } from "@watchdog/core";
+import { type AgentFetch, encryptSecret, readApiKey, testModelConnection } from "@watchdog/core";
 import { agentCall, and, type Db, desc, eq, isNull, modelConfig, type SQL, sql, type Tx, workspace } from "@watchdog/db";
 
 export const providerTypes = [
@@ -204,21 +204,30 @@ export const removeModel = (db: Db, workspaceId: string) =>
     return archiveModel(tx, workspaceId);
   });
 
-/** The Workspace's model as the screen shows it, or undefined. */
-export async function getModel(db: Db, workspaceId: string) {
-  const [model] = await db
+/**
+ * The Workspace's model as the screen shows it, or undefined. It tries the key on every read, so a
+ * changed WATCHDOG_ENCRYPTION_KEY shows before any call fails, and in a Workspace with no calls yet.
+ */
+export async function getModel(db: Db, encryptionKey: Buffer, workspaceId: string) {
+  const [row] = await db
     .select({
       providerType: modelConfig.providerType,
       baseUrl: modelConfig.baseUrl,
       modelName: modelConfig.modelName,
-      hasKey: sql<boolean>`${modelConfig.apiKeyCiphertext} is not null`,
+      apiKeyCiphertext: modelConfig.apiKeyCiphertext,
       supportsStructuredOutput: modelConfig.supportsStructuredOutput,
       inputPricePerMillion: modelConfig.inputPricePerMillion,
       outputPricePerMillion: modelConfig.outputPricePerMillion,
     })
     .from(modelConfig)
     .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
-  return model;
+  if (row === undefined) return undefined;
+  const { apiKeyCiphertext, ...model } = row;
+  return {
+    ...model,
+    hasKey: apiKeyCiphertext !== null,
+    keyUnreadable: readApiKey(apiKeyCiphertext, encryptionKey) === undefined,
+  };
 }
 
 /**
@@ -251,7 +260,7 @@ export type TestOutcome = (typeof testOutcomes)[number];
 
 /**
  * Makes one small real call to the saved model. A call that was attempted leaves its reason on its
- * `agent_call` row, for `lastFailedCall`.
+ * `agent_call` row, for `lastFailedCall`. An unreadable key makes no attempt, and `getModel` says so.
  */
 export async function testConnection(db: Db, deps: ModelDeps, workspaceId: string): Promise<TestOutcome> {
   const [model] = await db
@@ -259,7 +268,6 @@ export async function testConnection(db: Db, deps: ModelDeps, workspaceId: strin
     .from(modelConfig)
     .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
   if (model === undefined) return "no-model";
-  if (!canDecrypt(model.apiKeyCiphertext, deps.encryptionKey)) return "unreadable-key";
 
   const result = await testModelConnection({
     db,
@@ -268,15 +276,6 @@ export async function testConnection(db: Db, deps: ModelDeps, workspaceId: strin
     fetch: deps.fetch,
   });
   if (result.ok) return "ok";
+  if (result.reason === "unreadable_key") return "unreadable-key";
   return result.reason === "blocked" ? "blocked" : "failed";
-}
-
-// callAgent makes no attempt with a key it can't read, so no row would say why.
-function canDecrypt(ciphertext: string | null, encryptionKey: Buffer) {
-  try {
-    if (ciphertext !== null) decryptSecret(ciphertext, encryptionKey);
-    return true;
-  } catch {
-    return false;
-  }
 }

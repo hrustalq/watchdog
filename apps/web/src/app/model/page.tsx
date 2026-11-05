@@ -60,8 +60,11 @@ const keyLink =
 
 async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchParams">) {
   const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
-  const { db, mode } = server();
-  const [model, failure] = await Promise.all([getModel(db, workspace.id), lastFailedCall(db, workspace.id)]);
+  const { db, encryptionKey, mode } = server();
+  const [model, failure] = await Promise.all([
+    getModel(db, encryptionKey, workspace.id),
+    lastFailedCall(db, workspace.id),
+  ]);
 
   const param = (name: string) => {
     const value = params[name];
@@ -126,11 +129,15 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
             <p className="text-sm text-muted-foreground">
               {providerTypes.find(({ value }) => value === model.providerType)?.label}
               {" · "}
-              {model.hasKey ? "API key set" : "No API key"}
+              {keyStatus(model)}
             </p>
           </div>
           {/* The URL can outlive the test: "Connected" mustn't sit above a newer failure. */}
-          <TestResult test={test === "ok" && failure?.recovered === false ? undefined : test} modelName={model.modelName} />
+          <TestResult
+            test={test === "ok" && (failure?.recovered === false || model.keyUnreadable) ? undefined : test}
+            modelName={model.modelName}
+          />
+          {model.keyUnreadable ? <UnreadableKey justTested={test === "unreadable-key"} /> : null}
           {failure === undefined ? null : (
             <FailedCall
               failure={failure}
@@ -169,12 +176,18 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
           key={JSON.stringify(values)}
           values={values}
           hasKey={model?.hasKey === true}
+          keyUnreadable={model?.keyUnreadable === true}
           problem={problem}
           keyTyped={param("keyTyped") !== ""}
         />
       </section>
     </>
   );
+}
+
+function keyStatus({ hasKey, keyUnreadable }: { hasKey: boolean; keyUnreadable: boolean }) {
+  if (keyUnreadable) return "API key unreadable";
+  return hasKey ? "API key set" : "No API key";
 }
 
 const blockedHint = (mode: "hosted" | "self-hosted") =>
@@ -190,22 +203,41 @@ function TestResult({ test, modelName }: { test: TestOutcome | undefined; modelN
           Connected. {modelName} answered.
         </Notice>
       );
+    // The screen says this from the key itself, whether or not a test just ran.
     case "unreadable-key":
-      return (
-        <Notice role="alert" className="text-sm text-alarm">
-          Watchdog can&apos;t read the stored API key, which happens when WATCHDOG_ENCRYPTION_KEY changes.{" "}
-          <a href="#api-key" className={keyLink}>
-            Enter the key again
-          </a>
-          .
-        </Notice>
-      );
     case "blocked":
     case "failed":
     case "no-model":
     case undefined:
       return null;
   }
+}
+
+const alarmLine = "flex items-start gap-2 text-sm text-alarm";
+const alarmLamp = <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />;
+
+/** Takes focus only after a test: a page that merely loads with this shouldn't move it. */
+function UnreadableKey({ justTested }: { justTested: boolean }) {
+  const line = (
+    <>
+      {alarmLamp}
+      <span className="min-w-0">
+        Watchdog can&apos;t read the stored API key, which happens when WATCHDOG_ENCRYPTION_KEY changes. Agent calls fail
+        until you{" "}
+        <a href="#api-key" className={keyLink}>
+          enter the key again
+        </a>
+        .
+      </span>
+    </>
+  );
+  return justTested ? (
+    <Notice role="alert" className={alarmLine}>
+      {line}
+    </Notice>
+  ) : (
+    <p className={alarmLine}>{line}</p>
+  );
 }
 
 function FailedCall({
@@ -226,19 +258,18 @@ function FailedCall({
     </span>
   );
   if (failure.recovered) return <p className="text-sm text-muted-foreground">{words}</p>;
-  const className = "flex items-start gap-2 text-sm text-alarm";
   const line = (
     <>
-      <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
+      {alarmLamp}
       {words}
     </>
   );
   return justFailed ? (
-    <Notice role="alert" className={className}>
+    <Notice role="alert" className={alarmLine}>
       {line}
     </Notice>
   ) : (
-    <p className={className}>{line}</p>
+    <p className={alarmLine}>{line}</p>
   );
 }
 

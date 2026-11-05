@@ -1,4 +1,4 @@
-export { type AgentResult, callAgent, testModelConnection } from "./agent/call-agent.ts";
+export { type AgentResult, callAgent, readApiKey, testModelConnection } from "./agent/call-agent.ts";
 export { loadProfile } from "./agent/profile.ts";
 export { type AgentFetch, createAgentFetch } from "./agent/provider.ts";
 export { loadConfig, type Config } from "./config.ts";

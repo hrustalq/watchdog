@@ -17,9 +17,12 @@ import { type AgentFetch, type AgentModelConfig, createAgentModel } from "./prov
 // The SDK warns on every call that a host without the flag gets no schema, which is intended.
 globalThis.AI_SDK_LOG_WARNINGS = false;
 
+const rowStatus = { invalid_output: "invalid_output", blocked: "error", error: "error" } as const;
+
 export interface AgentFailure {
   ok: false;
-  reason: "invalid_output" | "blocked" | "error";
+  /** An attempt's reasons, plus `unreadable_key`: no provider was reached, so nothing is metered. */
+  reason: keyof typeof rowStatus | "unreadable_key";
   message: string;
 }
 export type AgentResult<Value> = { ok: true; output: Value } | AgentFailure;
@@ -62,8 +65,6 @@ export const storableText = (text: string) => text.replaceAll("\0", "").toWellFo
 
 export const storableMessage = (message: string) => storableText(message.slice(0, 1000));
 
-const rowStatus = { invalid_output: "invalid_output", blocked: "error", error: "error" } as const;
-
 function validationError(error: NoObjectGeneratedError | NoOutputGeneratedError) {
   if (NoOutputGeneratedError.isInstance(error)) return "The response was empty.";
   const cause = TypeValidationError.isInstance(error.cause) ? error.cause.cause : error.cause;
@@ -79,6 +80,17 @@ function describeFailure(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** A model's API key, null if it has none, or undefined if this encryption key can't read it. */
+export function readApiKey(ciphertext: string | null, encryptionKey: Buffer) {
+  if (ciphertext === null) return null;
+  try {
+    // Headers drop surrounding whitespace, so trimming redacts the key as the provider receives it.
+    return decryptSecret(ciphertext, encryptionKey).trim();
+  } catch {
+    return undefined;
+  }
+}
+
 /** Returns validated output or a typed failure. It throws only when it can't write the meter row. */
 export async function callAgent<Schema extends z.ZodObject>(
   options: CallAgentOptions<Schema>,
@@ -90,18 +102,25 @@ export async function callAgent<Schema extends z.ZodObject>(
     return { ok: false, reason: "error", message: "This model belongs to another Workspace." };
   }
 
+  const apiKey = readApiKey(modelConfig.apiKeyCiphertext, options.encryptionKey);
+  if (apiKey === undefined) {
+    return {
+      ok: false,
+      reason: "unreadable_key",
+      message:
+        "Watchdog can't read the stored API key, which happens when WATCHDOG_ENCRYPTION_KEY changes. Enter the key again on the Model screen.",
+    };
+  }
+
   let prepared;
   try {
-    const ciphertext = modelConfig.apiKeyCiphertext;
-    // Headers drop surrounding whitespace, so trimming redacts the key as the provider receives it.
-    const apiKey = ciphertext === null ? null : decryptSecret(ciphertext, options.encryptionKey).trim();
     const agentModel = createAgentModel(modelConfig, apiKey, options.fetch);
     const instructions = agentModel.schemaInPrompt ? `${system}\n\n${asPlainJson(schema)}` : system;
-    prepared = { apiKey, instructions, ...agentModel };
+    prepared = { instructions, ...agentModel };
   } catch (error) {
     return { ok: false, reason: "error", message: describeFailure(error) };
   }
-  const { apiKey, instructions, model, providerOptions } = prepared;
+  const { instructions, model, providerOptions } = prepared;
   // A provider's error can quote the key it was sent, and the message may reach a Log row.
   const redact = (text: string) =>
     apiKey === null || apiKey === "" ? text : text.replaceAll(apiKey, "[redacted]");
@@ -109,7 +128,7 @@ export async function callAgent<Schema extends z.ZodObject>(
   async function attempt(number: number, text: string) {
     const started = performance.now();
     let usage;
-    let result: AgentResult<z.output<Schema>>;
+    let result: AgentResult<z.output<Schema>> & { reason?: keyof typeof rowStatus };
     try {
       const response = await generateText({
         model,

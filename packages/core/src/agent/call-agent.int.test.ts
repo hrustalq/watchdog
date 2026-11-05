@@ -403,13 +403,13 @@ describe("callAgent", () => {
       expect(message).not.toContain(apiKey);
     });
 
-    it("fails without a request or a row when the key can't be decrypted", async () => {
+    it("reports an unreadable key, without a request or a row, when it can't be decrypted", async () => {
       const seeded = await seed("anthropic", { ciphertext: encryptSecret(apiKey, Buffer.alloc(32, 9)) });
       const fake = fakeLlm("anthropic", []);
 
       const { reason, message } = failed(await call(seeded, fake.fetch));
-      expect(reason).toBe("error");
-      expect(message).toContain("Can't decrypt");
+      expect(reason).toBe("unreadable_key");
+      expect(message).toContain("can't read the stored API key");
 
       expect(fake.requests).toEqual([]);
       expect(await rows(seeded)).toEqual([]);

@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { createAgentFetch, decryptSecret, encryptSecret } from "@watchdog/core";
+import { createAgentFetch, decryptSecret } from "@watchdog/core";
 import { fakeLlm } from "@watchdog/core/testing";
 import {
   agentCall,
@@ -118,11 +118,40 @@ describe("the Model screen", () => {
       await save(workspaceId, { apiKey });
       const { apiKeyCiphertext } = await active(workspaceId);
 
-      const shown = await getModel(db, workspaceId);
+      const shown = await getModel(db, encryptionKey, workspaceId);
 
       expect(shown?.hasKey).toBe(true);
       expect(JSON.stringify(shown)).not.toContain(apiKey);
       expect(JSON.stringify(shown)).not.toContain(present(apiKeyCiphertext));
+    });
+
+    it("says whether the stored key can be read, without a call", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+
+      const readable = await getModel(db, encryptionKey, workspaceId);
+      const unreadable = await getModel(db, Buffer.alloc(32, 9), workspaceId);
+
+      expect(readable).toMatchObject({ hasKey: true, keyUnreadable: false });
+      expect(unreadable).toMatchObject({ hasKey: true, keyUnreadable: true });
+      await expect(lastFailedCall(db, workspaceId)).resolves.toBeUndefined();
+    });
+
+    it("can read a key entered again under the new encryption key", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const changed = Buffer.alloc(32, 9);
+
+      await saveModel(db, changed, workspaceId, input({ apiKey }));
+
+      expect(await getModel(db, changed, workspaceId)).toMatchObject({ hasKey: true, keyUnreadable: false });
+    });
+
+    it("has nothing to read when a model has no key", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { baseUrl: "http://ollama.test:11434/v1" });
+
+      expect(await getModel(db, Buffer.alloc(32, 9), workspaceId)).toMatchObject({ hasKey: false, keyUnreadable: false });
     });
 
     it("lets a local model have no key", async () => {
@@ -131,7 +160,7 @@ describe("the Model screen", () => {
       await save(workspaceId, { baseUrl: "http://ollama.test:11434/v1" });
 
       expect(await active(workspaceId)).toMatchObject({ apiKeyCiphertext: null });
-      expect((await getModel(db, workspaceId))?.hasKey).toBe(false);
+      expect((await getModel(db, encryptionKey, workspaceId))?.hasKey).toBe(false);
     });
 
     it("stores the prices and the flag, with a blank price as none", async () => {
@@ -139,7 +168,7 @@ describe("the Model screen", () => {
 
       await save(workspaceId, { structured: true, inputPrice: "2.5", outputPrice: "" });
 
-      expect(await getModel(db, workspaceId)).toMatchObject({
+      expect(await getModel(db, encryptionKey, workspaceId)).toMatchObject({
         supportsStructuredOutput: true,
         inputPricePerMillion: 2.5,
         outputPricePerMillion: null,
@@ -319,7 +348,7 @@ describe("the Model screen", () => {
       expect(others).toEqual([]);
       expect(archived?.archivedAt).toBeInstanceOf(Date);
       expect(archived?.apiKeyCiphertext).toBeNull();
-      expect(await getModel(db, workspaceId)).toBeUndefined();
+      expect(await getModel(db, encryptionKey, workspaceId)).toBeUndefined();
       expect(await hasActiveModel(db, workspaceId)).toBe(false);
       expect(await db.select().from(agentCall).where(eq(agentCall.modelConfigId, old.id))).toHaveLength(1);
     });
@@ -405,18 +434,15 @@ describe("the Model screen", () => {
       expect(failed?.reason).toMatch(/^Watchdog couldn't reach the model provider: .*ECONNREFUSED/);
     });
 
-    it("says when the stored key can't be read, without calling the model", async () => {
+    it("says when the stored key can't be read, without calling the model or metering", async () => {
       const workspaceId = await newWorkspace();
       await save(workspaceId, { apiKey });
-      await db
-        .update(modelConfig)
-        .set({ apiKeyCiphertext: encryptSecret(apiKey, Buffer.alloc(32, 9)) })
-        .where(eq(modelConfig.workspaceId, workspaceId));
-      const deps = fakeDeps([]);
+      const deps = { ...fakeDeps([]), encryptionKey: Buffer.alloc(32, 9) };
 
       await expect(testConnection(db, deps, workspaceId)).resolves.toBe("unreadable-key");
 
       expect(deps.requests).toEqual([]);
+      await expect(lastFailedCall(db, workspaceId)).resolves.toBeUndefined();
     });
 
     it("has nothing to test without a model", async () => {
@@ -497,7 +523,7 @@ describe("the Model screen", () => {
       await testConnection(db, fakeDeps([{ status: 401, message: "Revoked" }]), mine);
       const before = await active(mine);
 
-      expect(await getModel(db, other)).toBeUndefined();
+      expect(await getModel(db, encryptionKey, other)).toBeUndefined();
       expect(await lastFailedCall(db, other)).toBeUndefined();
       await expect(testConnection(db, fakeDeps([]), other)).resolves.toBe("no-model");
       await expect(removeModel(db, other)).resolves.toBe(false);

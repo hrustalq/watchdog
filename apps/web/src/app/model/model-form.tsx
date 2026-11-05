@@ -12,22 +12,35 @@ export interface ModelFormValues {
   outputPrice: string;
 }
 
+function keyHint(hasKey: boolean, keyUnreadable: boolean) {
+  if (keyUnreadable) {
+    return "Watchdog can't read the stored key, so enter it again. Leaving this blank keeps the unreadable one.";
+  }
+  return hasKey
+    ? "Changing the provider type or the host needs the key again, because Watchdog won't send a key to another address."
+    : "Most hosted providers need one. Leave it blank if this model doesn't.";
+}
+
 /**
  * Sets the Workspace's model. The key field is never filled in: the page only knows whether a key
- * is set, and a blank field keeps it.
+ * is set, and a blank field keeps it. A key that can't be read isn't worth keeping, so the form
+ * asks for it instead of offering to.
  */
 export function ModelForm({
   values,
   hasKey,
+  keyUnreadable,
   problem,
   keyTyped,
 }: {
   values: ModelFormValues;
   hasKey: boolean;
+  keyUnreadable: boolean;
   problem: ModelProblem | undefined;
   /** The last submit held a key, and it's gone: a refused form doesn't carry it back. */
   keyTyped: boolean;
 }) {
+  const keepable = hasKey && !keyUnreadable;
   const invalid = (name: ModelProblem) => ({
     "aria-invalid": problem === name,
     "aria-describedby": `${name}-note`,
@@ -102,7 +115,7 @@ export function ModelForm({
           type="password"
           autoComplete="off"
           spellCheck={false}
-          placeholder={hasKey ? "Leave blank to keep the current key" : undefined}
+          placeholder={keepable ? "Leave blank to keep the current key" : undefined}
           {...invalid("api-key")}
           className={`${field} ${dataBox}`}
         />
@@ -112,13 +125,11 @@ export function ModelForm({
             {keyTyped ? (
               <strong className="font-medium text-foreground">
                 The key you typed wasn&apos;t saved. Enter it again
-                {hasKey ? ", or leave this blank to keep the current one" : ""}.{" "}
+                {keepable ? ", or leave this blank to keep the current one" : ""}.{" "}
               </strong>
             ) : null}
             Stored encrypted, and never shown again.{" "}
-            {hasKey
-              ? "Changing the provider type or the host needs the key again, because Watchdog won't send a key to another address."
-              : "Most hosted providers need one. Leave it blank if this model doesn't."}
+            {keyHint(hasKey, keyUnreadable)}
           </>,
         )}
       </div>
