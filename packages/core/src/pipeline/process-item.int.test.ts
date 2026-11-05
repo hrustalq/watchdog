@@ -344,16 +344,9 @@ describe("processItem", () => {
 
     /** What the request said, as the model would read it, with its JSON escapes undone. */
     function sentTo(fake: ReturnType<typeof answering>, index = 0) {
-      const body = fake.requests[index]?.body as {
-        messages: { role: string; content: string | { text: string }[] }[];
-      };
+      const body = fake.requests[index]?.body as { messages: { role: string; content: string }[] };
       const content = (role: string) =>
-        body.messages
-          .filter((message) => message.role === role)
-          .map(({ content: part }) =>
-            typeof part === "string" ? part : part.map(({ text }) => text).join(""),
-          )
-          .join("\n");
+        present(body.messages.find((message) => message.role === role)).content;
       return { body, system: content("system"), prompt: content("user") };
     }
 
