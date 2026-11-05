@@ -36,27 +36,46 @@ const fieldTypes = {
 /** A rule can name a field `summary` or `severity`, and the schema is one flat object. */
 export const fieldKey = (name: string) => `field_${name}`;
 
+function fieldShape(rules: readonly AgentExtractorRule[]) {
+  const fields: Record<string, z.ZodType> = {};
+  for (const { name, type } of rules.flatMap((rule) => rule.fields)) {
+    fields[fieldKey(name)] ??= fieldTypes[type];
+  }
+  return fields;
+}
+
 /**
  * The flat output schema for one Item, from the rules whose Condition it meets. Its type names only the
  * fixed keys, because a rule's keys exist only at run time. A field two rules declare keeps the oldest
  * rule's type, as an Item keeps the oldest rule's value.
  */
 export function ratingSchema(rules: readonly AgentExtractorRule[]) {
-  const fields: Record<string, z.ZodType> = {};
-  for (const { name, type } of rules.flatMap((rule) => rule.fields)) {
-    fields[fieldKey(name)] ??= fieldTypes[type];
-  }
-  const shape: typeof ratingShape = { ...ratingShape, ...fields };
+  const shape: typeof ratingShape = { ...ratingShape, ...fieldShape(rules) };
   return z.object(shape);
 }
 
+/** The flat output schema for a manual run: one rule's fields, with no Rating or summary. */
+export const manualRunSchema = (rule: AgentExtractorRule) => z.object(fieldShape([rule]));
+
+const asExtractionJson = (rules: readonly AgentExtractorRule[]) =>
+  JSON.stringify(
+    rules.map((rule) => ({
+      rule: rule.extractor,
+      instructions: rule.prompt,
+      keys: rule.fields.map(({ name, type }) => ({ key: fieldKey(name), type })),
+    })),
+  );
+
+/** What a manual run has to do, for the system message. */
+export const manualRunTask = (rule: AgentExtractorRule) =>
+  `Answer each key of this Extractor Rule, following its instructions. A key the Item has no value for
+is null.
+
+Extractor Rule, as JSON:
+${asExtractionJson([rule])}`;
+
 /** What this call has to do, for the system message. The rules' prompts go here: the user wrote them. */
 export function ratingTask(rules: readonly AgentExtractorRule[], outputLanguage: string) {
-  const extraction = rules.map((rule) => ({
-    rule: rule.extractor,
-    instructions: rule.prompt,
-    keys: rule.fields.map(({ name, type }) => ({ key: fieldKey(name), type })),
-  }));
   return `Rate the Item and summarise it, and answer with these keys:
 - summary: what the Item says, in a sentence or two.
 - reasoning: why it gets this Rating, in a sentence or two.
@@ -77,6 +96,6 @@ Also answer each key of these Extractor Rules, following each rule's instruction
 no value for is null.
 
 Extractor Rules, as JSON:
-${JSON.stringify(extraction)}`
+${asExtractionJson(rules)}`
   }`;
 }

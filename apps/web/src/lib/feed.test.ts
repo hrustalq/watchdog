@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { parseCursor } from "./feed.ts";
+import { manualRunIn, parseCursor } from "./feed.ts";
 
 const id = "0b6f2a4e-8c1d-4f3a-9e2b-7d5c6a1f0e9d";
+
+describe("manualRunIn", () => {
+  const log = [
+    { id: 1, message: "Captured from Blog", data: {} },
+    { id: 2, message: "Manual run: extracted cve", data: { manual: true } },
+    { id: 3, message: "Manual run: failed", data: { manual: true, failed: true } },
+  ];
+
+  it("finds the run the URL names and whether it failed", () => {
+    expect(manualRunIn(log, "2")).toEqual({ id: 2, message: "Manual run: extracted cve", failed: false });
+    expect(manualRunIn(log, "3")).toEqual({ id: 3, message: "Manual run: failed", failed: true });
+  });
+
+  it("ignores a row that isn't a manual run, one not in this Log, and anything else", () => {
+    expect(manualRunIn(log, "1")).toBeUndefined();
+    expect(manualRunIn(log, "9")).toBeUndefined();
+    expect(manualRunIn(log, ["2"])).toBeUndefined();
+    expect(manualRunIn(log, undefined)).toBeUndefined();
+  });
+});
 
 describe("parseCursor", () => {
   it("reads the sort keys of an Item with and without a published time", () => {

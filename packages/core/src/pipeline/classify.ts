@@ -70,6 +70,14 @@ export async function runDeterministicClassifiers(tx: Tx, itemId: string, target
   }
 }
 
+export async function activeModel(db: Db, workspaceId: string) {
+  const [model] = await db
+    .select()
+    .from(modelConfig)
+    .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
+  return model;
+}
+
 /**
  * The Workspace's active model, if it had a model when the Item was captured. Adding the first one
  * later doesn't reach Items already captured, but replacing one does, so a user who fixes a model that
@@ -89,12 +97,7 @@ export async function modelFor(db: Db, itemId: string, workspaceId: string) {
       ),
     )
     .limit(1);
-  if (hadModel.length === 0) return undefined;
-  const [model] = await db
-    .select()
-    .from(modelConfig)
-    .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
-  return model;
+  return hadModel.length === 0 ? undefined : activeModel(db, workspaceId);
 }
 
 interface ParsedRule {

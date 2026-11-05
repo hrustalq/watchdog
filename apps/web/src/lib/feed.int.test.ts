@@ -1,6 +1,19 @@
 import { createServer } from "node:http";
 import { createEgressFetch, loadConfig, pollSource } from "@watchdog/core";
-import { closeDb, createDb, type Db, eq, item, itemLog, migrate, source, sql, user, workspace } from "@watchdog/db";
+import {
+  closeDb,
+  createDb,
+  type Db,
+  eq,
+  item,
+  itemField,
+  itemLog,
+  migrate,
+  source,
+  sql,
+  user,
+  workspace,
+} from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { feedPage, feedPageSize, itemWithLog, parseCursor } from "./feed.ts";
@@ -243,6 +256,22 @@ describe("Feed", () => {
     expect(loaded?.log.map((row) => [row.stage, row.message])).toEqual([
       ["capture", "Captured from Hacker News"],
       ["capture", "Later"],
+    ]);
+  });
+
+  it("loads an Item's extracted fields by name", async () => {
+    const seeded = await seed();
+    const [id] = await insertItems(seeded, [{}]);
+    await db.insert(itemField).values([
+      { itemId: present(id), name: "tags", value: ["a", "b"] },
+      { itemId: present(id), name: "cve", value: "CVE-1" },
+    ]);
+
+    const loaded = await itemWithLog(db, seeded.workspaceId, present(id));
+
+    expect(loaded?.fields).toEqual([
+      { name: "cve", value: "CVE-1" },
+      { name: "tags", value: ["a", "b"] },
     ]);
   });
 

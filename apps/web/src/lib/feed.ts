@@ -81,7 +81,18 @@ export async function feedPage(db: Db, workspaceId: string, before?: FeedCursor)
 
 export type FeedItem = Awaited<ReturnType<typeof feedPage>>["items"][number];
 
-/** An Item's envelope with its Source's name and its Log, oldest first, or undefined. */
+/**
+ * The manual run a URL names, from the Item's own Log, so a URL can only point at what this page
+ * already shows. A provider's reason is too long and too private to go in the URL itself.
+ */
+export function manualRunIn(log: { id: number; message: string; data: unknown }[], runId: unknown) {
+  const row = log.find(({ id }) => String(id) === runId);
+  const data = row?.data;
+  if (row === undefined || typeof data !== "object" || data === null || !("manual" in data)) return undefined;
+  return { id: row.id, message: row.message, failed: "failed" in data };
+}
+
+/** An Item's envelope with its Source's name, its extracted fields and its Log, oldest first, or undefined. */
 export function itemWithLog(db: Db, workspaceId: string, itemId: string) {
   if (!isUuid(itemId)) return Promise.resolve(undefined);
   return db.query.item.findFirst({
@@ -89,8 +100,12 @@ export function itemWithLog(db: Db, workspaceId: string, itemId: string) {
     columns: { raw: false, summary: false, workspaceId: false, sourceId: false, externalId: false },
     with: {
       source: { columns: { name: true } },
+      fields: {
+        columns: { name: true, value: true },
+        orderBy: (field, { asc }) => [asc(field.name)],
+      },
       log: {
-        columns: { id: true, at: true, stage: true, message: true },
+        columns: { id: true, at: true, stage: true, message: true, data: true },
         orderBy: (log, { asc }) => [asc(log.at), asc(log.id)],
       },
     },
