@@ -18,10 +18,12 @@ import {
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { feedPage, feedPageSize, itemWithLog, parseCursor } from "./feed.ts";
+import { feedPage, feedPageSize, itemWithLog, parseCursor, parseTopCursor, topPage } from "./feed.ts";
 
 const now = new Date("2026-11-03T15:00:00Z");
 const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000);
+// Top's window runs on the database's clock, so its tests date Items from the real time.
+const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
 
 /** The value, which the test expects to be there. */
 function present<T>(value: T | undefined): T {
@@ -88,7 +90,7 @@ describe("Feed", () => {
   /** Inserts Items into a Source and returns their ids, in the order given. */
   async function insertItems(
     { workspaceId, source: src }: Awaited<ReturnType<typeof seed>>,
-    rows: { capturedAt?: Date; publishedAt?: Date | null; title?: string }[],
+    rows: { capturedAt?: Date; publishedAt?: Date | null; title?: string; importance?: number; severity?: number }[],
   ) {
     const inserted = await db
       .insert(item)
@@ -102,6 +104,8 @@ describe("Feed", () => {
           raw: {},
           ...(row.capturedAt === undefined ? {} : { capturedAt: row.capturedAt }),
           publishedAt: row.publishedAt ?? null,
+          importance: row.importance ?? null,
+          severity: row.severity ?? null,
         })),
       )
       .returning({ id: item.id });
@@ -282,6 +286,233 @@ describe("Feed", () => {
       const page = await feedPage(db, seeded.workspaceId, parseCursor(before));
       expect(page.items.map((row) => row.id)).toEqual([newest]);
     }
+  });
+
+  describe("Top", () => {
+    const topIds = async (workspaceId: string) =>
+      (await topPage(db, workspaceId)).items.map((row) => row.id);
+
+    it("ranks Importance 5 / Severity 1 (11) above a newer Importance 3 / Severity 4 (10)", async () => {
+      const seeded = await seed();
+      const [eleven, ten] = await insertItems(seeded, [
+        { importance: 5, severity: 1, capturedAt: daysAgo(3) },
+        { importance: 3, severity: 4, capturedAt: daysAgo(1) },
+      ]);
+
+      expect(await topIds(seeded.workspaceId)).toEqual([eleven, ten]);
+    });
+
+    it("breaks a tie by newest captured, then by id", async () => {
+      const seeded = await seed();
+      const capturedAt = daysAgo(2);
+      const [older, newer, tiedA, tiedB] = await insertItems(seeded, [
+        { importance: 3, severity: 3, capturedAt: daysAgo(3) },
+        { importance: 4, severity: 1, capturedAt: daysAgo(1) },
+        { importance: 2, severity: 5, capturedAt },
+        { importance: 2, severity: 5, capturedAt },
+      ]);
+      const [first, second] = [present(tiedA), present(tiedB)].sort().reverse();
+
+      expect(await topIds(seeded.workspaceId)).toEqual([newer, first, second, older]);
+    });
+
+    it("keeps to the last 7 days by captured_at, whatever the published date", async () => {
+      const seeded = await seed();
+      const [inside, justInside, justOutside, eightDays] = await insertItems(seeded, [
+        { importance: 1, severity: 1, capturedAt: daysAgo(1), publishedAt: daysAgo(30) },
+        { importance: 2, severity: 2, capturedAt: new Date(daysAgo(7).getTime() + 60_000) },
+        { importance: 5, severity: 5, capturedAt: new Date(daysAgo(7).getTime() - 60_000) },
+        { importance: 5, severity: 5, capturedAt: daysAgo(8) },
+      ]);
+
+      expect(await topIds(seeded.workspaceId)).toEqual([justInside, inside]);
+      const latest = (await feedPage(db, seeded.workspaceId)).items.map((row) => row.id);
+      expect(latest).toEqual([inside, justInside, justOutside, eightDays]);
+    });
+
+    it("leaves an unrated Item to Latest until it's rated, and follows a change to the Rating", async () => {
+      const seeded = await seed();
+      const [other, later] = await insertItems(seeded, [
+        { importance: 3, severity: 3, capturedAt: daysAgo(1) },
+        { capturedAt: daysAgo(2) },
+      ]);
+      const rate = (importance: number, severity: number) =>
+        db.update(item).set({ importance, severity }).where(eq(item.id, present(later)));
+
+      expect(await topIds(seeded.workspaceId)).toEqual([other]);
+      await rate(1, 1);
+      expect(await topIds(seeded.workspaceId)).toEqual([other, later]);
+      await rate(5, 5);
+      expect(await topIds(seeded.workspaceId)).toEqual([later, other]);
+    });
+
+    it("falls back to Latest order when no Item in the window is rated", async () => {
+      const seeded = await seed();
+      const [old, newest, middle] = await insertItems(seeded, [
+        { importance: 5, severity: 5, capturedAt: daysAgo(8) },
+        { capturedAt: daysAgo(1) },
+        { capturedAt: daysAgo(2) },
+      ]);
+
+      const page = await topPage(db, seeded.workspaceId);
+
+      expect(page.items.map((row) => row.id)).toEqual([newest, middle, old]);
+      expect(page.fallback).toBe(true);
+    });
+
+    it("carries on the fallback's pages with a Latest cursor", async () => {
+      const seeded = await seed();
+      await insertItems(seeded, Array.from({ length: feedPageSize + 1 }, () => ({})));
+
+      const { older, fallback } = await topPage(db, seeded.workspaceId);
+
+      expect(fallback).toBe(true);
+      expect(parseCursor(older)).toBeDefined();
+    });
+
+    it("doesn't fall back once an Item in the window is rated", async () => {
+      const seeded = await seed();
+      const [rated] = await insertItems(seeded, [{ importance: 1, severity: 1 }, {}]);
+
+      const page = await topPage(db, seeded.workspaceId);
+
+      expect(page.items.map((row) => row.id)).toEqual([rated]);
+      expect(page.fallback).toBe(false);
+    });
+
+    it("shows only the Workspace's own Items", async () => {
+      const ours = await seed();
+      const theirs = await seed();
+      const [mine] = await insertItems(ours, [{ importance: 1, severity: 1 }]);
+      await insertItems(theirs, [{ importance: 5, severity: 5 }]);
+
+      expect(await topIds(ours.workspaceId)).toEqual([mine]);
+      const later = parseTopCursor(`15_2999-01-01T00:00:00.000000Z_${crypto.randomUUID()}`);
+      expect((await topPage(db, ours.workspaceId, later)).items.map((row) => row.id)).toEqual([mine]);
+    });
+
+    /** Every page of Top, following "Show older" to the end. */
+    async function allTopPages(workspaceId: string) {
+      const pages = [];
+      let before: string | undefined;
+      do {
+        const page = await topPage(db, workspaceId, parseTopCursor(before));
+        pages.push(page.items.map((row) => row.id));
+        before = page.older ?? undefined;
+        // A cursor parseTopCursor rejects would load the first page again, forever.
+        if (before !== undefined) expect(parseTopCursor(before)).toBeDefined();
+      } while (before !== undefined);
+      return pages;
+    }
+
+    it("pages through 200 rated Items with no duplicates or gaps", async () => {
+      const seeded = await seed();
+      // Ties on every sort key, and captured times with microseconds, which a JS Date can't hold.
+      const ids = await insertItems(
+        seeded,
+        Array.from({ length: 150 }, (_, i) => ({
+          importance: 1 + (i % 5),
+          severity: 1 + (i % 3),
+          capturedAt: daysAgo(1 + (i % 3)),
+        })),
+      );
+      for (let i = 0; i < 50; i++) ids.push(...(await insertItems(seeded, [{ importance: 3, severity: 3 }])));
+      const expected = await db.execute<{ id: string }>(sql`
+        select id from item where workspace_id = ${seeded.workspaceId}
+        order by 2 * importance + severity desc, captured_at desc, id desc`);
+
+      const pages = await allTopPages(seeded.workspaceId);
+
+      expect(pages.map((page) => page.length)).toEqual([feedPageSize, feedPageSize, feedPageSize, feedPageSize]);
+      expect(pages.flat()).toEqual(expected.rows.map((row) => row.id));
+      expect(new Set(pages.flat())).toEqual(new Set(ids));
+    });
+
+    it("moves only the Item whose score changes between pages, and paging still ends", async () => {
+      const seeded = await seed();
+      await insertItems(
+        seeded,
+        Array.from({ length: feedPageSize + 10 }, () => ({ importance: 3, severity: 3 })),
+      );
+      const [firstPage = [], secondPage = []] = await allTopPages(seeded.workspaceId);
+      const lowered = present(firstPage.at(-1));
+      const raised = present(secondPage[0]);
+      const first = await topPage(db, seeded.workspaceId);
+
+      await db.update(item).set({ importance: 1, severity: 1 }).where(eq(item.id, lowered));
+      await db.update(item).set({ importance: 5, severity: 5 }).where(eq(item.id, raised));
+      const next = await topPage(db, seeded.workspaceId, parseTopCursor(first.older));
+
+      expect(next.items.map((row) => row.id)).toEqual([...secondPage.slice(1), lowered]);
+      expect(next.older).toBeNull();
+    });
+
+    it("says there's nothing older rather than falling back, past the last Item", async () => {
+      const seeded = await seed();
+      await insertItems(seeded, [{ importance: 3, severity: 3 }]);
+      const earliest = parseTopCursor(`3_2000-01-01T00:00:00.000000Z_${crypto.randomUUID()}`);
+
+      const page = await topPage(db, seeded.workspaceId, earliest);
+
+      expect(page).toMatchObject({ items: [], older: null, fallback: false });
+    });
+
+    it("shows the first page for a malformed cursor, which includes one from Latest", async () => {
+      const seeded = await seed();
+      const [only] = await insertItems(seeded, [{ importance: 3, severity: 3 }]);
+      const id = crypto.randomUUID();
+
+      for (const before of [
+        "not-a-cursor",
+        present(only),
+        `2026-11-03T00:00:00.000000Z_-infinity_${id}`,
+        `99999_2026-11-03T00:00:00.000000Z_${id}`,
+        `9_2026-02-30T00:00:00.000000Z_${id}`,
+        `9_2026-11-03T00:00:00.000000Z_x`,
+        `9_2026-11-03T00:00:00.000000Z_${id}_extra`,
+      ]) {
+        const page = await topPage(db, seeded.workspaceId, parseTopCursor(before));
+        expect(page.items.map((row) => row.id)).toEqual([only]);
+      }
+    });
+
+    it("gives Latest a cursor it ignores from Top", () => {
+      expect(parseCursor(`9_2026-11-03T00:00:00.000000Z_${crypto.randomUUID()}`)).toBeUndefined();
+    });
+
+    it("serves the first and later pages from item_top_idx without sorting", async () => {
+      const seeded = await seed();
+      await insertItems(
+        seeded,
+        Array.from({ length: feedPageSize + 1 }, (_, i) => ({ importance: 1 + (i % 5), severity: 3 })),
+      );
+      const { older } = await topPage(db, seeded.workspaceId);
+
+      /** The plan of the exact query topPage sends. */
+      async function planOf(before: ReturnType<typeof parseTopCursor>) {
+        const query = vi.spyOn(db.$client, "query");
+        await topPage(db, seeded.workspaceId, before);
+        const [config, params] = query.mock.calls[0] as unknown as [{ text: string }, unknown[]];
+        query.mockRestore();
+        const client = await db.$client.connect();
+        try {
+          // Tiny tables make these scans cheapest, so forbid them to see what the order can use.
+          await client.query("begin");
+          await client.query("set local enable_seqscan = off");
+          await client.query("set local enable_bitmapscan = off");
+          const plan = await client.query<{ "QUERY PLAN": string }>(`explain ${config.text}`, params);
+          await client.query("rollback");
+          return plan.rows.map((row) => row["QUERY PLAN"]).join("\n");
+        } finally {
+          client.release();
+        }
+      }
+
+      for (const plan of [await planOf(undefined), await planOf(parseTopCursor(older))]) {
+        expect(plan).toContain("item_top_idx");
+        expect(plan).not.toMatch(/Sort/);
+      }
+    });
   });
 
   it("loads an Item's envelope and its Log, oldest first", async () => {
