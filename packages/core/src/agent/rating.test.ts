@@ -17,7 +17,7 @@ describe("ratingSchema", () => {
     expect(ratingSchema([]).safeParse({ ...rated, importance: level }).success).toBe(false);
   });
 
-  it.each(["", "  \n"])("refuses a blank summary or reasoning: %j", (text) => {
+  it.each(["", "  \n", "\0 "])("refuses a blank summary or reasoning: %j", (text) => {
     expect(ratingSchema([]).safeParse({ ...rated, summary: text }).success).toBe(false);
     expect(ratingSchema([]).safeParse({ ...rated, reasoning: text }).success).toBe(false);
   });

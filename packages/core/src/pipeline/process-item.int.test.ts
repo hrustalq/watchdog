@@ -1136,10 +1136,19 @@ describe("processItem", () => {
       const second = await saveAgentExtractor(seeded, "second", always, [
         { name: "tags", type: "string-array" },
         { name: "sizes", type: "integer-array" },
+        { name: "blanks", type: "string-array" },
       ]);
       const itemId = await capture(seeded, "A post");
       const fake = answering({
-        json: { ...rated, field_plan: "Pro", field_price: null, field_blank: " ", field_tags: ["a", "b"], field_sizes: [] },
+        json: {
+          ...rated,
+          field_plan: "Pro",
+          field_price: null,
+          field_blank: " ",
+          field_tags: ["a", " ", "b"],
+          field_sizes: [],
+          field_blanks: ["", "\0"],
+        },
       });
 
       await processItem(db, itemId, fake.deps);
@@ -1154,8 +1163,8 @@ describe("processItem", () => {
           data: { extractorRuleId: first, fields: ["plan"], empty: ["price", "blank"] },
         },
         {
-          message: "Extractor Rule second extracted tags; found no value for sizes",
-          data: { extractorRuleId: second, fields: ["tags"], empty: ["sizes"] },
+          message: "Extractor Rule second extracted tags; found no value for sizes, blanks",
+          data: { extractorRuleId: second, fields: ["tags"], empty: ["sizes", "blanks"] },
         },
       ]);
     });
@@ -1251,6 +1260,86 @@ describe("processItem", () => {
 
       // It finished, so a later run does nothing.
       await processItem(db, itemId, deps);
+    });
+
+    it("finishes the Item on the last attempt when a stage throws instead of failing", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      const itemId = await capture(seeded, "A post");
+      let clock = 0;
+      const now = () => {
+        if (++clock === 1) throw new Error("The stage broke");
+        return new Date();
+      };
+
+      await expect(processItem(db, itemId, { ...answering().deps, now, lastAttempt: true })).rejects.toThrow(
+        "The stage broke",
+      );
+
+      const finished = await reload(itemId);
+      expect(finished).toMatchObject({ severity: null, summary: null });
+      expect(finished.processedAt).not.toBeNull();
+    });
+
+    it("keeps the first finish time when a last attempt finds the Item already finished", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      const itemId = await capture(seeded, "A post");
+      await processItem(db, itemId, answering().deps);
+      const { processedAt } = await reload(itemId);
+
+      await processItem(db, itemId, { ...deps, lastAttempt: true });
+
+      expect((await reload(itemId)).processedAt).toEqual(processedAt);
+    });
+
+    it("stores the rest of the answer when a rule is deleted during the call", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      const gone = await saveAgentExtractor(seeded, "gone", always, [{ name: "lost", type: "string" }]);
+      await saveAgentExtractor(seeded, "pricing", always, [{ name: "plan", type: "string" }]);
+      const itemId = await capture(seeded, "A post");
+      const fake = answering({ json: { ...rated, field_lost: "Lost", field_plan: "Pro" } });
+      const during: typeof fake.deps.agent.fetch = async (input, init) => {
+        await db.delete(extractorRule).where(eq(extractorRule.id, gone));
+        return fake.fetch(input, init);
+      };
+
+      await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+
+      expect(await reload(itemId)).toMatchObject({ severity: rated.severity, summary: rated.summary });
+      expect((await fieldsOf(itemId)).map((row) => row.name)).toEqual(["plan"]);
+    });
+
+    it("stores no field of a rule whose Condition a Category Correction ended during the call", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await saveAgentExtractor(seeded, "on-launch", pricing, [{ name: "plan", type: "string" }]);
+      const itemId = await capture(seeded, "A launch");
+      await db.insert(itemCategory).values({ itemId, category: "launch" });
+      const fake = answering({ json: { ...rated, field_plan: "Pro" } });
+      const during: typeof fake.deps.agent.fetch = async (input, init) => {
+        await db.delete(itemCategory).where(eq(itemCategory.itemId, itemId));
+        await db.update(item).set({ categoriesCorrectedAt: new Date() }).where(eq(item.id, itemId));
+        return fake.fetch(input, init);
+      };
+
+      await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+
+      expect(await fieldsOf(itemId)).toEqual([]);
+      expect(await logOf(itemId, "extract")).toEqual([]);
+      expect(await reload(itemId)).toMatchObject({ severity: rated.severity });
+    });
+
+    it("cuts a reasoning that runs on to a Log-sized length", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      const itemId = await capture(seeded, "A post");
+
+      await processItem(db, itemId, answering({ json: { ...rated, reasoning: "x".repeat(5000) } }).deps);
+
+      const [row] = await logOf(itemId, "rate");
+      expect(row?.data).toMatchObject({ reasoning: "x".repeat(1000) });
     });
 
     it("makes no extract-and-rate call until the classify call succeeds", async () => {

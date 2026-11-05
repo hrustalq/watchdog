@@ -1,6 +1,7 @@
 // The extract-and-rate stage (docs: Processing pipeline, "Stages"; Agent and LLM integration, "Calls
 // per Item").
-import { and, type Db, eq, extractorRule, isNull, item, itemLog, type Tx } from "@watchdog/db";
+import { and, type Db, eq, extractorRule, inArray, isNull, item, itemLog, type Tx } from "@watchdog/db";
+import type { z } from "zod";
 import { type AgentFailure, callAgent, storableMessage, storableText } from "../agent/call-agent.ts";
 import { recentCorrections } from "../agent/corrections.ts";
 import { loadProfile } from "../agent/profile.ts";
@@ -18,12 +19,8 @@ interface ParsedRule {
   definition: AgentExtractorRule;
 }
 
-type Answer = Record<string, unknown> & {
-  summary: string;
-  reasoning: string;
-  severity: number;
-  importance: number;
-};
+type Answer = z.output<ReturnType<typeof ratingSchema>>;
+type Target = PromptContext["item"] & ConditionItem & { id: string; workspaceId: string };
 
 /** The enabled Agent-backed Extractor Rules whose Condition the Item meets, oldest first. */
 async function applyingRules(db: Db, target: ConditionItem & { id: string }) {
@@ -57,21 +54,41 @@ async function finish(db: Db, itemId: string, now: () => Date, work: (tx: Tx) =>
   });
 }
 
-/** A provider's answer can hold what Postgres refuses, and asking again wouldn't change that. */
-function cleanValue(value: unknown): unknown {
-  if (typeof value === "string") return storableText(value);
-  return Array.isArray(value) ? value.map(cleanValue) : value;
+/**
+ * What a field found, the shape `toExtraction` reads. Null and blank mean the Item has none. A model's
+ * answer can hold what Postgres refuses, and asking again wouldn't change that.
+ */
+function foundIn(answer: Record<string, unknown>, name: string): unknown[] {
+  return [answer[fieldKey(name)]]
+    .flat()
+    .map((value) => (typeof value === "string" ? storableText(value) : value))
+    .filter((value) => value !== null && (typeof value !== "string" || value.trim() !== ""));
 }
 
-/** What a field found, the shape `toExtraction` reads. Null, blank or empty means the Item has none. */
-function foundIn(answer: Answer, name: string): unknown[] {
-  const value = cleanValue(answer[fieldKey(name)]);
-  return value === null || (typeof value === "string" && value.trim() === "") ? [] : [value];
+/** Stores each rule's fields, unless the rule was deleted or its Condition stopped holding during the call. */
+async function storeFields(tx: Tx, target: Target, rules: ParsedRule[], answer: Answer) {
+  if (rules.length === 0) return;
+  // The lock keeps a rule from going before its row's foreign key is checked.
+  const kept = await tx
+    .select({ id: extractorRule.id })
+    .from(extractorRule)
+    .where(inArray(extractorRule.id, rules.map((rule) => rule.id)))
+    .for("key share");
+  const categories = await categoriesOf(tx, target.id);
+  const log = await logOnce(tx, target.id, "extract");
+  for (const rule of rules) {
+    if (!kept.some(({ id }) => id === rule.id)) continue;
+    if (!evaluateCondition(rule.definition.when, { ...target, categories })) continue;
+    const extraction = toExtraction(rule.definition.fields, ({ name }) => foundIn(answer, name));
+    await storeExtraction(tx, log, target.id, rule, extraction);
+  }
 }
 
-async function storeAnswer(tx: Tx, itemId: string, rules: ParsedRule[], answer: Answer, now: () => Date) {
+async function storeAnswer(tx: Tx, target: Target, rules: ParsedRule[], answer: Answer, now: () => Date) {
+  const itemId = target.id;
   const { severity, importance } = answer;
-  const reasoning = storableText(answer.reasoning);
+  // The Log holds a readable sentence, and a model can run on.
+  const reasoning = storableMessage(answer.reasoning);
   await tx
     .update(item)
     .set({ summary: storableText(answer.summary) })
@@ -82,27 +99,20 @@ async function storeAnswer(tx: Tx, itemId: string, rules: ParsedRule[], answer: 
     .set({ severity, importance, ratedAt: now() })
     .where(and(eq(item.id, itemId), isNull(item.ratingCorrectedAt)))
     .returning({ id: item.id });
-  await tx.insert(itemLog).values(
-    rating.length > 0
+  await tx.insert(itemLog).values({
+    itemId,
+    stage: "rate",
+    ...(rating.length > 0
       ? {
-          itemId,
-          stage: "rate",
           message: `The Agent rated this Item Severity ${String(severity)}, Importance ${String(importance)}: ${reasoning}`,
           data: { severity, importance, reasoning },
         }
       : {
-          itemId,
-          stage: "rate",
           message: "The Agent's Rating was dropped: the user corrected this Item's Rating",
           data: { dropped: { severity, importance }, reasoning },
-        },
-  );
-
-  const log = await logOnce(tx, itemId, "extract");
-  for (const rule of rules) {
-    const extraction = toExtraction(rule.definition.fields, ({ name }) => foundIn(answer, name));
-    await storeExtraction(tx, log, itemId, rule, extraction);
-  }
+        }),
+  });
+  await storeFields(tx, target, rules, answer);
 }
 
 /**
@@ -112,7 +122,7 @@ async function storeAnswer(tx: Tx, itemId: string, rules: ParsedRule[], answer: 
  */
 export async function runExtractAndRate(
   db: Db,
-  target: PromptContext["item"] & ConditionItem & { id: string; workspaceId: string },
+  target: Target,
   deps: AgentDeps,
   now: () => Date,
 ): Promise<AgentFailure | undefined> {
@@ -155,6 +165,6 @@ export async function runExtractAndRate(
     });
     return { ...result, message };
   }
-  await finish(db, itemId, now, (tx) => storeAnswer(tx, itemId, rules, result.output, now));
+  await finish(db, itemId, now, (tx) => storeAnswer(tx, target, rules, result.output, now));
   return undefined;
 }

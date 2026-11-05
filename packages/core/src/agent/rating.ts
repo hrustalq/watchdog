@@ -2,6 +2,7 @@
 // "Rating scale").
 import { z } from "zod";
 import type { AgentExtractorRule } from "../rules/schema.ts";
+import { storableText } from "./call-agent.ts";
 
 const anchors = `Severity, how urgent or harmful the Item is:
 5: act today, e.g. an outage, or a security advisory in something the user depends on.
@@ -17,7 +18,8 @@ Importance, how much the Item matters to the user:
 2: only loosely related, e.g. general news that touches one of the user's interests.
 1: unrelated to anything in the Profile, e.g. off-topic posts or spam.`;
 
-const text = z.string().refine((value) => value.trim() !== "", "This can't be blank.");
+// Blank as stored, since storing drops what Postgres refuses.
+const text = z.string().refine((value) => storableText(value).trim() !== "", "This can't be blank.");
 const level = z.int().min(1).max(5);
 
 // In this order, so a model that answers in schema order gives its reasons before its Rating.
