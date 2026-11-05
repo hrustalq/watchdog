@@ -5,7 +5,6 @@ import { buttonVariants } from "@/components/ui/button";
 import { type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
-import { cn } from "@/lib/utils";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
 import { removeRuleAction, setRuleEnabledAction } from "./actions";
@@ -63,7 +62,7 @@ function AddRule({ type, description }: { type: RuleType; description: string })
     <Link
       href={`/rules/new?type=${type}&kind=${kind}`}
       aria-label={`New ${kindLabel[kind]} ${ruleNoun[type]}`}
-      className={cn(buttonVariants({ variant: "outline" }))}
+      className={buttonVariants({ variant: "outline" })}
     >
       {kindLabel[kind]}
     </Link>
