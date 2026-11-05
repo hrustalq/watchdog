@@ -246,7 +246,7 @@ describe("pipeline", () => {
     });
 
     it("retries a job whose call failed, with the failure in the Log and the Item visible", async () => {
-      modelFetch = fakeLlm("openai-compatible", [{ status: 500, message: "Down" }]).fetch;
+      modelFetch = fakeLlm("openai-compatible", [{ status: 500, message: "Down\0" }]).fetch;
       const sourceId = await modelWorkspace();
 
       await pollSource(db, sourceId, answering(["one"]));
@@ -271,6 +271,23 @@ describe("pipeline", () => {
       expect(calls).toMatchObject([{ purpose: "classify", status: "error" }]);
       const visible = await db.query.item.findFirst({ where: eq(item.id, itemId) });
       expect(visible).toMatchObject({ classifiedAt: null, processedAt: null });
+    });
+
+    it("finishes the Item when its job has no retries left", async () => {
+      modelFetch = fakeLlm("openai-compatible", [{ status: 500 }]).fetch;
+      const sourceId = await modelWorkspace();
+      await pollSource(db, sourceId, { fetch: answering(["one"]).fetch, enqueueItems: () => Promise.resolve() });
+      const itemId = present((await itemIdsOf(sourceId))[0]);
+
+      await boss.send(processItemQueue, { itemId }, { retryLimit: 0 });
+
+      await vi.waitFor(
+        async () => {
+          const found = await db.query.item.findFirst({ where: eq(item.id, itemId) });
+          expect(found?.processedAt).not.toBeNull();
+        },
+        { timeout: 30_000 },
+      );
     });
 
     it("gives the queue the Agent's retries and time, on an upgraded install too", async () => {

@@ -1,6 +1,6 @@
 // The Agent interface, the only code that calls a model (Agent and LLM integration). It validates
 // every response, repairs an invalid one once, and meters every attempt (ADR 0008, ADR 0016).
-import { agentCall, type Db } from "@watchdog/db";
+import { agentCall, type Db, eq, item, sql } from "@watchdog/db";
 import {
   APICallError,
   generateText,
@@ -134,7 +134,11 @@ export async function callAgent<Schema extends z.ZodObject>(
     await db.insert(agentCall).values({
       workspaceId: options.workspaceId,
       modelConfigId: modelConfig.id,
-      itemId: options.itemId,
+      // An Item deleted during the call is null, as it would be if deleted after: the call still cost.
+      itemId:
+        options.itemId === null
+          ? null
+          : sql`(select ${item.id} from ${item} where ${eq(item.id, options.itemId)})`,
       purpose: options.purpose,
       attempt: number,
       inputTokens: storableTokens(usage?.inputTokens),

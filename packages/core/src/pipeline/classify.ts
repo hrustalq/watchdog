@@ -21,7 +21,7 @@ import { loadProfile } from "../agent/profile.ts";
 import { buildAgentPrompt, type PromptContext } from "../agent/prompt.ts";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
 import { type AgentClassifier, agentClassifierSchema, deterministicClassifierSchema } from "../rules/schema.ts";
-import { rulesFor, rulesInLog } from "./rules-for-item.ts";
+import { logOnce, rulesFor } from "./rules-for-item.ts";
 
 export type AgentDeps = Pick<CallAgentOptions<z.ZodObject>, "encryptionKey" | "fetch">;
 
@@ -29,12 +29,11 @@ const logClassify = (db: Db | Tx, itemId: string, message: string, data: Record<
   db.insert(itemLog).values({ itemId, stage: "classify", message, data });
 
 const logSkipped = (
-  db: Db | Tx,
-  itemId: string,
+  log: Awaited<ReturnType<typeof logOnce>>,
   rule: { id: string; name: string },
   error: z.ZodError,
 ) =>
-  logClassify(db, itemId, `Skipped Classifier ${rule.name}: its definition no longer parses`, {
+  log(`Skipped Classifier ${rule.name}: its definition no longer parses`, {
     classifierId: rule.id,
     classifier: rule.name,
     issues: error.issues.map((issue) => issue.message),
@@ -42,18 +41,18 @@ const logSkipped = (
 
 /**
  * Runs the Workspace's enabled deterministic Classifiers on an Item, oldest first, so the first
- * Classifier to assign a Category is the one its row names. A retried job skips the rules it already
- * logged, and one that didn't match can't match now.
+ * Classifier to assign a Category is the one its row names. A retried job runs them again, which
+ * changes nothing: their rows are already there.
  */
 export async function runDeterministicClassifiers(tx: Tx, itemId: string, target: ConditionItem) {
   const rules = await rulesFor(tx, classifier, itemId, "deterministic");
-  const alreadyRun = await rulesInLog(tx, itemId, "classify", "classifierId");
+  if (rules.length === 0) return;
+  const log = await logOnce(tx, itemId, "classify");
 
   for (const rule of rules) {
-    if (alreadyRun.has(rule.id)) continue;
     const parsed = deterministicClassifierSchema.safeParse(rule.definition);
     if (!parsed.success) {
-      await logSkipped(tx, itemId, rule, parsed.error);
+      await logSkipped(log, rule, parsed.error);
       continue;
     }
     if (!evaluateCondition(parsed.data.when, target)) continue;
@@ -63,7 +62,7 @@ export async function runDeterministicClassifiers(tx: Tx, itemId: string, target
       .insert(itemCategory)
       .values(categories.map((category) => ({ itemId, category, classifierId: rule.id })))
       .onConflictDoNothing();
-    await logClassify(tx, itemId, `Classifier ${rule.name} assigned ${categories.join(", ")}`, {
+    await log(`Classifier ${rule.name} assigned ${categories.join(", ")}`, {
       classifierId: rule.id,
       classifier: rule.name,
       categories,
@@ -127,7 +126,7 @@ async function storeCategories(
       .from(item)
       .where(eq(item.id, itemId))
       .for("update");
-    if (row === undefined || row.classifiedAt !== null) return;
+    if (row?.classifiedAt !== null) return;
 
     if (row.correctedAt !== null) {
       const message = "The Agent's Categories were dropped: the user corrected this Item's Categories";
@@ -181,12 +180,12 @@ export async function runAgentClassifiers(
   const model = await modelFor(db, itemId, workspaceId);
   if (model === undefined) return undefined;
 
-  const alreadyLogged = await rulesInLog(db, itemId, "classify", "classifierId");
+  const log = await logOnce(db, itemId, "classify");
   const rules: ParsedRule[] = [];
   for (const rule of saved) {
     const parsed = agentClassifierSchema.safeParse(rule.definition);
     if (parsed.success) rules.push({ id: rule.id, name: rule.name, definition: parsed.data });
-    else if (!alreadyLogged.has(rule.id)) await logSkipped(db, itemId, rule, parsed.error);
+    else await logSkipped(log, rule, parsed.error);
   }
   if (rules.length === 0) return undefined;
 
@@ -206,9 +205,10 @@ export async function runAgentClassifiers(
     }),
   });
   if (!result.ok) {
-    const message = `The classify call failed: ${storableMessage(result.message)}`;
-    await logClassify(db, itemId, message, { reason: result.reason });
-    return result;
+    // Each failure gets its own row. The job's error reaches pg-boss, which stores it as JSONB.
+    const message = storableMessage(result.message);
+    await logClassify(db, itemId, `The classify call failed: ${message}`, { reason: result.reason });
+    return { ...result, message };
   }
   await storeCategories(db, itemId, rules, result.output.categories, now);
   return undefined;

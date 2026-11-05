@@ -7,6 +7,8 @@ import { runDeterministicExtractorRules } from "./extract.ts";
 export interface ProcessItemDeps {
   now?: () => Date;
   agent: AgentDeps;
+  /** No retry follows this run, so a failed call still finishes the Item, which stays unrated. */
+  lastAttempt?: boolean;
 }
 
 /** Locks the Item's row. Undefined when it's finished, or gone: deleted while its job waited. */
@@ -47,7 +49,7 @@ export async function processItem(db: Db, itemId: string, deps: ProcessItemDeps)
     const locked = await lockUnfinished(tx, itemId);
     if (locked === undefined) return;
     await runDeterministicExtractorRules(tx, itemId, locked);
-    if (failure === undefined) await tx.update(item).set({ processedAt: now() }).where(eq(item.id, itemId));
+    if (failure === undefined || deps.lastAttempt === true) await tx.update(item).set({ processedAt: now() }).where(eq(item.id, itemId));
   });
 
   if (failure !== undefined) throw new Error(`The classify call failed: ${failure.message}`);

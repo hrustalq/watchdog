@@ -22,6 +22,7 @@ import {
 } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { type FakeTurn, fakeLlm } from "../agent/fake-llm.ts";
 import { pollSource } from "./capture.ts";
 import { processItem } from "./process-item.ts";
@@ -33,6 +34,8 @@ function present<T>(value: T | undefined): T {
 }
 
 const titleContains = (value: string) => ({ field: "title", op: "contains", value });
+
+const requestSchema = z.object({ messages: z.array(z.object({ role: z.string(), content: z.string() })) });
 
 const encryptionKey = Buffer.alloc(32, 7);
 /** For an Item with no call to make: the fake model throws on any request. */
@@ -344,9 +347,9 @@ describe("processItem", () => {
 
     /** What the request said, as the model would read it, with its JSON escapes undone. */
     function sentTo(fake: ReturnType<typeof answering>, index = 0) {
-      const body = fake.requests[index]?.body as { messages: { role: string; content: string }[] };
-      const content = (role: string) =>
-        present(body.messages.find((message) => message.role === role)).content;
+      const { body } = present(fake.requests[index]);
+      const { messages } = requestSchema.parse(body);
+      const content = (role: string) => present(messages.find((message) => message.role === role)).content;
       return { body, system: content("system"), prompt: content("user") };
     }
 
@@ -698,6 +701,67 @@ describe("processItem", () => {
       expect(finished.processedAt).not.toBeNull();
     });
 
+    it("reruns Extractor Rules on the retry with the Categories it has now", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await saveAgentClassifier(seeded, "sorter", ["spam", "lead"]);
+      const saveRule = (name: string, when: unknown, field: string) =>
+        db.insert(extractorRule).values({
+          workspaceId: seeded.workspaceId,
+          name,
+          kind: "deterministic",
+          definition: {
+            extractor: name,
+            when,
+            fields: [{ name: field, type: "string", from: "title", regex: `(${name})` }],
+          },
+        });
+      const category = (value: string) => ({ field: "category", op: "is", value });
+      await saveRule("older", category("lead"), "company");
+      await saveRule("newer", { field: "title", op: "exists" }, "company");
+      await saveRule("clean", { not: category("spam") }, "clean");
+      const itemId = await capture(seeded, "older newer clean");
+      const fields = () => db.select().from(itemField).where(eq(itemField.itemId, itemId));
+
+      await expect(processItem(db, itemId, answering({ status: 500 }).deps)).rejects.toThrow();
+      expect((await fields()).map((row) => row.value).sort()).toEqual(["clean", "newer"]);
+
+      await processItem(db, itemId, answering({ json: { categories: ["lead", "spam"] } }).deps);
+
+      // The older rule keeps its field now that it applies, and the failed attempt's Condition is gone.
+      expect(await fields()).toMatchObject([{ name: "company", value: "older" }]);
+    });
+
+    it("finishes the Item, unrated, when the last attempt's call fails", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await saveAgentClassifier(seeded, "leads", ["lead"]);
+      const itemId = await capture(seeded, "A post");
+      const { deps: failing } = answering({ status: 500 });
+
+      await expect(processItem(db, itemId, { ...failing, lastAttempt: true })).rejects.toThrow();
+
+      expect(await reload(itemId)).toMatchObject({ classifiedAt: null, severity: null });
+      expect((await reload(itemId)).processedAt).not.toBeNull();
+    });
+
+    it("still meters a call whose Item was deleted while it ran, and does nothing more", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await saveAgentClassifier(seeded, "leads", ["lead"]);
+      const itemId = await capture(seeded, "A post");
+      const fake = answering({ json: { categories: ["lead"] } });
+      const during: typeof fake.deps.agent.fetch = async (input, init) => {
+        await db.delete(item).where(eq(item.id, itemId));
+        return fake.fetch(input, init);
+      };
+
+      await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+
+      const calls = await db.select().from(agentCall).where(eq(agentCall.workspaceId, seeded.workspaceId));
+      expect(calls).toMatchObject([{ itemId: null, purpose: "classify", status: "ok" }]);
+    });
+
     it("logs a failure a provider's odd error can't stop Postgres from storing", async () => {
       const seeded = await seed();
       await addModel(seeded);
@@ -804,7 +868,7 @@ describe("processItem", () => {
         const fake = answering({ json: { categories: ["lead"] } });
         const during: typeof fake.deps.agent.fetch = async (input, init) => {
           await db.update(item).set({ categoriesCorrectedAt: new Date() }).where(eq(item.id, itemId));
-          return fake.fetch(input as string, init);
+          return fake.fetch(input, init);
         };
 
         await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });

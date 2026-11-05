@@ -38,14 +38,19 @@ export async function createPipelineQueue(boss: PgBoss) {
 export async function startPipeline(db: Db, boss: PgBoss, agent: ProcessItemDeps["agent"]) {
   await createPipelineQueue(boss);
 
-  await boss.work<{ itemId: string }>(processItemQueue, { localConcurrency: 4 }, async ([job]) => {
-    if (job === undefined) return;
-    const { itemId } = job.data;
-    try {
-      await processItem(db, itemId, { agent });
-    } catch (error) {
-      console.error(`Processing Item ${itemId} failed:`, error);
-      throw error;
-    }
-  });
+  // Naming the first type argument stops inference, so the options' type has to be named too.
+  await boss.work<{ itemId: string }, unknown, { localConcurrency: 4; includeMetadata: true }>(
+    processItemQueue,
+    { localConcurrency: 4, includeMetadata: true },
+    async ([job]) => {
+      if (job === undefined) return;
+      const { itemId } = job.data;
+      try {
+        await processItem(db, itemId, { agent, lastAttempt: job.retryCount >= job.retryLimit });
+      } catch (error) {
+        console.error(`Processing Item ${itemId} failed:`, error);
+        throw error;
+      }
+    },
+  );
 }

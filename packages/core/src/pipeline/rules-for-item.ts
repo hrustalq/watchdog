@@ -38,16 +38,21 @@ export function rulesFor(
     .orderBy(table.createdAt, table.id);
 }
 
-/** The ids of rules with a row in the Item's Log, which a retried job doesn't run or note again. */
-export async function rulesInLog(
-  db: Reader,
+/**
+ * A stage's Log writer for a job that may be a retry, which runs the rules again: a sentence already
+ * in the Item's Log isn't written twice.
+ */
+export async function logOnce(
+  db: Pick<Db | Tx, "select" | "insert">,
   itemId: string,
   stage: "classify" | "extract",
-  idKey: "classifierId" | "extractorRuleId",
 ) {
   const rows = await db
-    .select({ data: itemLog.data })
+    .select({ message: itemLog.message })
     .from(itemLog)
     .where(and(eq(itemLog.itemId, itemId), eq(itemLog.stage, stage)));
-  return new Set(rows.map(({ data }) => (data as Record<string, unknown>)[idKey]));
+  const written = new Set(rows.map((row) => row.message));
+  return async (message: string, data: Record<string, unknown>) => {
+    if (!written.has(message)) await db.insert(itemLog).values({ itemId, stage, message, data });
+  };
 }
