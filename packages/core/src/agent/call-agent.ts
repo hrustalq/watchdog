@@ -57,8 +57,10 @@ const maxInteger = 2_147_483_647;
 const storableTokens = (count: number | undefined) =>
   count !== undefined && Number.isInteger(count) && count >= 0 && count <= maxInteger ? count : null;
 
-/** Postgres refuses a NUL and half a surrogate pair, and a provider's error can hold either. */
-export const storableMessage = (message: string) => message.replaceAll("\0", "").slice(0, 1000).toWellFormed();
+/** Postgres refuses a NUL and half a surrogate pair, and anything a model or provider writes can hold either. */
+export const storableText = (text: string) => text.replaceAll("\0", "").toWellFormed();
+
+export const storableMessage = (message: string) => storableText(message.slice(0, 1000));
 
 const rowStatus = { invalid_output: "invalid_output", blocked: "error", error: "error" } as const;
 

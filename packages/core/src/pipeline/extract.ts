@@ -1,5 +1,6 @@
 // The deterministic Extractor Rule stage (docs: Processing pipeline, "Stages"; Rule model).
-import { and, eq, extractorRule, inArray, itemCategory, itemField, type Tx } from "@watchdog/db";
+import { and, type Db, eq, extractorRule, inArray, itemCategory, itemField, type Tx } from "@watchdog/db";
+import type { z } from "zod";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
 import { jsonPathValues, maxFieldValues } from "../rules/jsonpath.ts";
 import { firstCapture } from "../rules/regex.ts";
@@ -48,12 +49,18 @@ function kindOf(value: unknown) {
   return typeof value === "object" ? "an object" : `a ${typeof value}`;
 }
 
-/** Reads each field of a rule, converting its values to the type the rule declares. */
-export function extractFields(fields: readonly Field[], source: ExtractionSource): Extraction {
+/**
+ * Converts what each field of a rule found to the type the rule declares. `find` gives the field's
+ * values, or undefined when they can't be read.
+ */
+export function toExtraction<Declared extends { name: string; type: Field["type"] }>(
+  fields: readonly Declared[],
+  find: (field: Declared) => unknown[] | undefined,
+): Extraction {
   const extraction: Extraction = { values: [], empty: [], problems: [] };
   for (const field of fields) {
     const { name } = field;
-    const found = read(field, source);
+    const found = find(field);
     if (found === undefined) {
       extraction.problems.push({ name, reason: "the Item's raw payload nests too deeply to read" });
       continue;
@@ -88,6 +95,66 @@ export function extractFields(fields: readonly Field[], source: ExtractionSource
   return extraction;
 }
 
+/** Reads each field of a deterministic rule from the Item. */
+export function extractFields(fields: readonly Field[], source: ExtractionSource): Extraction {
+  return toExtraction(fields, (field) => read(field, source));
+}
+
+export async function categoriesOf(db: Pick<Db | Tx, "select">, itemId: string) {
+  const assigned = await db
+    .select({ category: itemCategory.category })
+    .from(itemCategory)
+    .where(eq(itemCategory.itemId, itemId));
+  return assigned.map((row) => row.category);
+}
+
+export const logSkippedRule = (
+  log: Awaited<ReturnType<typeof logOnce>>,
+  rule: { id: string; name: string },
+  error: z.ZodError,
+) =>
+  log(`Skipped Extractor Rule ${rule.name}: its definition no longer parses`, {
+    extractorRuleId: rule.id,
+    extractor: rule.name,
+    issues: error.issues.map((issue) => issue.message),
+  });
+
+/** Stores what a rule found and logs it. The first rule to fill a field keeps it. */
+export async function storeExtraction(
+  tx: Tx,
+  log: Awaited<ReturnType<typeof logOnce>>,
+  itemId: string,
+  rule: { id: string; name: string },
+  { values, empty, problems }: Extraction,
+) {
+  const stored =
+    values.length === 0
+      ? []
+      : await tx
+          .insert(itemField)
+          .values(values.map((field) => ({ itemId, ...field, extractorRuleId: rule.id })))
+          .onConflictDoNothing()
+          .returning({ name: itemField.name });
+  const fields = stored.map((row) => row.name);
+  const refused = values
+    .filter(({ name }) => !fields.includes(name))
+    .map(({ name }) => ({ name, reason: "an earlier rule already filled it" }));
+  const allProblems = [...problems, ...refused];
+
+  const outcomes = [
+    ...(fields.length > 0 ? [`extracted ${fields.join(", ")}`] : []),
+    ...(empty.length > 0 ? [`found no value for ${empty.join(", ")}`] : []),
+    ...allProblems.map(({ name, reason }) => `stored nothing for ${name}: ${reason}`),
+  ];
+  await log(`Extractor Rule ${rule.name} ${outcomes.join("; ")}`, {
+    extractorRuleId: rule.id,
+    extractor: rule.name,
+    fields,
+    empty,
+    problems: allProblems,
+  });
+}
+
 /**
  * Runs the Workspace's enabled deterministic Extractor Rules on an Item, oldest first, so the first
  * rule to fill a field is the one its row names. A Condition reads the Categories from the table, so
@@ -111,49 +178,15 @@ export async function runDeterministicExtractorRules(
     ),
   );
 
-  const assigned = await tx
-    .select({ category: itemCategory.category })
-    .from(itemCategory)
-    .where(eq(itemCategory.itemId, itemId));
-  const categories = assigned.map((row) => row.category);
+  const categories = await categoriesOf(tx, itemId);
 
   for (const rule of rules) {
     const parsed = deterministicExtractorRuleSchema.safeParse(rule.definition);
     if (!parsed.success) {
-      await log(`Skipped Extractor Rule ${rule.name}: its definition no longer parses`, {
-        extractorRuleId: rule.id,
-        extractor: rule.name,
-        issues: parsed.error.issues.map((issue) => issue.message),
-      });
+      await logSkippedRule(log, rule, parsed.error);
       continue;
     }
     if (!evaluateCondition(parsed.data.when, { ...target, categories })) continue;
-
-    const { values, empty, problems } = extractFields(parsed.data.fields, target);
-    const stored =
-      values.length === 0
-        ? []
-        : await tx
-            .insert(itemField)
-            .values(values.map((field) => ({ itemId, ...field, extractorRuleId: rule.id })))
-            .onConflictDoNothing()
-            .returning({ name: itemField.name });
-    const fields = stored.map((row) => row.name);
-    for (const { name } of values) {
-      if (!fields.includes(name)) problems.push({ name, reason: "an earlier rule already filled it" });
-    }
-
-    const outcomes = [
-      ...(fields.length > 0 ? [`extracted ${fields.join(", ")}`] : []),
-      ...(empty.length > 0 ? [`found no value for ${empty.join(", ")}`] : []),
-      ...problems.map(({ name, reason }) => `stored nothing for ${name}: ${reason}`),
-    ];
-    await log(`Extractor Rule ${rule.name} ${outcomes.join("; ")}`, {
-      extractorRuleId: rule.id,
-      extractor: rule.name,
-      fields,
-      empty,
-      problems,
-    });
+    await storeExtraction(tx, log, itemId, rule, extractFields(parsed.data.fields, target));
   }
 }

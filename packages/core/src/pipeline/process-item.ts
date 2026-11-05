@@ -1,8 +1,9 @@
 // What happens to an Item after capture (docs: Processing pipeline, "Stages"). The worker's
 // process-item queue calls this once per captured Item.
-import { type Db, eq, item, source, type Tx } from "@watchdog/db";
+import { and, type Db, eq, isNull, item, source, type Tx } from "@watchdog/db";
 import { type AgentDeps, runAgentClassifiers, runDeterministicClassifiers } from "./classify.ts";
 import { runDeterministicExtractorRules } from "./extract.ts";
+import { runExtractAndRate } from "./rate.ts";
 
 export interface ProcessItemDeps {
   now?: () => Date;
@@ -24,14 +25,12 @@ async function lockUnfinished(tx: Tx, itemId: string) {
 }
 
 /**
- * Runs an Item through the pipeline and sets `processed_at`, which makes a repeated run do nothing.
- * No transaction spans the model call, so it can't hold a connection and the Item's row for minutes,
- * and each stage instead leaves what a retry needs to pick up where it stopped. A failed call throws
- * once the deterministic rules have run, so the job retries (docs: Processing pipeline, "Failures").
+ * Runs the stages. No transaction spans a model call, so it can't hold a connection and the Item's row
+ * for minutes, and each stage instead leaves what a retry needs to pick up where it stopped. A failed
+ * call throws once the deterministic rules have run, so the job retries (docs: Processing pipeline,
+ * "Failures"). The extract-and-rate answer commits with `processed_at`.
  */
-export async function processItem(db: Db, itemId: string, deps: ProcessItemDeps): Promise<void> {
-  const now = deps.now ?? (() => new Date());
-
+async function runStages(db: Db, itemId: string, deps: ProcessItemDeps, now: () => Date) {
   const target = await db.transaction(async (tx) => {
     const locked = await lockUnfinished(tx, itemId);
     // A Correction decides the Item's Categories from then on.
@@ -40,17 +39,40 @@ export async function processItem(db: Db, itemId: string, deps: ProcessItemDeps)
   });
   if (target === undefined) return;
 
-  const failure =
+  const classifyFailure =
     target.classifiedAt === null && target.categoriesCorrectedAt === null
       ? await runAgentClassifiers(db, target, deps.agent, now)
       : undefined;
 
-  await db.transaction(async (tx) => {
+  const unfinished = await db.transaction(async (tx) => {
     const locked = await lockUnfinished(tx, itemId);
-    if (locked === undefined) return;
+    if (locked === undefined) return undefined;
     await runDeterministicExtractorRules(tx, itemId, locked);
-    if (failure === undefined || deps.lastAttempt === true) await tx.update(item).set({ processedAt: now() }).where(eq(item.id, itemId));
+    return locked;
   });
+  if (unfinished === undefined) return;
 
-  if (failure !== undefined) throw new Error(`The classify call failed: ${failure.message}`);
+  // The extract-and-rate call waits until classify succeeds (docs: Processing pipeline, "Failures").
+  if (classifyFailure !== undefined) throw new Error(`The classify call failed: ${classifyFailure.message}`);
+
+  const rateFailure = await runExtractAndRate(db, unfinished, deps.agent, now);
+  if (rateFailure !== undefined) throw new Error(`The extract-and-rate call failed: ${rateFailure.message}`);
+}
+
+/**
+ * Runs an Item through the pipeline and sets `processed_at`, which makes a repeated run do nothing. A
+ * last attempt sets it however the run ends, so nothing keeps the Item pending.
+ */
+export async function processItem(db: Db, itemId: string, deps: ProcessItemDeps): Promise<void> {
+  const now = deps.now ?? (() => new Date());
+  try {
+    await runStages(db, itemId, deps, now);
+  } finally {
+    if (deps.lastAttempt === true) {
+      await db
+        .update(item)
+        .set({ processedAt: now() })
+        .where(and(eq(item.id, itemId), isNull(item.processedAt)));
+    }
+  }
 }
