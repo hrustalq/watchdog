@@ -43,7 +43,9 @@ export interface UsageTally {
   outputTokens: number;
   /** Calls missing a token count, whose tokens the totals can't include. */
   withoutTokens: number;
-  /** Null when any of it ran on a model without both prices: a sum of the rest would understate it. */
+  /** Calls on a model without both prices, whose cost `cost` can't include. */
+  unpricedCalls: number;
+  /** What the priced calls cost. Null when none of them were. */
   cost: number | null;
 }
 
@@ -53,7 +55,8 @@ const add = (a: UsageTally, b: UsageTally): UsageTally => ({
   inputTokens: a.inputTokens + b.inputTokens,
   outputTokens: a.outputTokens + b.outputTokens,
   withoutTokens: a.withoutTokens + b.withoutTokens,
-  cost: a.cost === null || b.cost === null ? null : a.cost + b.cost,
+  unpricedCalls: a.unpricedCalls + b.unpricedCalls,
+  cost: a.cost === null && b.cost === null ? null : (a.cost ?? 0) + (b.cost ?? 0),
 });
 
 /** One row per key, largest first. Other fields come from the key's first row, so read only what the key decides. */
@@ -109,14 +112,24 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
       .limit(1),
   ]);
 
-  const rows = counted.map((row) => ({
-    ...row,
-    cost:
-      row.inputPrice === null || row.outputPrice === null
-        ? null
-        : (row.inputTokens * row.inputPrice + row.outputTokens * row.outputPrice) / 1_000_000,
-  }));
-  const nothing: UsageTally = { calls: 0, failed: 0, inputTokens: 0, outputTokens: 0, withoutTokens: 0, cost: 0 };
+  const rows = counted.map((row) =>
+    row.inputPrice === null || row.outputPrice === null
+      ? { ...row, unpricedCalls: row.calls, cost: null }
+      : {
+          ...row,
+          unpricedCalls: 0,
+          cost: (row.inputTokens * row.inputPrice + row.outputTokens * row.outputPrice) / 1_000_000,
+        },
+  );
+  const nothing: UsageTally = {
+    calls: 0,
+    failed: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    withoutTokens: 0,
+    unpricedCalls: 0,
+    cost: null,
+  };
   return {
     models: rollUp(rows, (row) => row.id),
     purposes: rollUp(rows, (row) => row.purpose),

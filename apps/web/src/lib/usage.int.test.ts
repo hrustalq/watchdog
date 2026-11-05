@@ -185,7 +185,7 @@ describe("the Usage screen", () => {
       expect(total).toMatchObject({ calls: 3, inputTokens: 1110 });
     });
 
-    it("includes the calls of the month after December in the next year", async () => {
+    it("crosses into the next year after December", async () => {
       const workspaceId = await newWorkspace();
       const model = await newModel(workspaceId);
       await call(model, { createdAt: new Date("2026-12-31T23:00:00.000Z") });
@@ -276,16 +276,24 @@ describe("the Usage screen", () => {
       expect(present((await usageForMonth(db, workspaceId, month)).models[0]).cost).toBe(0);
     });
 
-    it("keeps each model's own cost, and leaves a total out rather than understating it", async () => {
+    it("keeps each model's own cost, and counts what a total leaves out", async () => {
       const workspaceId = await newWorkspace();
-      await call(await newModel(workspaceId, { modelName: "priced", ...priced }), { inputTokens: 1_000_000, outputTokens: 0 });
-      await call(await newModel(workspaceId, { modelName: "unpriced", archivedAt: inMonth }));
+      const pricedModel = await newModel(workspaceId, { modelName: "priced", ...priced });
+      const unpriced = await newModel(workspaceId, { modelName: "unpriced", archivedAt: inMonth });
+      await call(pricedModel, { inputTokens: 1_000_000, outputTokens: 0 });
+      await call(unpriced);
+      await call(unpriced, { purpose: "classify" });
 
-      const { models, total } = await usageForMonth(db, workspaceId, month);
+      const { models, purposes, total } = await usageForMonth(db, workspaceId, month);
 
+      expect(models.find((row) => row.modelName === "priced")).toMatchObject({ unpricedCalls: 0 });
       expect(models.find((row) => row.modelName === "priced")?.cost).toBeCloseTo(2.5, 10);
-      expect(models.find((row) => row.modelName === "unpriced")?.cost).toBeNull();
-      expect(total.cost).toBeNull();
+      expect(models.find((row) => row.modelName === "unpriced")).toMatchObject({ cost: null, unpricedCalls: 2 });
+      expect(total.cost).toBeCloseTo(2.5, 10);
+      expect(total.unpricedCalls).toBe(2);
+      expect(purposes.find((row) => row.purpose === "extract-rate")).toMatchObject({ unpricedCalls: 1 });
+      expect(purposes.find((row) => row.purpose === "extract-rate")?.cost).toBeCloseTo(2.5, 10);
+      expect(purposes.find((row) => row.purpose === "classify")).toMatchObject({ cost: null, unpricedCalls: 1 });
     });
   });
 
