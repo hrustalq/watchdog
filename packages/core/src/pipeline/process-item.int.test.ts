@@ -1405,6 +1405,86 @@ describe("processItem", () => {
 
         expect(await reload(itemId)).toMatchObject({ ...corrected, summary: rated.summary });
       });
+
+      /** A Correction as the web app writes it for an Item the Agent hasn't summarised yet. */
+      const correctionOf = (seeded: Seeded, itemId: string | null, kind: "rating" | "categories" = "rating") => ({
+        workspaceId: seeded.workspaceId,
+        itemId,
+        kind,
+        itemTitle: "A post",
+        itemSummary: null,
+        before: {},
+        after: {},
+      });
+
+      const summariesOf = async (workspaceId: string) =>
+        db
+          .select({ kind: correction.kind, itemId: correction.itemId, summary: correction.itemSummary })
+          .from(correction)
+          .where(eq(correction.workspaceId, workspaceId));
+
+      it("fills in the summary of a Rating Correction made during the call, for the next Item's prompt", async () => {
+        const seeded = await seed();
+        await addModel(seeded);
+        const itemId = await capture(seeded, "A post");
+        const fake = answering();
+        const during: typeof fake.deps.agent.fetch = async (input, init) => {
+          await db
+            .update(item)
+            .set({ ...corrected, ratingCorrectedAt: new Date() })
+            .where(eq(item.id, itemId));
+          await db.insert(correction).values(correctionOf(seeded, itemId));
+          return fake.fetch(input, init);
+        };
+
+        await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+
+        expect(await summariesOf(seeded.workspaceId)).toEqual([{ kind: "rating", itemId, summary: rated.summary }]);
+        expect((await logOf(itemId, "rate"))[0]?.message).toContain("dropped");
+
+        const next = answering();
+        await processItem(db, await capture(seeded, "The next post"), next.deps);
+        expect(sentTo(next).prompt).toContain(rated.summary);
+      });
+
+      it("fills in the summary of a Category Correction made before the call", async () => {
+        const seeded = await seed();
+        await addModel(seeded);
+        const itemId = await capture(seeded, "A post");
+        await db.update(item).set({ categoriesCorrectedAt: new Date() }).where(eq(item.id, itemId));
+        await db.insert(correction).values(correctionOf(seeded, itemId, "categories"));
+
+        await processItem(db, itemId, answering().deps);
+
+        expect(await summariesOf(seeded.workspaceId)).toEqual([{ kind: "categories", itemId, summary: rated.summary }]);
+        expect(await reload(itemId)).toMatchObject({ severity: rated.severity, importance: rated.importance });
+      });
+
+      it("keeps a summary a Correction already has, and leaves other Items' Corrections alone", async () => {
+        const seeded = await seed();
+        await addModel(seeded);
+        const itemId = await capture(seeded, "A post");
+        const otherItemId = await capture(seeded, "Another post");
+        await db.insert(correction).values([
+          { ...correctionOf(seeded, itemId), itemSummary: "An earlier summary" },
+          correctionOf(seeded, itemId, "categories"),
+          correctionOf(seeded, otherItemId),
+          correctionOf(seeded, null),
+        ]);
+
+        await processItem(db, itemId, answering().deps);
+
+        const summaries = await summariesOf(seeded.workspaceId);
+        expect(summaries).toHaveLength(4);
+        expect(summaries).toEqual(
+          expect.arrayContaining([
+            { kind: "rating", itemId, summary: "An earlier summary" },
+            { kind: "categories", itemId, summary: rated.summary },
+            { kind: "rating", itemId: otherItemId, summary: null },
+            { kind: "rating", itemId: null, summary: null },
+          ]),
+        );
+      });
     });
 
     it("rates a Backfill Item like any other", async () => {
