@@ -28,19 +28,6 @@ export interface ProfileInput {
  */
 const cleanBody = (text: string) => text.replaceAll("\0", "").toWellFormed().replaceAll("\r\n", "\n").trim();
 
-/** A URL this long is safe through Caddy and Node, whose limit on all the headers is 16 KB. */
-const maxQueryInUrl = 6000;
-
-/**
- * The form's URL after a refusal, which only a browser without JavaScript follows: with it, the form
- * refuses an over-long body itself and keeps it. Without it, a body too long for a URL can't come back.
- */
-export function tooLongFormQuery(input: ProfileInput) {
-  const query = new URLSearchParams({ error: "too-long", language: input.language, body: cleanBody(input.body) });
-  if (query.toString().length > maxQueryInUrl) query.delete("body");
-  return query;
-}
-
 /** Creates or replaces the Workspace's Profile. An over-long body or unknown language changes nothing. */
 export async function saveProfile(
   db: Db,

@@ -3,7 +3,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { maxProfileBody, outputLanguages } from "@/lib/profile";
 import { requireWorkspace, server } from "@/lib/server";
-import { Notice } from "../sign-in/notice";
 import { ProfileForm } from "./profile-form";
 
 export const metadata: Metadata = { title: "Profile · Watchdog" };
@@ -15,12 +14,6 @@ export const instant = false;
 export default async function ProfilePage({ searchParams }: PageProps<"/profile">) {
   const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
   const saved = await loadProfile(server().db, workspace.id);
-
-  // These come from the URL, so only a refusal brings text back, and only a listed language counts.
-  const refused = params.error === "too-long";
-  const sentBackBody = refused && typeof params.body === "string" ? params.body : undefined;
-  const sentBackLanguage = refused ? outputLanguages.find(({ code }) => code === params.language) : undefined;
-  const bodyLost = refused && sentBackBody === undefined;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -38,18 +31,13 @@ export default async function ProfilePage({ searchParams }: PageProps<"/profile"
       </nav>
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
         <h1 className="text-headline">Profile</h1>
-        {params.saved === "1" ? (
-          <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
-            Profile saved.
-          </Notice>
-        ) : null}
         <ProfileForm
-          body={sentBackBody ?? saved.body}
-          language={sentBackLanguage?.code ?? saved.outputLanguage}
+          body={saved.body}
+          language={saved.outputLanguage}
           languages={outputLanguages}
           maxBody={maxProfileBody}
-          refused={refused}
-          bodyLost={bodyLost}
+          refused={params.error === "too-long"}
+          justSaved={params.saved === "1"}
         />
       </main>
     </div>
