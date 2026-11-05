@@ -1413,8 +1413,8 @@ describe("processItem", () => {
         kind,
         itemTitle: "A post",
         itemSummary: null,
-        before: {},
-        after: {},
+        before: kind === "rating" ? { severity: null, importance: null } : { categories: [] },
+        after: kind === "rating" ? corrected : { categories: ["lead"] },
       });
 
       const summariesOf = (workspaceId: string) =>
@@ -1484,6 +1484,17 @@ describe("processItem", () => {
             { kind: "rating", itemId: null, summary: null },
           ]),
         );
+      });
+
+      it("copies the summary as it was stored, without what Postgres refuses", async () => {
+        const seeded = await seed();
+        await addModel(seeded);
+        const itemId = await capture(seeded, "A post");
+        await db.insert(correction).values(correctionOf(seeded, itemId));
+
+        await processItem(db, itemId, answering({ json: { ...rated, summary: "A sum\0mary \ud83d" } }).deps);
+
+        expect(await summariesOf(seeded.workspaceId)).toEqual([{ kind: "rating", itemId, summary: "A summary �" }]);
       });
     });
 
