@@ -17,6 +17,7 @@ import {
   modelConfig,
   profile,
   source,
+  sql,
   user,
   workspace,
 } from "@watchdog/db";
@@ -636,7 +637,9 @@ describe("processItem", () => {
       const replaced = await addModel(seeded);
       await saveAgentClassifier(seeded, "leads", ["lead"]);
       const itemId = await capture(seeded, "A post");
-      await db.update(modelConfig).set({ archivedAt: new Date() }).where(eq(modelConfig.id, replaced));
+      // The database's clock, as archiveModel uses: a JS Date drops the microseconds captured_at keeps,
+      // so one read straight after the capture can sort before it.
+      await db.update(modelConfig).set({ archivedAt: sql`now()` }).where(eq(modelConfig.id, replaced));
       const current = await addModel(seeded);
 
       await processItem(db, itemId, answering({ json: { categories: ["lead"] } }).deps);
