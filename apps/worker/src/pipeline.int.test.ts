@@ -212,8 +212,16 @@ describe("pipeline", () => {
     }
 
     it("runs at most 4 Agent jobs at once", async () => {
-      const turns = Array.from({ length: 6 }, () => ({ json: { categories: ["lead"] } }));
-      const fake = fakeLlm("openai-compatible", turns);
+      // Each of the 6 Items makes two calls, and with jobs side by side either can come next, so one
+      // answer has to fit both.
+      const answer = {
+        categories: ["lead"],
+        summary: "A summary",
+        reasoning: "Because",
+        severity: 2,
+        importance: 3,
+      };
+      const fake = fakeLlm("openai-compatible", Array.from({ length: 12 }, () => ({ json: answer })));
       const held: (() => void)[] = [];
       let running = 0;
       let most = 0;

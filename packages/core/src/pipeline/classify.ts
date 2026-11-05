@@ -75,7 +75,7 @@ export async function runDeterministicClassifiers(tx: Tx, itemId: string, target
  * later doesn't reach Items already captured, but replacing one does, so a user who fixes a model that
  * was failing gets a retry that works (docs: Processing pipeline, "Without a model").
  */
-async function modelFor(db: Db, itemId: string, workspaceId: string) {
+export async function modelFor(db: Db, itemId: string, workspaceId: string) {
   const hadModel = await db
     .select({ id: modelConfig.id })
     .from(modelConfig)

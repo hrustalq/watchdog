@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createEgressFetch, loadConfig, pollSource } from "@watchdog/core";
-import { closeDb, createDb, type Db, item, itemLog, migrate, source, sql, user, workspace } from "@watchdog/db";
+import { closeDb, createDb, type Db, eq, item, itemLog, migrate, source, sql, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { feedPage, feedPageSize, itemWithLog, parseCursor } from "./feed.ts";
@@ -187,6 +187,17 @@ describe("Feed", () => {
 
     expect(next.items.map((row) => row.id)).toEqual(expected[1]);
     expect(next.older).toBeNull();
+  });
+
+  it("shows an Item the pipeline finished unrated, as when a model keeps failing", async () => {
+    const seeded = await seed();
+    const [itemId] = await insertItems(seeded, [{}]);
+    await db
+      .update(item)
+      .set({ processedAt: now })
+      .where(eq(item.id, present(itemId)));
+
+    expect((await feedPage(db, seeded.workspaceId)).items.map((row) => row.id)).toEqual([itemId]);
   });
 
   it("shows only the Workspace's own Items", async () => {

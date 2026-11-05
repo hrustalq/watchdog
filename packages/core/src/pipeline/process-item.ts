@@ -3,6 +3,7 @@
 import { type Db, eq, item, source, type Tx } from "@watchdog/db";
 import { type AgentDeps, runAgentClassifiers, runDeterministicClassifiers } from "./classify.ts";
 import { runDeterministicExtractorRules } from "./extract.ts";
+import { runExtractAndRate } from "./rate.ts";
 
 export interface ProcessItemDeps {
   now?: () => Date;
@@ -28,6 +29,7 @@ async function lockUnfinished(tx: Tx, itemId: string) {
  * No transaction spans the model call, so it can't hold a connection and the Item's row for minutes,
  * and each stage instead leaves what a retry needs to pick up where it stopped. A failed call throws
  * once the deterministic rules have run, so the job retries (docs: Processing pipeline, "Failures").
+ * The extract-and-rate answer commits with `processed_at`, which ends the pipeline for now.
  */
 export async function processItem(db: Db, itemId: string, deps: ProcessItemDeps): Promise<void> {
   const now = deps.now ?? (() => new Date());
@@ -40,17 +42,32 @@ export async function processItem(db: Db, itemId: string, deps: ProcessItemDeps)
   });
   if (target === undefined) return;
 
-  const failure =
+  const classifyFailure =
     target.classifiedAt === null && target.categoriesCorrectedAt === null
       ? await runAgentClassifiers(db, target, deps.agent, now)
       : undefined;
 
-  await db.transaction(async (tx) => {
+  const unfinished = await db.transaction(async (tx) => {
     const locked = await lockUnfinished(tx, itemId);
-    if (locked === undefined) return;
+    if (locked === undefined) return undefined;
     await runDeterministicExtractorRules(tx, itemId, locked);
-    if (failure === undefined || deps.lastAttempt === true) await tx.update(item).set({ processedAt: now() }).where(eq(item.id, itemId));
+    return locked;
   });
+  if (unfinished === undefined) return;
 
-  if (failure !== undefined) throw new Error(`The classify call failed: ${failure.message}`);
+  const finishOnLastAttempt = async () => {
+    if (deps.lastAttempt === true) await db.update(item).set({ processedAt: now() }).where(eq(item.id, itemId));
+  };
+
+  // The extract-and-rate call waits until classify succeeds (docs: Processing pipeline, "Failures").
+  if (classifyFailure !== undefined) {
+    await finishOnLastAttempt();
+    throw new Error(`The classify call failed: ${classifyFailure.message}`);
+  }
+
+  const rateFailure = await runExtractAndRate(db, unfinished, deps.agent, now);
+  if (rateFailure !== undefined) {
+    await finishOnLastAttempt();
+    throw new Error(`The extract-and-rate call failed: ${rateFailure.message}`);
+  }
 }
