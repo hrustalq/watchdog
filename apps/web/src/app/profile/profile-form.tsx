@@ -3,7 +3,6 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { field, fieldError, label, textBox } from "@/components/field-classes";
-import type { ProfileProblem } from "@/lib/profile";
 import { cn } from "@/lib/utils";
 import { SubmitButton } from "../sign-in/submit-button";
 import { saveProfileAction } from "./actions";
@@ -14,7 +13,8 @@ interface ProfileFormProps {
   /** From `outputLanguages` and `maxProfileBody`, which live with code the browser can't load. */
   languages: { code: string; label: string }[];
   maxBody: number;
-  problem: ProfileProblem | undefined;
+  /** The server just refused an over-long body. */
+  refused: boolean;
   /** The refused body was too long to come back through a URL. */
   bodyLost: boolean;
 }
@@ -28,7 +28,7 @@ export function ProfileForm(props: ProfileFormProps) {
   return <Form key={`${bfcacheId}:${props.language}:${props.body}`} {...props} />;
 }
 
-function Form({ body: savedBody, language, languages, maxBody, problem, bodyLost }: ProfileFormProps) {
+function Form({ body: savedBody, language, languages, maxBody, refused, bodyLost }: ProfileFormProps) {
   const [body, setBody] = useState(savedBody);
   const box = useRef<HTMLTextAreaElement>(null);
   const length = body.trim().length;
@@ -58,12 +58,14 @@ function Form({ body: savedBody, language, languages, maxBody, problem, bodyLost
           id="profile-body"
           name="body"
           value={body}
-          onChange={(event) => setBody(event.target.value)}
+          onChange={(event) => {
+            setBody(event.target.value);
+          }}
           aria-invalid={invalid}
           aria-describedby="profile-body-prompt profile-body-limit"
           // Focus lands here with the refusal, so the field and its message are read together.
           // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
-          autoFocus={problem === "too-long"}
+          autoFocus={refused}
           className={cn(textBox, "min-h-64 py-2 leading-[1.5]")}
         />
         <div id="profile-body-limit" className="flex flex-col gap-1">
@@ -102,10 +104,7 @@ function Form({ body: savedBody, language, languages, maxBody, problem, bodyLost
           id="profile-language"
           name="language"
           defaultValue={language}
-          aria-invalid={problem === "language"}
           aria-describedby="profile-language-note"
-          // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
-          autoFocus={problem === "language"}
           className={cn(field, "bg-background sm:max-w-xs")}
         >
           {languages.map(({ code, label: name }) => (
@@ -114,17 +113,10 @@ function Form({ body: savedBody, language, languages, maxBody, problem, bodyLost
             </option>
           ))}
         </select>
-        <div id="profile-language-note" className="flex flex-col gap-1">
-          {problem === "language" ? (
-            <p role="alert" className={fieldError}>
-              Choose one of the languages in the list.
-            </p>
-          ) : null}
-          <p className="text-xs text-muted-foreground">
-            The language of the Agent&apos;s summaries and rating reasoning. Items keep their original text, and
-            Watchdog&apos;s own screens don&apos;t change.
-          </p>
-        </div>
+        <p id="profile-language-note" className="text-xs text-muted-foreground">
+          The language of the Agent&apos;s summaries and rating reasoning. Items keep their original text, and
+          Watchdog&apos;s own screens don&apos;t change.
+        </p>
       </div>
 
       <div className="flex flex-col gap-3 border-t pt-4">

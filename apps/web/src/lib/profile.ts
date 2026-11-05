@@ -21,10 +21,6 @@ export interface ProfileInput {
   language: string;
 }
 
-/** Why a Profile wasn't saved, as a code the form can carry in its URL. */
-export const profileProblems = ["too-long", "language"] as const;
-export type ProfileProblem = (typeof profileProblems)[number];
-
 /**
  * The body as it's counted and stored. A browser counts a newline as one character and posts it as
  * two, so the form's count only agrees with this one here. Postgres text refuses a NUL and half a
@@ -39,10 +35,10 @@ const maxQueryInUrl = 6000;
  * The form's URL after a refusal, which only a browser without JavaScript follows: with it, the form
  * refuses an over-long body itself and keeps it. Without it, a body too long for a URL can't come back.
  */
-export function profileFormQuery(problem: ProfileProblem, input: ProfileInput) {
-  const short = new URLSearchParams({ error: problem, language: input.language });
-  const full = new URLSearchParams({ error: problem, language: input.language, body: cleanBody(input.body) });
-  return full.toString().length > maxQueryInUrl ? short : full;
+export function tooLongFormQuery(input: ProfileInput) {
+  const query = new URLSearchParams({ error: "too-long", language: input.language, body: cleanBody(input.body) });
+  if (query.toString().length > maxQueryInUrl) query.delete("body");
+  return query;
 }
 
 /** Creates or replaces the Workspace's Profile. An over-long body or unknown language changes nothing. */
@@ -50,7 +46,7 @@ export async function saveProfile(
   db: Db,
   workspaceId: string,
   input: ProfileInput,
-): Promise<{ problem: ProfileProblem } | { saved: true }> {
+): Promise<{ problem: "too-long" | "language" } | { saved: true }> {
   const body = cleanBody(input.body);
   if (body.length > maxProfileBody) return { problem: "too-long" };
   if (!outputLanguages.some(({ code }) => code === input.language)) return { problem: "language" };

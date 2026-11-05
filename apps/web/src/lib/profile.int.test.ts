@@ -2,7 +2,7 @@ import { loadProfile } from "@watchdog/core";
 import { closeDb, createDb, type Db, migrate, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
-import { maxProfileBody, outputLanguages, profileFormQuery, saveProfile } from "./profile.ts";
+import { maxProfileBody, outputLanguages, saveProfile, tooLongFormQuery } from "./profile.ts";
 
 describe("the Profile screen", () => {
   let db: Db;
@@ -134,9 +134,9 @@ describe("outputLanguages", () => {
   });
 });
 
-describe("profileFormQuery", () => {
+describe("tooLongFormQuery", () => {
   it("sends a refused body back when it fits in a URL", () => {
-    const query = profileFormQuery("too-long", { body: "x".repeat(maxProfileBody + 1), language: "de" });
+    const query = tooLongFormQuery({ body: "x".repeat(maxProfileBody + 1), language: "de" });
 
     expect(query.get("error")).toBe("too-long");
     expect(query.get("language")).toBe("de");
@@ -144,14 +144,14 @@ describe("profileFormQuery", () => {
   });
 
   it("sends the same text the save counted", () => {
-    const query = profileFormQuery("language", { body: " one\r\ntwo ", language: "xx" });
+    const query = tooLongFormQuery({ body: " one\r\ntwo ", language: "de" });
 
     expect(query.get("body")).toBe("one\ntwo");
   });
 
   // Each Cyrillic letter is six characters in a URL.
   it("leaves out a body too long for a URL", () => {
-    const query = profileFormQuery("too-long", { body: "я".repeat(maxProfileBody + 1), language: "ru" });
+    const query = tooLongFormQuery({ body: "я".repeat(maxProfileBody + 1), language: "ru" });
 
     expect(query.has("body")).toBe(false);
     expect(query.get("error")).toBe("too-long");

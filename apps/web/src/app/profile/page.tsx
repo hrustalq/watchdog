@@ -1,7 +1,7 @@
 import { loadProfile } from "@watchdog/core";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { maxProfileBody, outputLanguages, profileProblems } from "@/lib/profile";
+import { maxProfileBody, outputLanguages } from "@/lib/profile";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
 import { ProfileForm } from "./profile-form";
@@ -16,10 +16,11 @@ export default async function ProfilePage({ searchParams }: PageProps<"/profile"
   const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
   const saved = await loadProfile(server().db, workspace.id);
 
-  // These come from the URL, so only a known code counts, and only a refusal brings text back.
-  const problem = profileProblems.find((known) => known === params.error);
-  const sentBackBody = problem !== undefined && typeof params.body === "string" ? params.body : undefined;
-  const sentBackLanguage = problem === undefined ? undefined : outputLanguages.find(({ code }) => code === params.language);
+  // These come from the URL, so only a refusal brings text back, and only a listed language counts.
+  const refused = params.error === "too-long";
+  const sentBackBody = refused && typeof params.body === "string" ? params.body : undefined;
+  const sentBackLanguage = refused ? outputLanguages.find(({ code }) => code === params.language) : undefined;
+  const bodyLost = refused && sentBackBody === undefined;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -47,8 +48,8 @@ export default async function ProfilePage({ searchParams }: PageProps<"/profile"
           language={sentBackLanguage?.code ?? saved.outputLanguage}
           languages={outputLanguages}
           maxBody={maxProfileBody}
-          problem={problem}
-          bodyLost={problem === "too-long" && sentBackBody === undefined}
+          refused={refused}
+          bodyLost={bodyLost}
         />
       </main>
     </div>
