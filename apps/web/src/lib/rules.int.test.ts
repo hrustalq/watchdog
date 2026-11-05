@@ -1,5 +1,6 @@
 import { processItem, ruleSchema } from "@watchdog/core";
 import { draftToYaml } from "@watchdog/core/rules/draft";
+import { fakeLlm } from "@watchdog/core/testing";
 import {
   classifier,
   closeDb,
@@ -30,6 +31,10 @@ import {
 
 const unique = () => crypto.randomUUID();
 const containing = (text: string): unknown => expect.stringContaining(text);
+/** These Workspaces have no model, so the pipeline makes no Agent call. */
+const pipelineDeps = {
+  agent: { fetch: fakeLlm("openai-compatible", []).fetch, encryptionKey: Buffer.alloc(32, 7) },
+};
 
 const classifierYaml = (name = unique()) => `classifier: ${name}
 when:
@@ -367,7 +372,7 @@ describe("Rules", () => {
         .values({ workspaceId: ours, sourceId, externalId: unique(), title, body: "", raw: {} })
         .returning({ id: item.id });
       if (row === undefined) throw new Error("Not captured");
-      await processItem(db, row.id, {});
+      await processItem(db, row.id, pipelineDeps);
       const rows = await db.select().from(itemCategory).where(eq(itemCategory.itemId, row.id));
       return rows.map((category) => category.category);
     }
@@ -470,7 +475,7 @@ describe("Rules", () => {
         .insert(item)
         .values({ workspaceId: ours, sourceId: feed?.id ?? "", externalId: unique(), title: "T", body: "", raw: {} })
         .returning({ id: item.id });
-      await processItem(db, row?.id ?? "", {});
+      await processItem(db, row?.id ?? "", pipelineDeps);
 
       expect(await removeRule(db, ours, "classifier", id)).toBe(true);
 

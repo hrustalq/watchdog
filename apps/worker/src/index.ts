@@ -1,5 +1,5 @@
 import { rmSync, writeFileSync } from "node:fs";
-import { createEgressFetch, loadConfig } from "@watchdog/core";
+import { createAgentFetch, createEgressFetch, loadConfig } from "@watchdog/core";
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { itemEnqueuer, startPipeline } from "./pipeline.ts";
@@ -31,7 +31,10 @@ boss.on("error", (error) => {
 });
 await boss.start();
 const db = createDb(config.databaseUrl);
-await startPipeline(db, boss);
+await startPipeline(db, boss, {
+  fetch: createAgentFetch(config),
+  encryptionKey: config.encryptionKey,
+});
 await startScheduler(db, boss, config.mode, {
   fetch: createEgressFetch(config),
   enqueueItems: itemEnqueuer(boss),

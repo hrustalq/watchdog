@@ -1,5 +1,7 @@
 import { pollSource } from "@watchdog/core";
+import { fakeLlm } from "@watchdog/core/testing";
 import {
+  agentCall,
   classifier,
   closeDb,
   createDb,
@@ -7,7 +9,9 @@ import {
   eq,
   item,
   itemCategory,
+  itemLog,
   migrate,
+  modelConfig,
   source,
   user,
   workspace,
@@ -15,7 +19,7 @@ import {
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { PgBoss } from "pg-boss";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { itemEnqueuer, processItemQueue, startPipeline } from "./pipeline.ts";
+import { createPipelineQueue, itemEnqueuer, processItemQueue, startPipeline } from "./pipeline.ts";
 
 /** The value, which the test expects to be there. */
 function present<T>(value: T | undefined): T {
@@ -40,6 +44,8 @@ describe("pipeline", () => {
   let db: Db;
   let boss: PgBoss;
   let workspaceId: string;
+  /** Stands in for the egress guard's fetch, which reaches the model. */
+  let modelFetch: ReturnType<typeof fakeLlm>["fetch"];
 
   beforeAll(async () => {
     postgres = await startPostgres();
@@ -53,7 +59,10 @@ describe("pipeline", () => {
     workspaceId = present(ws).id;
     boss = new PgBoss(postgres.url);
     await boss.start();
-    await startPipeline(db, boss);
+    await startPipeline(db, boss, {
+      fetch: (input, init) => modelFetch(input, init),
+      encryptionKey: Buffer.alloc(32, 7),
+    });
     return async () => {
       await boss.stop();
       await closeDb(db);
@@ -168,5 +177,129 @@ describe("pipeline", () => {
     expect(await db.select().from(itemCategory).where(eq(itemCategory.itemId, itemId))).toMatchObject(
       [{ category: "launch" }],
     );
+  });
+
+  describe("with a model", () => {
+    /** A Workspace of its own, so the other tests' Items stay out of the model's way. */
+    async function modelWorkspace() {
+      const id = crypto.randomUUID();
+      await db.insert(user).values({ id, name: "Owner", email: `${id}@example.com` });
+      const [ws] = await db.insert(workspace).values({ name: "Models", ownerUserId: id }).returning();
+      const ownId = present(ws).id;
+      await db.insert(modelConfig).values({
+        workspaceId: ownId,
+        providerType: "openai-compatible",
+        baseUrl: "https://llm.test/v1",
+        modelName: "fake-model",
+      });
+      await db.insert(classifier).values({
+        workspaceId: ownId,
+        name: "leads",
+        kind: "agent",
+        definition: { classifier: "leads", prompt: "Find leads", categories: ["lead"] },
+      });
+      const [created] = await db
+        .insert(source)
+        .values({
+          workspaceId: ownId,
+          type: "rss",
+          name: "Feed",
+          config: { url: `https://feeds.test/${crypto.randomUUID()}.rss` },
+          schedule: "*/15 * * * *",
+        })
+        .returning();
+      return present(created).id;
+    }
+
+    it("runs at most 4 Agent jobs at once", async () => {
+      const turns = Array.from({ length: 6 }, () => ({ json: { categories: ["lead"] } }));
+      const fake = fakeLlm("openai-compatible", turns);
+      const held: (() => void)[] = [];
+      let running = 0;
+      let most = 0;
+      modelFetch = async (input, init) => {
+        most = Math.max(most, ++running);
+        await new Promise<void>((resolve) => held.push(resolve));
+        running--;
+        return fake.fetch(input, init);
+      };
+      const sourceId = await modelWorkspace();
+
+      await pollSource(db, sourceId, answering(["a", "b", "c", "d", "e", "f"]));
+      await vi.waitFor(() => {
+        expect(running).toBe(4);
+      }, { timeout: 30_000 });
+      // Longer than pg-boss's 2 second poll, so a fifth job would have started by now.
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(running).toBe(4);
+
+      const itemIds = await itemIdsOf(sourceId);
+      await vi.waitFor(
+        async () => {
+          for (const release of held.splice(0)) release();
+          const rows = await db.select().from(item).where(eq(item.sourceId, sourceId));
+          expect(rows.filter((row) => row.processedAt !== null)).toHaveLength(itemIds.length);
+        },
+        { timeout: 30_000 },
+      );
+      expect(most).toBe(4);
+    });
+
+    it("retries a job whose call failed, with the failure in the Log and the Item visible", async () => {
+      modelFetch = fakeLlm("openai-compatible", [{ status: 500, message: "Down\0" }]).fetch;
+      const sourceId = await modelWorkspace();
+
+      await pollSource(db, sourceId, answering(["one"]));
+      const itemId = present((await itemIdsOf(sourceId))[0]);
+
+      await vi.waitFor(
+        async () => {
+          const { rows } = await db.$client.query<{ state: string }>(
+            "select state from pgboss.job where name = $1 and data->>'itemId' = $2",
+            [processItemQueue, itemId],
+          );
+          expect(rows[0]?.state).toBe("retry");
+        },
+        { timeout: 30_000 },
+      );
+
+      const log = await db.select().from(itemLog).where(eq(itemLog.itemId, itemId));
+      expect(log.map((row) => row.message)).toContainEqual(
+        expect.stringContaining("The classify call failed"),
+      );
+      const calls = await db.select().from(agentCall).where(eq(agentCall.itemId, itemId));
+      expect(calls).toMatchObject([{ purpose: "classify", status: "error" }]);
+      const visible = await db.query.item.findFirst({ where: eq(item.id, itemId) });
+      expect(visible).toMatchObject({ classifiedAt: null, processedAt: null });
+    });
+
+    it("finishes the Item when its job has no retries left", async () => {
+      modelFetch = fakeLlm("openai-compatible", [{ status: 500 }]).fetch;
+      const sourceId = await modelWorkspace();
+      await pollSource(db, sourceId, { fetch: answering(["one"]).fetch, enqueueItems: () => Promise.resolve() });
+      const itemId = present((await itemIdsOf(sourceId))[0]);
+
+      await boss.send(processItemQueue, { itemId }, { retryLimit: 0 });
+
+      await vi.waitFor(
+        async () => {
+          const found = await db.query.item.findFirst({ where: eq(item.id, itemId) });
+          expect(found?.processedAt).not.toBeNull();
+        },
+        { timeout: 30_000 },
+      );
+    });
+
+    it("gives the queue the Agent's retries and time, on an upgraded install too", async () => {
+      await boss.updateQueue(processItemQueue, { expireInSeconds: 120, retryLimit: 1 });
+
+      await createPipelineQueue(boss);
+
+      expect(await boss.getQueue(processItemQueue)).toMatchObject({
+        expireInSeconds: 600,
+        retryLimit: 3,
+        retryBackoff: true,
+      });
+    });
   });
 });

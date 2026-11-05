@@ -1,10 +1,10 @@
 // The deterministic Extractor Rule stage (docs: Processing pipeline, "Stages"; Rule model).
-import { eq, extractorRule, itemCategory, itemField, itemLog, type Tx } from "@watchdog/db";
+import { and, eq, extractorRule, inArray, itemCategory, itemField, type Tx } from "@watchdog/db";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
 import { jsonPathValues, maxFieldValues } from "../rules/jsonpath.ts";
 import { firstCapture } from "../rules/regex.ts";
 import { type DeterministicExtractorRule, deterministicExtractorRuleSchema } from "../rules/schema.ts";
-import { deterministicRulesFor } from "./deterministic-rules.ts";
+import { logOnce, rulesFor } from "./rules-for-item.ts";
 
 type Field = DeterministicExtractorRule["fields"][number];
 type Value = string | number;
@@ -92,24 +92,30 @@ export function extractFields(fields: readonly Field[], source: ExtractionSource
  * Runs the Workspace's enabled deterministic Extractor Rules on an Item, oldest first, so the first
  * rule to fill a field is the one its row names. A Condition reads the Categories from the table, so
  * it sees every Classifier that ran before this stage, deterministic or Agent-backed (GitHub issue
- * #79).
+ * #79). A retry runs them all again with the Categories it has now. It clears what they stored first,
+ * so a field from an attempt whose classify call failed can't outlive a Condition that no longer holds
+ * or beat an older rule that now fills it.
  */
 export async function runDeterministicExtractorRules(
   tx: Tx,
   itemId: string,
   target: ConditionItem & ExtractionSource,
 ) {
-  const rules = await deterministicRulesFor(tx, extractorRule, itemId);
+  const rules = await rulesFor(tx, extractorRule, itemId, "deterministic");
   if (rules.length === 0) return;
+  const log = await logOnce(tx, itemId, "extract");
+  await tx.delete(itemField).where(
+    and(
+      eq(itemField.itemId, itemId),
+      inArray(itemField.extractorRuleId, rules.map((rule) => rule.id)),
+    ),
+  );
 
   const assigned = await tx
     .select({ category: itemCategory.category })
     .from(itemCategory)
     .where(eq(itemCategory.itemId, itemId));
   const categories = assigned.map((row) => row.category);
-
-  const log = (message: string, data: Record<string, unknown>) =>
-    tx.insert(itemLog).values({ itemId, stage: "extract", message, data });
 
   for (const rule of rules) {
     const parsed = deterministicExtractorRuleSchema.safeParse(rule.definition);

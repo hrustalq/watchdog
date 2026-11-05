@@ -187,7 +187,8 @@ export async function saveModel(
 async function archiveModel(db: Pick<Db, "update">, workspaceId: string) {
   const archived = await db
     .update(modelConfig)
-    .set({ archivedAt: new Date(), apiKeyCiphertext: null })
+    // The database's clock, which Item capture times use too, so the pipeline can compare them.
+    .set({ archivedAt: sql`now()`, apiKeyCiphertext: null })
     .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)))
     .returning({ id: modelConfig.id });
   return archived.length > 0;
