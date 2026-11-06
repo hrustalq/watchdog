@@ -22,12 +22,15 @@ const checked = new Map<string, string | undefined>();
 const maxChecked = 1000;
 const maxLength = 200;
 
-/** Why a Source or a Digest can't use this cron expression in this mode, or undefined when it can. */
-export function scheduleError(schedule: string, mode: Mode): string | undefined {
+/**
+ * Why a Source or a Digest can't use this cron expression in this mode, or undefined when it can.
+ * Without a mode, only whether it is a cron expression at all.
+ */
+export function scheduleError(schedule: string, mode?: Mode): string | undefined {
   if (schedule.length > maxLength) {
     return `A schedule can be at most ${String(maxLength)} characters.`;
   }
-  const key = `${mode} ${schedule}`;
+  const key = `${mode ?? "any"} ${schedule}`;
   if (!checked.has(key)) {
     if (checked.size >= maxChecked) checked.clear();
     checked.set(key, findError(schedule.trim(), mode));
@@ -35,8 +38,7 @@ export function scheduleError(schedule: string, mode: Mode): string | undefined 
   return checked.get(key);
 }
 
-function findError(schedule: string, mode: Mode) {
-  const minimum = minimumMinutes[mode] * minute;
+function findError(schedule: string, mode: Mode | undefined) {
   try {
     // The parser fills in missing fields, so "* * * *" would pass it.
     const fields = schedule.split(/\s+/).length;
@@ -46,7 +48,7 @@ function findError(schedule: string, mode: Mode) {
     let last = first;
     for (let i = 0; i < firingsChecked && last - first < yearsChecked; i++) {
       const next = firings.next().getTime();
-      if (next - last < minimum) {
+      if (mode !== undefined && next - last < minimumMinutes[mode] * minute) {
         return `A schedule can't run more often than every ${String(minimumMinutes[mode])} minutes on ${mode}.`;
       }
       last = next;

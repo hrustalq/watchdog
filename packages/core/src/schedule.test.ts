@@ -35,6 +35,12 @@ describe("scheduleError", () => {
     expect(scheduleError("*/30 * * * * *", "self-hosted")).toMatch(/5 minutes/);
   });
 
+  it("asks only for a cron expression when it isn't told the mode", () => {
+    expect(scheduleError("* * * * *")).toBeUndefined();
+    expect(scheduleError("weekly")).toBe('"weekly" isn\'t a cron expression.');
+    expect(scheduleError("0 0 31 2 *")).toBe('"0 0 31 2 *" isn\'t a cron expression.');
+  });
+
   it("refuses text too long to be a schedule, without repeating it", () => {
     const schedule = `0 * * * ${"1,".repeat(200)}2`;
     expect(scheduleError(schedule, "hosted")).toBe("A schedule can be at most 200 characters.");

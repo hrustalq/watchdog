@@ -57,6 +57,12 @@ describe("actionProblems", () => {
   });
 
   it("holds a Digest's schedule to the mode's minimum interval", () => {
+    expect(actionProblems(digest(["me"], "* * * * *"), destinations, "self-hosted")).toEqual([
+      {
+        path: "schedule",
+        message: "A schedule can't run more often than every 5 minutes on self-hosted.",
+      },
+    ]);
     const everyFive = digest(["me"], "*/5 * * * *");
     expect(actionProblems(everyFive, destinations, "self-hosted")).toEqual([]);
     expect(actionProblems(everyFive, destinations, "hosted")).toEqual([

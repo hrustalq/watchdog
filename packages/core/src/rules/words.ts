@@ -1,8 +1,6 @@
 // A Condition in words, for an alert's "why it fired" and the Rules list (docs: Actions and delivery,
-// "Alerts"). Only `is` and `in` values go unquoted: a pattern or a substring reads badly bare.
-import type { Condition, Predicate } from "./schema.ts";
-
-const extracted = "fields.";
+// "Alerts").
+import { type Condition, extracted, type Predicate } from "./schema.ts";
 
 const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
@@ -12,18 +10,23 @@ function fieldWords(field: string) {
   return field === "url" ? "URL" : capitalized(field);
 }
 
+/** A value to compare with: bare when it is one word, so several can't read as part of the sentence. */
+function valueWords(value: string | number) {
+  return typeof value === "string" && !/^[\p{L}\p{N}_.-]+$/u.test(value) ? `"${value}"` : String(value);
+}
+
 /**
- * Negated by wording, never by turning the test around: "not at least 4" holds on a missing field
- * and "below 4" wouldn't, so "is not at least 4" is what `not` means here.
+ * Negated by wording, never by turning the test around: on a missing `fields.price`, "not at least
+ * 4" holds and "below 4" wouldn't.
  */
 function predicateWords(predicate: Predicate, negated: boolean) {
   const name = fieldWords(predicate.field);
   const is = negated ? "is not" : "is";
   switch (predicate.op) {
     case "is":
-      return `${name} ${is} ${String(predicate.value)}`;
+      return `${name} ${is} ${valueWords(predicate.value)}`;
     case "in":
-      return `${name} ${is} ${predicate.value.length > 1 ? "one of " : ""}${predicate.value.join(", ")}`;
+      return `${name} ${is} ${predicate.value.length > 1 ? "one of " : ""}${predicate.value.map(valueWords).join(", ")}`;
     case "contains":
       return `${name} ${negated ? "doesn't contain" : "contains"} "${predicate.value}"`;
     case "matches":

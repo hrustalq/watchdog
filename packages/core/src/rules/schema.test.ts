@@ -401,11 +401,26 @@ describe("actionSchema", () => {
   it.each([
     ["text that isn't cron", "weekly", "isn't a cron expression"],
     ["too few fields", "* * * *", "isn't a cron expression"],
-    ["a schedule no mode allows", "* * * * *", "every 5 minutes"],
+    ["a date that never comes", "0 0 31 2 *", "isn't a cron expression"],
   ])("refuses a Digest whose schedule is %s", (_, schedule, expected) => {
     const issue = issuesOf(actionSchema.safeParse({ ...digest, schedule }))[0];
     expect(issue?.message).toContain(expected);
     expect(issue?.path).toEqual(["schedule"]);
+  });
+
+  it("leaves a schedule's minimum interval to the save, which knows the mode", () => {
+    expect(actionSchema.safeParse({ ...digest, schedule: "* * * * *" }).success).toBe(true);
+  });
+
+  it("keeps a Digest's schedule without the whitespace around it", () => {
+    const parsed = actionSchema.parse({ ...digest, schedule: " 0 9 * * 1\n" });
+    expect(parsed).toEqual(digest);
+  });
+
+  it("refuses a Destination listed twice, pointing at the second", () => {
+    const issue = issuesOf(actionSchema.safeParse({ ...alert, destinations: ["me", "x", " me "] }))[0];
+    expect(issue?.message).toContain('"me"');
+    expect(issue?.path).toEqual(["destinations", 2]);
   });
 });
 

@@ -41,6 +41,10 @@ describe("conditionToWords", () => {
       ["is", { field: "severity", op: "is", value: 5 }, "Severity is 5"],
       ["in", { field: "category", op: "in", value: ["lead", "bug"] }, "Category is one of lead, bug"],
       ["in with one value", { field: "author", op: "in", value: ["me"] }, "Author is me"],
+      ["a value of several words", { field: "title", op: "is", value: "a and b" }, 'Title is "a and b"'],
+      ["a blank value", { field: "title", op: "is", value: "" }, 'Title is ""'],
+      ["a value with a comma", { field: "author", op: "in", value: ["a, b", "c"] }, 'Author is one of "a, b", c'],
+      ["a value in another alphabet", { field: "category", op: "is", value: "новость-1" }, "Category is новость-1"],
       ["contains", { field: "body", op: "contains", value: "launch" }, 'Body contains "launch"'],
       ["matches", { field: "title", op: "matches", value: "v\\d" }, 'Title matches "v\\d"'],
       ["gte", { field: "importance", op: "gte", value: 3 }, "Importance is at least 3"],
@@ -52,7 +56,7 @@ describe("conditionToWords", () => {
   });
 
   describe("each operator under not", () => {
-    // "Not at least 4" isn't "below 4": a missing field meets the first and not the second.
+    // On a missing fields.price, "not at least 4" holds and "below 4" wouldn't, so `not` stays in words.
     it.each<[string, Condition, string]>([
       ["is", { field: "severity", op: "is", value: 5 }, "Severity is not 5"],
       ["in", { field: "category", op: "in", value: ["lead", "bug"] }, "Category is not one of lead, bug"],

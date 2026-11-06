@@ -14,7 +14,7 @@ const namedFields = [...sourceContentAndCategories, ...ratingFields];
 // Extracted field names become object keys, in stored fields and the Agent's flat output schema
 // (ADR 0016), and assigning to `__proto__` wouldn't create a key.
 const fieldName = /^(?!__proto__$)[\w-]{1,64}$/;
-const extracted = "fields.";
+export const extracted = "fields.";
 
 // Each predicate and field can run a regex at the instruction cap, so one rule's size bounds what
 // it can cost per Item (ADR 0026). 50 is far beyond a rule a person writes.
@@ -257,10 +257,23 @@ export type AgentExtractorRule = z.infer<typeof agentExtractorRuleSchema>;
 
 // By name in the YAML and by id once stored, so only a save can tell whether they exist or fit the
 // kind, which it does with the Workspace's Destinations in hand.
-const destinations = z.array(label).min(1);
+const destinations = z
+  .array(label)
+  .min(1)
+  .superRefine((names, ctx) => {
+    for (const [i, listed] of names.entries()) {
+      if (names.indexOf(listed) < i) {
+        ctx.addIssue({
+          code: "custom",
+          path: [i],
+          message: `An Action can't list the Destination "${listed}" twice.`,
+        });
+      }
+    }
+  });
 
-// This schema has no mode, so it refuses what no mode allows. A save applies its own mode's minimum.
-const digestSchedule = refusedBy((schedule) => scheduleError(schedule, "self-hosted"));
+// This schema has no mode, so it asks only for a cron expression. A save applies the mode's minimum.
+const digestSchedule = z.string().trim().pipe(refusedBy(scheduleError));
 
 // An Action runs after every other stage, so its Condition can test any field (docs: Rule model,
 // "What each rule can test"). The keys are in the order the Rule model page writes them.
