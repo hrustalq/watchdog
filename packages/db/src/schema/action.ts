@@ -6,8 +6,9 @@ import { ruleColumns } from "./rule.ts";
 
 /**
  * The third type of rule: what happens outside the Feed when an Item meets a Condition (docs:
- * Rule model, "Actions"). `definition` names its Destinations by id; action_destination keeps the
- * same set as foreign keys, so a Destination an Action points at can't be deleted.
+ * Rule model, "Actions"). `definition` holds the canonical model with its Destinations by id (the
+ * YAML shows their names, and renaming one changes nothing here); action_destination keeps the same
+ * set as foreign keys, so a Destination an Action points at can't be deleted.
  *
  * The two foreign keys to destination (here and on delivery) are DEFERRABLE INITIALLY DEFERRED,
  * written by hand in migration 0009 because Drizzle can't declare it. Postgres checks a plain

@@ -84,4 +84,6 @@ CREATE INDEX "delivery_destination_id_status_next_attempt_at_idx" ON "delivery" 
 CREATE INDEX "delivery_item_id_idx" ON "delivery" USING btree ("item_id");--> statement-breakpoint
 CREATE INDEX "digest_item_item_id_idx" ON "digest_item" USING btree ("item_id");--> statement-breakpoint
 ALTER TABLE "workspace" ADD CONSTRAINT "workspace_quiet_hours_check" CHECK (("workspace"."quiet_hours_start" is null) = ("workspace"."quiet_hours_end" is null));--> statement-breakpoint
+ALTER TABLE "workspace" ADD CONSTRAINT "workspace_alerts_per_hour_check" CHECK ("workspace"."alerts_per_hour" > 0);--> statement-breakpoint
+ALTER TABLE "workspace" ADD CONSTRAINT "workspace_burst_window_seconds_check" CHECK ("workspace"."burst_window_seconds" >= 0);--> statement-breakpoint
 ALTER TABLE "item_log" ADD CONSTRAINT "item_log_stage_check" CHECK ("item_log"."stage" in ('capture', 'classify', 'extract', 'rate', 'correct', 'act'));

@@ -1,5 +1,5 @@
 {
-  "id": "ec4a03bc-9069-439c-a566-d83d356c7387",
+  "id": "aa24c0ac-24a2-4e92-8ed8-5e12b7d82f4a",
   "prevId": "9711432c-76fd-4074-9097-ed815a9e27a1",
   "version": "7",
   "dialect": "postgresql",
@@ -470,6 +470,14 @@
         "workspace_quiet_hours_check": {
           "name": "workspace_quiet_hours_check",
           "value": "(\"workspace\".\"quiet_hours_start\" is null) = (\"workspace\".\"quiet_hours_end\" is null)"
+        },
+        "workspace_alerts_per_hour_check": {
+          "name": "workspace_alerts_per_hour_check",
+          "value": "\"workspace\".\"alerts_per_hour\" > 0"
+        },
+        "workspace_burst_window_seconds_check": {
+          "name": "workspace_burst_window_seconds_check",
+          "value": "\"workspace\".\"burst_window_seconds\" >= 0"
         }
       },
       "isRLSEnabled": false

@@ -259,6 +259,12 @@ describe("Destination, Action and Delivery tables", () => {
     await expect(
       db.update(workspace).set({ quietHoursEnd: null }).where(eq(workspace.id, seeded.workspace.id)),
     ).rejects.toMatchObject({ cause: { code: "23514", constraint: "workspace_quiet_hours_check" } });
+    await expect(
+      db.update(workspace).set({ alertsPerHour: 0 }).where(eq(workspace.id, seeded.workspace.id)),
+    ).rejects.toMatchObject({ cause: { code: "23514", constraint: "workspace_alerts_per_hour_check" } });
+    await expect(
+      db.update(workspace).set({ burstWindowSeconds: -1 }).where(eq(workspace.id, seeded.workspace.id)),
+    ).rejects.toMatchObject({ cause: { code: "23514", constraint: "workspace_burst_window_seconds_check" } });
   });
 
   it("loads the new rows through the relations", async () => {
@@ -268,16 +274,17 @@ describe("Destination, Action and Delivery tables", () => {
       where: eq(workspace.id, seeded.workspace.id),
       with: {
         destinations: true,
-        actions: { with: { destinations: { with: { destination: true } }, deliveries: true, digestItems: true } },
+        actions: {
+          with: { actionDestinations: { with: { destination: true } }, deliveries: true, digestItems: true },
+        },
         items: { with: { deliveries: { with: { destination: true } } } },
       },
     });
 
     expect(loaded?.destinations).toHaveLength(3);
-    expect(loaded?.actions.flatMap((row) => row.destinations).map((row) => row.destination.name).sort()).toEqual([
-      "me",
-      "ops-chat",
-    ]);
+    expect(
+      loaded?.actions.flatMap((row) => row.actionDestinations).map((row) => row.destination.name).sort(),
+    ).toEqual(["me", "ops-chat"]);
     expect(loaded?.actions.flatMap((row) => row.deliveries)).toHaveLength(1);
     expect(loaded?.actions.flatMap((row) => row.digestItems)).toHaveLength(1);
     expect(loaded?.items[0]?.deliveries[0]?.destination.name).toBe("ops-chat");

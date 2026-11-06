@@ -62,13 +62,13 @@ export const itemFieldRelations = relations(itemField, ({ one }) => ({
 
 export const destinationRelations = relations(destination, ({ one, many }) => ({
   workspace: one(workspace, { fields: [destination.workspaceId], references: [workspace.id] }),
-  actions: many(actionDestination),
+  actionDestinations: many(actionDestination),
   deliveries: many(delivery),
 }));
 
 export const actionRelations = relations(action, ({ one, many }) => ({
   workspace: one(workspace, { fields: [action.workspaceId], references: [workspace.id] }),
-  destinations: many(actionDestination),
+  actionDestinations: many(actionDestination),
   deliveries: many(delivery),
   digestItems: many(digestItem),
 }));

@@ -19,7 +19,11 @@ export const workspace = pgTable(
       .notNull()
       .unique()
       .references(() => user.id, { onDelete: "cascade" }),
-    /** An IANA name. Quiet hours, Digest schedules and the hosted email cap's day use it. */
+    /**
+     * An IANA name. Quiet hours, Digest schedules and the hosted email cap's day use it. Postgres
+     * can't check it (a check can't read pg_timezone_names), so the Settings screen validates with
+     * Intl.supportedValuesOf("timeZone") before writing.
+     */
     timezone: text("timezone").notNull().default("UTC"),
     /** Local times in the Workspace timezone. Both null when quiet hours are off. */
     quietHoursStart: time("quiet_hours_start"),
@@ -38,5 +42,8 @@ export const workspace = pgTable(
       "workspace_quiet_hours_check",
       sql`(${table.quietHoursStart} is null) = (${table.quietHoursEnd} is null)`,
     ),
+    // At 0 every alert would be over the limit and held for good.
+    check("workspace_alerts_per_hour_check", sql`${table.alertsPerHour} > 0`),
+    check("workspace_burst_window_seconds_check", sql`${table.burstWindowSeconds} >= 0`),
   ],
 );
