@@ -16,8 +16,11 @@ import {
 } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
-import { deliver, type Destination, type Sender } from "./deliver.ts";
+import { z } from "zod";
+import { encryptSecret } from "../secrets/secrets.ts";
+import { deliver, type Destination, FinalSendError, RetryAfterSendError, type Sender } from "./deliver.ts";
 import type { AlertMessage } from "./content.ts";
+import { createTelegramSender } from "./telegram.ts";
 
 /** The value, which the test expects to be there. */
 function present<T>(value: T | undefined): T {
@@ -274,6 +277,157 @@ describe("deliver", () => {
     ]);
     const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
     expect(shown).toMatchObject({ lastError: "Chat unreachable", lastErrorAt: now });
+  });
+
+  it("fails a Delivery at once when the sender says no retry can work", async () => {
+    const seeded = await seed();
+    const now = new Date();
+    const { deps, retries } = recording(() => Promise.reject(new FinalSendError("Refused for good")));
+
+    await deliver(db, seeded.deliveryId, { ...deps, now: () => now });
+
+    expect(retries).toEqual([]);
+    expect(await rowOf(seeded.deliveryId)).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      nextAttemptAt: null,
+      lastError: "Refused for good",
+    });
+    expect(await actLog(seeded.itemId)).toMatchObject([
+      { message: "Sending to ops-chat failed: Refused for good. It won't be retried", data: { attempt: 1, final: true } },
+    ]);
+    const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
+    expect(shown).toMatchObject({ lastError: "Refused for good", lastErrorAt: now });
+  });
+
+  it("waits as long as the sender was told to, in place of the backoff", async () => {
+    const seeded = await seed();
+    const now = new Date();
+    // The backoff at this attempt would be hours, and the wait is seconds.
+    await db.update(delivery).set({ attempts: 8 }).where(eq(delivery.id, seeded.deliveryId));
+    const { deps, retries } = recording(() => Promise.reject(new RetryAfterSendError("Slow down", 5000)));
+
+    await deliver(db, seeded.deliveryId, { ...deps, now: () => now });
+
+    const retryAt = new Date(now.getTime() + 5000);
+    expect(retries).toEqual([{ deliveryId: seeded.deliveryId, at: retryAt }]);
+    expect(await rowOf(seeded.deliveryId)).toMatchObject({
+      status: "queued",
+      attempts: 9,
+      nextAttemptAt: retryAt,
+      lastError: "Slow down",
+    });
+    expect(await actLog(seeded.itemId)).toMatchObject([
+      { message: `Sending to ops-chat failed: Slow down, retrying at ${retryAt.toISOString()}` },
+    ]);
+  });
+
+  it("keeps a wait the sender was told to make even past the 24 hour mark", async () => {
+    const seeded = await seed();
+    const created = new Date("2026-01-07T10:00:00.000Z");
+    await db.update(delivery).set({ createdAt: created }).where(eq(delivery.id, seeded.deliveryId));
+    const late = new Date(created.getTime() + 24 * hour - 1000);
+    const { deps, retries } = recording(() => Promise.reject(new RetryAfterSendError("Slow down", 5000)));
+
+    await deliver(db, seeded.deliveryId, { ...deps, now: () => late });
+
+    expect(retries).toEqual([{ deliveryId: seeded.deliveryId, at: new Date(late.getTime() + 5000) }]);
+  });
+
+  it("stops at the 24 hour mark however long the sender was told to wait", async () => {
+    const seeded = await seed();
+    const now = new Date();
+    await db
+      .update(delivery)
+      .set({ createdAt: new Date(now.getTime() - 24 * hour) })
+      .where(eq(delivery.id, seeded.deliveryId));
+    const { deps, retries } = recording(() => Promise.reject(new RetryAfterSendError("Slow down", 5000)));
+
+    await deliver(db, seeded.deliveryId, { ...deps, now: () => now });
+
+    expect(retries).toEqual([]);
+    expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "failed", nextAttemptAt: null });
+  });
+
+  describe("through the Telegram sender, with a fake Telegram API", () => {
+    const encryptionKey = Buffer.alloc(32, 7);
+    const sentMessage = z.object({ chat_id: z.string(), text: z.string() });
+
+    /** A Delivery to a linked chat, and deps that send it through the real sender to a fake API. */
+    async function linked(answer: () => Response) {
+      const seeded = await seed();
+      await db
+        .update(destination)
+        .set({ secretCiphertext: encryptSecret("-100200", encryptionKey) })
+        .where(eq(destination.id, seeded.destinationId));
+      const received: z.output<typeof sentMessage>[] = [];
+      const telegram = createTelegramSender("123456:token", {
+        fetch: (_input, init) => {
+          received.push(sentMessage.parse(JSON.parse(typeof init?.body === "string" ? init.body : "")));
+          return Promise.resolve(answer());
+        },
+        encryptionKey,
+      });
+      const { deps, retries } = recording();
+      return { seeded, received, retries, deps: { ...deps, senders: { ...deps.senders, telegram } } };
+    }
+
+    it("sends a queued Delivery to the linked chat with the Item's title and link", async () => {
+      const { seeded, received, deps } = await linked(() => Response.json({ ok: true, result: {} }));
+
+      await deliver(db, seeded.deliveryId, deps);
+
+      expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent", attempts: 1, lastError: null });
+      expect(received).toHaveLength(1);
+      expect(present(received[0]).chat_id).toBe("-100200");
+      expect(present(received[0]).text).toContain("A security advisory");
+      expect(present(received[0]).text).toContain(`https://watchdog.test/items/${seeded.itemId}`);
+    });
+
+    it("sets next_attempt_at at least 5 seconds out on a 429 with retry_after: 5", async () => {
+      const { seeded, retries, deps } = await linked(() =>
+        Response.json({ ok: false, error_code: 429, parameters: { retry_after: 5 } }, { status: 429 }),
+      );
+      const before = Date.now();
+
+      await deliver(db, seeded.deliveryId, deps);
+
+      const row = present(await rowOf(seeded.deliveryId));
+      expect(row.status).toBe("queued");
+      expect(row.nextAttemptAt?.getTime()).toBeGreaterThanOrEqual(before + 5000);
+      expect(row.nextAttemptAt?.getTime()).toBeLessThan(before + 30_000);
+      expect(present(retries[0]).at).toEqual(row.nextAttemptAt);
+    });
+
+    it("ends the Delivery as failed with no retry on a 403, and the Destination says the bot was removed", async () => {
+      const { seeded, retries, deps } = await linked(() =>
+        Response.json(
+          { ok: false, error_code: 403, description: "Forbidden: bot was kicked from the group chat" },
+          { status: 403 },
+        ),
+      );
+
+      await deliver(db, seeded.deliveryId, deps);
+
+      expect(retries).toEqual([]);
+      expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "failed", attempts: 1, nextAttemptAt: null });
+      const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
+      expect(shown?.lastError).toMatch(/bot was removed from the chat/);
+    });
+
+    it("writes a Log row saying the bot isn't set up when there's no token", async () => {
+      const seeded = await seed();
+      const telegram = createTelegramSender(undefined, {
+        fetch: () => Promise.reject(new Error("Nothing should call Telegram")),
+        encryptionKey,
+      });
+      const { deps } = recording();
+
+      await deliver(db, seeded.deliveryId, { ...deps, senders: { ...deps.senders, telegram } });
+
+      const [row] = await actLog(seeded.itemId);
+      expect(row?.message).toMatch(/^Sending to ops-chat failed: the Telegram bot isn't set up/);
+    });
   });
 
   it("clears the Destination's error when a later send works", async () => {

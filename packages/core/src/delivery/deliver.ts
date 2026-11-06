@@ -24,8 +24,26 @@ import { alertContent, type AlertMessage } from "./content.ts";
 export type Destination = typeof destination.$inferSelect;
 
 export interface Sender {
-  /** Rejects when the message didn't go, with a reason the user can read in the Log. */
+  /**
+   * Rejects when the message didn't go, with a reason the user can read in the Log. Any error is retried
+   * with the backoff, unless it's a FinalSendError or a RetryAfterSendError.
+   */
   send: (destination: Destination, message: AlertMessage) => Promise<void>;
+}
+
+/** A refusal no later attempt can get past, so the Delivery fails at once. */
+export class FinalSendError extends Error {
+  override name = "FinalSendError";
+}
+
+/** The receiver said how long to wait, which replaces the backoff for the next attempt. */
+export class RetryAfterSendError extends Error {
+  override name = "RetryAfterSendError";
+  readonly retryAfterMs: number;
+  constructor(message: string, retryAfterMs: number) {
+    super(message);
+    this.retryAfterMs = retryAfterMs;
+  }
 }
 
 export interface DeliverDeps {
@@ -133,10 +151,14 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
     const failure = `Sending to ${target.name} failed: ${reason}`;
     const windowEnd = row.createdAt.getTime() + retryWindowMs;
 
-    if (failed.getTime() >= windowEnd) {
+    const final = error instanceof FinalSendError;
+    if (final || failed.getTime() >= windowEnd) {
       await record(
         { status: "failed", nextAttemptAt: null, lastError: reason },
-        { message: `${failure}. No more retries after 24 hours`, data: { final: true } },
+        {
+          message: `${failure}. ${final ? "It won't be retried" : "No more retries after 24 hours"}`,
+          data: { final: true },
+        },
         async (tx) => {
           await tx
             .update(destination)
@@ -147,8 +169,13 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
       return;
     }
 
+    // A told wait can pass the 24 hour mark, because an attempt sooner than that would only be refused.
     const backoff = firstRetryDelayMs * 2 ** (attempts - 1);
-    const retryAt = new Date(Math.min(failed.getTime() + backoff, windowEnd));
+    const retryAt = new Date(
+      error instanceof RetryAfterSendError
+        ? failed.getTime() + error.retryAfterMs
+        : Math.min(failed.getTime() + backoff, windowEnd),
+    );
     await record(
       { nextAttemptAt: retryAt, lastError: reason },
       { message: `${failure}, retrying at ${retryAt.toISOString()}`, data: { retryAt: retryAt.toISOString() } },

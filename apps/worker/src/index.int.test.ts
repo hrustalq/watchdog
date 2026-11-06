@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 /** Runs the worker the way its container does, until it logs that it's ready. */
-async function startWorker(databaseUrl: string) {
+async function startWorker(databaseUrl: string, extraEnv: Record<string, string> = {}) {
   const child = spawn(process.execPath, [path.join(import.meta.dirname, "index.ts")], {
     // Only what the worker needs, so a developer's own environment can't leak in.
     env: {
@@ -52,6 +52,7 @@ async function startWorker(databaseUrl: string) {
       WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
       // The test's feed server listens on loopback, which the egress guard blocks by default.
       EGRESS_ALLOWLIST: "127.0.0.1",
+      ...extraEnv,
     },
   });
   running.add(child);
@@ -63,7 +64,8 @@ async function startWorker(databaseUrl: string) {
     child.stdout.on("data", () => {
       if (output.includes("Worker ready")) resolve();
     });
-    child.once("exit", () => {
+    // "close", not "exit": a process can exit before its last output has been read.
+    child.once("close", () => {
       reject(new Error(`Worker exited before it was ready:\n${output}`));
     });
   });
@@ -117,6 +119,15 @@ describe("worker", () => {
     expect(await worker.stop()).toBe(0);
     expect(worker.output()).toContain("pg-boss stopped");
     expect(existsSync(ready)).toBe(false);
+  }, 60_000);
+
+  it("stops at boot on a malformed TELEGRAM_BOT_TOKEN, naming the variable and not its value", async () => {
+    const start = startWorker(postgres.url, { TELEGRAM_BOT_TOKEN: "not-a-real-token" });
+
+    const failure: unknown = await start.catch((error: unknown) => error);
+
+    expect(String(failure)).toMatch(/^Error: Worker exited before it was ready:[\s\S]*TELEGRAM_BOT_TOKEN/);
+    expect(String(failure)).not.toContain("not-a-real-token");
   }, 60_000);
 
   it("doesn't re-run applied migrations when it starts again", async () => {
@@ -354,16 +365,15 @@ describe("worker", () => {
       expect(await restarted.stop()).toBe(0);
     }, 150_000);
 
-    it("runs a Delivery's job again when the worker was killed during the send", async () => {
-      // A first run creates the queue and is killed, so the job waits with no worker to take it.
-      await (await startWorker(postgres.url)).kill();
+    /** A Delivery of a captured Item to a new Destination of that type, with its job queued. */
+    async function queueDelivery(type: "email" | "telegram") {
       const itemId = await captureItem();
       const found = await db.query.item.findFirst({ where: eq(item.id, itemId) });
-      const [mail] = await db
+      const [target] = await db
         .insert(destination)
-        .values({ workspaceId: found?.workspaceId ?? "", type: "email", name: "me", confirmedAt: new Date() })
+        .values({ workspaceId: found?.workspaceId ?? "", type, name: "me", confirmedAt: new Date() })
         .returning();
-      const destinationId = mail?.id ?? "";
+      const destinationId = target?.id ?? "";
       const [saved] = await db
         .insert(action)
         .values({
@@ -384,6 +394,30 @@ describe("worker", () => {
         .returning();
       const deliveryId = row?.id ?? "";
       await db.transaction((tx) => deliveryEnqueuer(boss)(tx, [deliveryId]));
+      return { itemId, deliveryId };
+    }
+
+    it("starts without a Telegram bot, and a Telegram Delivery's Log says the bot isn't set up", async () => {
+      await (await startWorker(postgres.url)).kill();
+      const { itemId } = await queueDelivery("telegram");
+
+      const worker = await startWorker(postgres.url);
+      await vi.waitFor(
+        async () => {
+          const rows = await db.select().from(itemLog).where(eq(itemLog.itemId, itemId));
+          expect(rows.map((row) => row.message)).toEqual(
+            expect.arrayContaining([expect.stringMatching(/^Sending to me failed: the Telegram bot isn't set up/)]),
+          );
+        },
+        { timeout: 90_000, interval: 250 },
+      );
+      expect(await worker.stop()).toBe(0);
+    }, 150_000);
+
+    it("runs a Delivery's job again when the worker was killed during the send", async () => {
+      // A first run creates the queue and is killed, so the job waits with no worker to take it.
+      await (await startWorker(postgres.url)).kill();
+      const { deliveryId } = await queueDelivery("email");
       const deliveryJob = async () =>
         (
           await db.$client.query<{ state: string }>(
