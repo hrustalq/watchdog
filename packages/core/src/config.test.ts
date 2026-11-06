@@ -73,6 +73,16 @@ describe("loadConfig", () => {
     );
   });
 
+  it("reads the alert sender address, which is absent unless it's set", () => {
+    const alertFrom = "Watchdog alerts <alerts@example.com>";
+    expect(loadConfig({ ...minimal, ...smtp, SMTP_ALERT_FROM: alertFrom }).smtp?.alertFrom).toBe(alertFrom);
+    expect(loadConfig({ ...minimal, ...smtp }).smtp?.alertFrom).toBeUndefined();
+  });
+
+  it("refuses an alert sender address without the rest of SMTP", () => {
+    expect(() => loadConfig({ ...minimal, SMTP_ALERT_FROM: "alerts@example.com" })).toThrow(/SMTP_ALERT_FROM/);
+  });
+
   it("does not turn SMTP on from SMTP_PORT alone", () => {
     expect(loadConfig({ ...minimal, SMTP_PORT: "2525" }).smtp).toBeUndefined();
   });

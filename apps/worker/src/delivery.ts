@@ -1,10 +1,11 @@
 // Sends each Delivery in its own job (docs: Actions and delivery, "Deliveries"; ADR 0028).
-import { deliver, type DeliverDeps, type ProcessItemDeps, releaseDueDeliveries } from "@watchdog/core";
+import { deliver, type DeliverDeps, type EmailCap, type ProcessItemDeps, releaseDueDeliveries } from "@watchdog/core";
 import { type Db, sql } from "@watchdog/db";
 import { fromDrizzle, type PgBoss } from "pg-boss";
 
 export const deliverQueue = "deliver";
 const sweepQueue = "deliver-sweep";
+const capNoticeQueue = "email-cap-notice";
 
 /** Queues one job per new Delivery over the Act stage's transaction, so they commit or roll back together. */
 export function deliveryEnqueuer(boss: PgBoss): ProcessItemDeps["enqueueDeliveries"] {
@@ -19,9 +20,9 @@ export function deliveryEnqueuer(boss: PgBoss): ProcessItemDeps["enqueueDeliveri
 
 // A failed send is recorded by `deliver`, which queues its own retry, so these retries are for a job
 // that couldn't finish: its worker died, or the database went away. As many as a Delivery has attempts,
-// so a run of crashes doesn't strand a row. A request through the egress guard takes 30 seconds, but
-// nodemailer's defaults let a stalled SMTP send take 12.5 minutes, so a job still active after 15 belongs
-// to a worker that died. pg-boss deletes a job left waiting past its retention, so a long outage keeps it
+// so a run of crashes doesn't strand a row. A request through the egress guard takes 30 seconds and the
+// Mailer's timeouts keep a stalled SMTP send to minutes, so a job still active after 15 belongs to a
+// worker that died. pg-boss deletes a job left waiting past its retention, so a long outage keeps it
 // as long as the Delivery's own 30 days.
 const queueOptions = {
   retryLimit: 12,
@@ -35,6 +36,20 @@ const queueOptions = {
 export async function createDeliveryQueue(boss: PgBoss) {
   await boss.createQueue(deliverQueue, queueOptions);
   await boss.updateQueue(deliverQueue, queueOptions);
+}
+
+/** The notice's job commits with the hold it's about, and pg-boss retries it, so it's neither lost nor repeated. */
+export function capNoticeQueuer(boss: PgBoss): EmailCap {
+  return {
+    queueNotice: async (tx, workspaceId) => {
+      await boss.insert(capNoticeQueue, [{ data: { workspaceId } }], { db: fromDrizzle(tx, sql) });
+    },
+  };
+}
+
+export async function createCapNoticeQueue(boss: PgBoss) {
+  await boss.createQueue(capNoticeQueue, queueOptions);
+  await boss.updateQueue(capNoticeQueue, queueOptions);
 }
 
 /**
@@ -53,7 +68,13 @@ export async function enqueueDueDeliveries(db: Db, boss: PgBoss) {
 export async function startDelivery(
   db: Db,
   boss: PgBoss,
-  deps: Pick<DeliverDeps, "senders" | "appUrl">,
+  {
+    sendCapNotice,
+    ...deps
+  }: Pick<DeliverDeps, "senders" | "appUrl"> & {
+    /** Only hosted has the email cap, and so a notice about it. */
+    sendCapNotice?: (workspaceId: string) => Promise<void>;
+  },
 ) {
   await createDeliveryQueue(boss);
   await boss.createQueue(sweepQueue);
@@ -65,12 +86,25 @@ export async function startDelivery(
     if (job === undefined) return;
     const { deliveryId } = job.data;
     try {
-      await deliver(db, deliveryId, { ...deps, retryDelivery });
+      await deliver(db, deliveryId, { ...deps, retryDelivery, ...(sendCapNotice && { emailCap: capNoticeQueuer(boss) }) });
     } catch (error) {
       console.error(`Sending Delivery ${deliveryId} failed:`, error);
       throw error;
     }
   });
+
+  if (sendCapNotice) {
+    await createCapNoticeQueue(boss);
+    await boss.work<{ workspaceId: string }>(capNoticeQueue, async ([job]) => {
+      if (job === undefined) return;
+      try {
+        await sendCapNotice(job.data.workspaceId);
+      } catch (error) {
+        console.error(`Sending the email cap notice for Workspace ${job.data.workspaceId} failed:`, error);
+        throw error;
+      }
+    });
+  }
 
   // pg-boss runs a schedule once a minute however many workers there are. The first sweep doesn't wait
   // for it, so what came due while no worker ran goes at once.

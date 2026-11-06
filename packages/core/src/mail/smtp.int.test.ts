@@ -51,4 +51,19 @@ describe("createMailer with SMTP", () => {
     expect(list.messages[0]?.Subject).toBe("Sign in to Watchdog");
     expect(list.messages[0]?.To.map((to) => to.Address)).toEqual(["alice@example.com"]);
   }, 60_000);
+
+  it("sends from the message's own address when it has one, and from SMTP_FROM otherwise", async () => {
+    const mailer = createMailer({ mode: "self-hosted", smtp: smtp() });
+
+    await mailer.send({ to: "bob@example.com", subject: "From SMTP_FROM", text: "A" });
+    await mailer.send({ to: "bob@example.com", subject: "From alerts", text: "B", from: "alerts@example.com" });
+
+    const api = `http://${mailpit.getHost()}:${String(mailpit.getMappedPort(8025))}/api/v1`;
+    const list = z
+      .object({ messages: z.array(z.object({ Subject: z.string(), From: z.object({ Address: z.string() }) })) })
+      .parse(await (await fetch(`${api}/messages`)).json());
+    const fromOf = (subject: string) => list.messages.find((sent) => sent.Subject === subject)?.From.Address;
+    expect(fromOf("From SMTP_FROM")).toBe("watchdog@example.com");
+    expect(fromOf("From alerts")).toBe("alerts@example.com");
+  }, 60_000);
 });

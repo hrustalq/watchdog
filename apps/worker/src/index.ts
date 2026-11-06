@@ -1,5 +1,13 @@
 import { rmSync, writeFileSync } from "node:fs";
-import { createAgentFetch, createEgressFetch, createTelegramSender, loadConfig } from "@watchdog/core";
+import {
+  createAgentFetch,
+  createEgressFetch,
+  createEmailSender,
+  createMailer,
+  createTelegramSender,
+  loadConfig,
+  sendEmailCapNotice,
+} from "@watchdog/core";
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { startDelivery } from "./delivery.ts";
@@ -36,7 +44,9 @@ const db = createDb(config.databaseUrl);
 // connections the pipeline and polls need.
 const deliveryDb = createDb(config.databaseUrl);
 const egressFetch = createEgressFetch(config);
-// #193 and #194 replace these. Until then an attempt fails, and the Item's Log says why.
+const mailer = createMailer(config);
+const alertFrom = config.smtp?.alertFrom;
+// #194 replaces this. Until then an attempt fails, and the Item's Log says why.
 const noSender = { send: () => Promise.reject(new Error("this type of Destination can't send yet")) };
 await startDelivery(deliveryDb, boss, {
   senders: {
@@ -44,10 +54,13 @@ await startDelivery(deliveryDb, boss, {
       fetch: egressFetch,
       encryptionKey: config.encryptionKey,
     }),
-    email: noSender,
+    email: createEmailSender(mailer, alertFrom),
     webhook: noSender,
   },
   appUrl: config.auth.url,
+  ...(config.mode === "hosted" && {
+    sendCapNotice: (workspaceId: string) => sendEmailCapNotice(deliveryDb, workspaceId, mailer, alertFrom),
+  }),
 });
 await startPipeline(db, boss, {
   fetch: createAgentFetch(config),

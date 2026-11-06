@@ -44,6 +44,8 @@ const schema = z
       .optional(),
     // Not in the SMTP group: a port alone doesn't turn mail on.
     SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+    // Not in the SMTP group either: it's optional within it.
+    SMTP_ALERT_FROM: z.string().optional(),
     google: z.object({ GOOGLE_CLIENT_ID: z.string(), GOOGLE_CLIENT_SECRET: z.string() }).optional(),
     github: z.object({ GITHUB_CLIENT_ID: z.string(), GITHUB_CLIENT_SECRET: z.string() }).optional(),
     // Goes into the Bot API's URL. The message can't repeat the value, which is a credential.
@@ -79,6 +81,11 @@ const schema = z
     when: (payload) =>
       payload.issues.every((issue) => !["WATCHDOG_MODE", "smtp"].includes(String(issue.path?.[0]))),
   })
+  .refine((env) => env.SMTP_ALERT_FROM === undefined || env.smtp !== undefined, {
+    path: ["SMTP_ALERT_FROM"],
+    error: "needs SMTP_HOST, SMTP_USER, SMTP_PASSWORD and SMTP_FROM to be set too",
+    when: (payload) => payload.issues.every((issue) => String(issue.path?.[0]) !== "smtp"),
+  })
   .refine(
     (env) => env.WATCHDOG_MODE !== "hosted" || !env.WATCHDOG_ENCRYPTION_KEY.equals(placeholderKey),
     {
@@ -97,6 +104,7 @@ const schema = z
       user: env.smtp.SMTP_USER,
       password: env.smtp.SMTP_PASSWORD,
       from: env.smtp.SMTP_FROM,
+      ...(env.SMTP_ALERT_FROM !== undefined && { alertFrom: env.SMTP_ALERT_FROM }),
     },
     oauth: {
       google: env.google && oauth(env.google.GOOGLE_CLIENT_ID, env.google.GOOGLE_CLIENT_SECRET),

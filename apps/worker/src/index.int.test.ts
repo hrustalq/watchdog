@@ -371,7 +371,13 @@ describe("worker", () => {
       const found = await db.query.item.findFirst({ where: eq(item.id, itemId) });
       const [target] = await db
         .insert(destination)
-        .values({ workspaceId: found?.workspaceId ?? "", type, name: "me", confirmedAt: new Date() })
+        .values({
+          workspaceId: found?.workspaceId ?? "",
+          type,
+          name: "me",
+          config: type === "email" ? { address: "me@example.com" } : {},
+          confirmedAt: new Date(),
+        })
         .returning();
       const destinationId = target?.id ?? "";
       const [saved] = await db
@@ -452,12 +458,11 @@ describe("worker", () => {
       await boss.supervise(deliverQueue);
 
       const restarted = await startWorker(postgres.url);
-      // The worker's senders can't send yet, so the retried job's attempt is a recorded failure.
+      // Without SMTP the Mailer prints the mail, which is how a self-hosted alert still shows up somewhere.
       await vi.waitFor(
         async () => {
           const attempted = await db.query.delivery.findFirst({ where: eq(delivery.id, deliveryId) });
-          expect(attempted?.attempts).toBe(1);
-          expect(attempted?.nextAttemptAt).not.toBeNull();
+          expect(attempted).toMatchObject({ status: "sent", attempts: 1 });
         },
         { timeout: 90_000, interval: 250 },
       );

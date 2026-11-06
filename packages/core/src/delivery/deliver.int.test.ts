@@ -147,6 +147,7 @@ describe("deliver", () => {
       title: "A security advisory",
       source: "Hacker News",
       rating: "Severity 5, Importance 3",
+      severity: 5,
       summary: "Patch now.",
       link: `https://watchdog.test/items/${seeded.itemId}`,
       why: "Severity is at least 4",

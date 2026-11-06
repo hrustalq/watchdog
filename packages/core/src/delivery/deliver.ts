@@ -24,6 +24,7 @@ import { storableMessage } from "../agent/call-agent.ts";
 import { actionSchema } from "../rules/schema.ts";
 import { conditionToWords } from "../rules/words.ts";
 import { alertContent, type AlertMessage } from "./content.ts";
+import { capReason, type EmailCap, emailCapEnd, queueCapNoticeOnce, takeEmailCapTurn } from "./email-cap.ts";
 import { type GroupedAlert, groupedAlert } from "./group.ts";
 import { localTime, scheduleDelivery } from "./schedule-delivery.ts";
 
@@ -62,6 +63,8 @@ export interface DeliverDeps {
    * lets the Log say when the retry is and the last one land on the 24 hour mark.
    */
   retryDelivery: (tx: Tx, deliveryId: string, at: Date) => Promise<void>;
+  /** The hosted daily cap on alert mail. Self-hosted has none. */
+  emailCap?: EmailCap;
   now?: () => Date;
 }
 
@@ -158,9 +161,29 @@ async function record(
 }
 
 /** Holds or groups the alerts that can't go now, and returns the ones that can. */
-async function applySchedule(tx: Tx, due: DueDelivery[], target: Destination, now: Date) {
+async function applySchedule(
+  tx: Tx,
+  due: DueDelivery[],
+  target: Destination,
+  now: Date,
+  cap: EmailCap | undefined,
+) {
+  const emailCap = target.type === "email" ? cap : undefined;
+  if (emailCap !== undefined) await takeEmailCapTurn(tx, target.workspaceId);
   const [settings] = await tx.select().from(workspace).where(eq(workspace.id, target.workspaceId));
   if (settings === undefined) return [];
+
+  const hold = (row: DueDelivery, until: Date, reason: string, groupId: string | null) =>
+    record(
+      tx,
+      row,
+      target,
+      { status: groupId === null ? "held" : "grouped", nextAttemptAt: until, retryFrom: until, groupId },
+      {
+        message: `Held until ${localTime(until, settings.timezone)}: ${reason}`,
+        data: { heldUntil: until.toISOString() },
+      },
+    );
 
   // One time for each message, because the rows of a Grouped alert count as one.
   const sends = await tx
@@ -185,8 +208,11 @@ async function applySchedule(tx: Tx, due: DueDelivery[], target: Destination, no
       sending.push(row);
       continue;
     }
-    const grouped = decision.kind === "group";
-    if (grouped && groupId === undefined) {
+    if (decision.kind === "hold") {
+      await hold(row, decision.until, decision.reason, null);
+      continue;
+    }
+    if (groupId === undefined) {
       const [open] = await tx
         .select({ groupId: delivery.groupId })
         .from(delivery)
@@ -194,23 +220,16 @@ async function applySchedule(tx: Tx, due: DueDelivery[], target: Destination, no
         .limit(1);
       groupId = open?.groupId ?? crypto.randomUUID();
     }
-    await record(
-      tx,
-      row,
-      target,
-      {
-        status: grouped ? "grouped" : "held",
-        nextAttemptAt: decision.until,
-        retryFrom: decision.until,
-        groupId: grouped ? groupId : null,
-      },
-      {
-        message: `Held until ${localTime(decision.until, settings.timezone)}: ${grouped ? "burst window" : decision.reason}`,
-        data: { heldUntil: decision.until.toISOString() },
-      },
-    );
+    await hold(row, decision.until, "burst window", groupId);
   }
-  return sending;
+
+  // Last, because a mail another setting holds back isn't one of the day's 50 yet.
+  if (emailCap === undefined || sending.length === 0) return sending;
+  const capEnd = await emailCapEnd(tx, settings, now);
+  if (capEnd === undefined) return sending;
+  for (const row of sending) await hold(row, capEnd, capReason, null);
+  await queueCapNoticeOnce(tx, settings, capEnd, emailCap);
+  return [];
 }
 
 /**
@@ -350,7 +369,7 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
     await releaseDueDeliveries(tx, eq(delivery.destinationId, target.id));
     const due = await loadDue(tx, eq(delivery.destinationId, target.id));
     if (due.length === 0) return;
-    const sending = await applySchedule(tx, due, target, now());
+    const sending = await applySchedule(tx, due, target, now(), deps.emailCap);
     await send(sending, target, deps, now, (write) => write(tx));
   });
 }

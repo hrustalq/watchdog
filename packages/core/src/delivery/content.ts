@@ -6,6 +6,7 @@ export interface AlertMessage {
   source: string;
   /** The Rating in words, or "unrated". */
   rating: string;
+  severity: number | null;
   summary: string | null;
   /** The Item in Watchdog, which an Item without a URL has too. */
   link: string;
@@ -34,5 +35,5 @@ export function itemHeadline(item: Omit<AlertItem, "summary">, appUrl: string) {
 }
 
 export function alertContent(item: AlertItem, source: string, why: string, appUrl: string): AlertMessage {
-  return { ...itemHeadline(item, appUrl), source, summary: item.summary, why };
+  return { ...itemHeadline(item, appUrl), severity: item.severity, source, summary: item.summary, why };
 }

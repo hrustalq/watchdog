@@ -31,6 +31,8 @@ export const workspace = pgTable(
     severity5BypassesQuietHours: boolean("severity_5_bypasses_quiet_hours").notNull().default(false),
     alertsPerHour: integer("alerts_per_hour").notNull().default(20),
     burstWindowSeconds: integer("burst_window_seconds").notNull().default(60),
+    /** The end of the local day whose hosted email cap notice has gone, so there's one a day. */
+    emailCapNoticeUntil: timestamp("email_cap_notice_until", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
