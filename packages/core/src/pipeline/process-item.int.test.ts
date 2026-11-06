@@ -1,5 +1,7 @@
 import { readFileSync } from "node:fs";
 import {
+  action,
+  actionDestination,
   agentCall,
   and,
   classifier,
@@ -7,6 +9,9 @@ import {
   correction,
   createDb,
   type Db,
+  delivery,
+  destination,
+  digestItem,
   eq,
   extractorRule,
   item,
@@ -26,6 +31,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { type FakeTurn, fakeLlm } from "../agent/fake-llm.ts";
 import { pollSource } from "./capture.ts";
+import { runExtractorRuleByHand } from "./manual-run.ts";
 import { processItem } from "./process-item.ts";
 
 /** The value, which the test expects to be there. */
@@ -40,7 +46,8 @@ const requestSchema = z.object({ messages: z.array(z.object({ role: z.string(), 
 
 const encryptionKey = Buffer.alloc(32, 7);
 /** For an Item with no call to make: the fake model throws on any request. */
-const deps = { agent: { fetch: fakeLlm("openai-compatible", []).fetch, encryptionKey } };
+const noJobs = { enqueueDeliveries: () => Promise.resolve() };
+const deps = { ...noJobs, agent: { fetch: fakeLlm("openai-compatible", []).fetch, encryptionKey } };
 
 const rated = {
   summary: "A short summary",
@@ -148,7 +155,7 @@ describe("processItem", () => {
    */
   function answering(...turns: FakeTurn[]) {
     const fake = fakeLlm("openai-compatible", [...turns, { json: rated }]);
-    return { ...fake, deps: { agent: { fetch: fake.fetch, encryptionKey } } };
+    return { ...fake, deps: { ...noJobs, agent: { fetch: fake.fetch, encryptionKey } } };
   }
 
   const callsOf = (itemId: string, purpose: "classify" | "extract-rate" = "classify") =>
@@ -772,7 +779,7 @@ describe("processItem", () => {
         return fake.fetch(input, init);
       };
 
-      await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+      await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
 
       const calls = await db.select().from(agentCall).where(eq(agentCall.workspaceId, seeded.workspaceId));
       expect(calls).toMatchObject([{ itemId: null, purpose: "classify", status: "ok" }]);
@@ -887,7 +894,7 @@ describe("processItem", () => {
           return fake.fetch(input, init);
         };
 
-        await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+        await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
 
         expect(await categoriesOf(itemId)).toEqual([]);
         expect(await classifyLog(itemId)).toMatchObject([
@@ -1308,7 +1315,7 @@ describe("processItem", () => {
         return fake.fetch(input, init);
       };
 
-      await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+      await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
 
       expect(await reload(itemId)).toMatchObject({ severity: rated.severity, summary: rated.summary });
       expect((await fieldsOf(itemId)).map((row) => row.name)).toEqual(["plan"]);
@@ -1327,7 +1334,7 @@ describe("processItem", () => {
         return fake.fetch(input, init);
       };
 
-      await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+      await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
 
       expect(await fieldsOf(itemId)).toEqual([]);
       expect(await logOf(itemId, "extract")).toEqual([]);
@@ -1378,7 +1385,7 @@ describe("processItem", () => {
           return fake.fetch(input, init);
         };
 
-        await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+        await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
 
         const finished = await reload(itemId);
         expect(finished).toMatchObject({ ...corrected, summary: rated.summary, ratedAt: null });
@@ -1437,7 +1444,7 @@ describe("processItem", () => {
           return fake.fetch(input, init);
         };
 
-        await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+        await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
 
         expect(await summariesOf(seeded.workspaceId)).toEqual([{ kind: "rating", itemId, summary: rated.summary }]);
         expect((await logOf(itemId, "rate"))[0]?.message).toContain("dropped");
@@ -1543,7 +1550,7 @@ describe("processItem", () => {
         return fake.fetch(input, init);
       };
 
-      await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+      await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
 
       const calls = await db.select().from(agentCall).where(eq(agentCall.workspaceId, seeded.workspaceId));
       expect(calls).toMatchObject([{ itemId: null, purpose: "extract-rate", status: "ok" }]);
@@ -1961,6 +1968,457 @@ describe("processItem", () => {
       await processItem(db, itemId, deps);
 
       expect((await fieldsOf(itemId)).map((row) => row.value)).toEqual([expected]);
+    });
+  });
+
+  describe("the Act stage", () => {
+    const advisory = { field: "category", op: "is", value: "advisory" };
+    const severeEnough = { field: "severity", op: "gte", value: 2 };
+
+    /** A Classifier that makes every Item with "advisory" in its title an advisory. */
+    const sortAdvisories = (seeded: Seeded) =>
+      saveClassifier(seeded, "advisories", deterministic("advisories", titleContains("advisory"), ["advisory"]));
+
+    async function addDestination(
+      seeded: Seeded,
+      name: string,
+      { type = "email", confirmed = true }: { type?: "email" | "telegram" | "webhook"; confirmed?: boolean } = {},
+    ) {
+      const [created] = await db
+        .insert(destination)
+        .values({ workspaceId: seeded.workspaceId, type, name, confirmedAt: confirmed ? new Date() : null })
+        .returning();
+      return present(created).id;
+    }
+
+    async function saveAction(
+      seeded: Seeded,
+      name: string,
+      when: unknown,
+      destinationIds: string[],
+      { kind = "alert", enabled = true }: { kind?: "alert" | "webhook" | "digest"; enabled?: boolean } = {},
+    ) {
+      const schedule = kind === "digest" ? { schedule: "0 9 * * 1" } : {};
+      const definition = { action: name, when, kind, ...schedule, destinations: destinationIds };
+      const [created] = await db
+        .insert(action)
+        .values({ workspaceId: seeded.workspaceId, name, kind, definition, enabled })
+        .returning();
+      const actionId = present(created).id;
+      await db.insert(actionDestination).values(destinationIds.map((destinationId) => ({ actionId, destinationId })));
+      return actionId;
+    }
+
+    const deliveriesOf = (itemId: string) => db.select().from(delivery).where(eq(delivery.itemId, itemId));
+    const digestRowsOf = (itemId: string) => db.select().from(digestItem).where(eq(digestItem.itemId, itemId));
+    const actLog = (itemId: string) =>
+      db
+        .select()
+        .from(itemLog)
+        .where(and(eq(itemLog.itemId, itemId), eq(itemLog.stage, "act")))
+        .orderBy(itemLog.id);
+    const sentences = async (itemId: string) => (await actLog(itemId)).map((row) => row.message);
+
+    /** The deps, keeping the Delivery ids each transaction queued. */
+    function recordingJobs(base: Parameters<typeof processItem>[2] = deps) {
+      const queued: string[][] = [];
+      return {
+        queued,
+        deps: {
+          ...base,
+          enqueueDeliveries: (_tx: unknown, deliveryIds: string[]) => {
+            queued.push(deliveryIds);
+            return Promise.resolve();
+          },
+        },
+      };
+    }
+
+    const noMatch = ["No Action matched"];
+    const fieldValues = async (itemId: string) =>
+      (await db.select().from(itemField).where(eq(itemField.itemId, itemId))).map((row) => row.value);
+
+    it("with no model, fires a Category-only Action: one Delivery per Destination, one Log row", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const chat = await addDestination(seeded, "ops-chat", { type: "telegram" });
+      const mail = await addDestination(seeded, "me");
+      const actionId = await saveAction(seeded, "critical", advisory, [chat, mail]);
+      const itemId = await capture(seeded, "A security advisory");
+      const jobs = recordingJobs();
+
+      await processItem(db, itemId, jobs.deps);
+
+      const deliveries = await deliveriesOf(itemId);
+      expect(deliveries.map((row) => row.destinationId).sort()).toEqual([chat, mail].sort());
+      expect(deliveries.every((row) => row.actionId === actionId && row.status === "queued")).toBe(true);
+      expect(jobs.queued.flat().sort()).toEqual(deliveries.map((row) => row.id).sort());
+      expect(await actLog(itemId)).toMatchObject([
+        {
+          message: "Action critical fired: Category is advisory. Queued for me, ops-chat",
+          data: {
+            actionId,
+            action: "critical",
+            kind: "alert",
+            condition: "Category is advisory",
+            destinations: ["me", "ops-chat"],
+          },
+        },
+      ]);
+      expect((await reload(itemId)).processedAt).not.toBeNull();
+    });
+
+    it("says no Action matched when none did, and when the Workspace has none", async () => {
+      const seeded = await seed();
+      await saveAction(seeded, "critical", advisory, [await addDestination(seeded, "me")]);
+      const itemId = await capture(seeded, "Nothing special");
+
+      await processItem(db, itemId, deps);
+      expect(await deliveriesOf(itemId)).toEqual([]);
+      expect(await sentences(itemId)).toEqual(noMatch);
+
+      const elsewhere = await capture(await seed(), "No Actions at all");
+      await processItem(db, elsewhere, deps);
+      expect(await sentences(elsewhere)).toEqual(noMatch);
+    });
+
+    it("doesn't hold `not` on the Rating for an unrated Item", async () => {
+      const seeded = await seed();
+      await saveAction(seeded, "mild", { not: { field: "severity", op: "gte", value: 4 } }, [
+        await addDestination(seeded, "me"),
+      ]);
+      const itemId = await capture(seeded, "Anything");
+
+      await processItem(db, itemId, deps);
+
+      expect(await deliveriesOf(itemId)).toEqual([]);
+      expect(await sentences(itemId)).toEqual(noMatch);
+    });
+
+    it("fires nothing for a Backfill Item, rated or not, and the Log says why", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const me = await addDestination(seeded, "me");
+      await saveAction(seeded, "critical", advisory, [me]);
+      await saveAction(seeded, "weekly", advisory, [me], { kind: "digest" });
+      const itemId = await capture(seeded, "An old security advisory", true);
+
+      await processItem(db, itemId, deps);
+
+      expect(await deliveriesOf(itemId)).toEqual([]);
+      expect(await digestRowsOf(itemId)).toEqual([]);
+      expect(await sentences(itemId)).toEqual(["No Action fired: this Item came from a Backfill"]);
+    });
+
+    it("doesn't fire an Action saved or edited after the Item's capture", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const me = await addDestination(seeded, "me");
+      const edited = await saveAction(seeded, "edited", advisory, [me]);
+      const itemId = await capture(seeded, "A security advisory");
+      await db.update(action).set({ name: "edited-later" }).where(eq(action.id, edited));
+      await saveAction(seeded, "saved-later", advisory, [me]);
+
+      await processItem(db, itemId, deps);
+
+      expect(await deliveriesOf(itemId)).toEqual([]);
+      expect(await sentences(itemId)).toEqual(noMatch);
+    });
+
+    it("doesn't fire a disabled Action", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      await saveAction(seeded, "off", advisory, [await addDestination(seeded, "me")], { enabled: false });
+      const itemId = await capture(seeded, "A security advisory");
+
+      await processItem(db, itemId, deps);
+
+      expect(await deliveriesOf(itemId)).toEqual([]);
+    });
+
+    it("leaves one Delivery per Destination and queues no second job when the job runs twice", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const me = await addDestination(seeded, "me");
+      await saveAction(seeded, "critical", advisory, [me]);
+      const itemId = await capture(seeded, "A security advisory");
+      const jobs = recordingJobs();
+
+      await processItem(db, itemId, jobs.deps);
+      await processItem(db, itemId, jobs.deps);
+
+      expect(await deliveriesOf(itemId)).toHaveLength(1);
+      expect(jobs.queued).toHaveLength(1);
+      expect(await actLog(itemId)).toHaveLength(1);
+    });
+
+    it("queues no job for a Delivery or Digest row that already exists", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const me = await addDestination(seeded, "me");
+      await saveAction(seeded, "critical", advisory, [me]);
+      await saveAction(seeded, "weekly", advisory, [me], { kind: "digest" });
+      const itemId = await capture(seeded, "A security advisory");
+      await processItem(db, itemId, deps);
+      // Nothing clears processed_at today, so this forces the unique keys to be what stops a repeat.
+      await db.update(item).set({ processedAt: null }).where(eq(item.id, itemId));
+      const jobs = recordingJobs();
+
+      await processItem(db, itemId, jobs.deps);
+
+      expect(await deliveriesOf(itemId)).toHaveLength(1);
+      expect(await digestRowsOf(itemId)).toHaveLength(1);
+      expect(jobs.queued.flat()).toEqual([]);
+    });
+
+    it("rolls the Deliveries and processed_at back together when queueing fails, so the retry fires", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      await saveAction(seeded, "critical", advisory, [await addDestination(seeded, "me")]);
+      const itemId = await capture(seeded, "A security advisory");
+
+      await expect(
+        processItem(db, itemId, { ...deps, enqueueDeliveries: () => Promise.reject(new Error("queue down")) }),
+      ).rejects.toThrow("queue down");
+      expect(await deliveriesOf(itemId)).toEqual([]);
+      expect(await actLog(itemId)).toEqual([]);
+      expect((await reload(itemId)).processedAt).toBeNull();
+
+      const jobs = recordingJobs();
+      await processItem(db, itemId, jobs.deps);
+      expect(await deliveriesOf(itemId)).toHaveLength(1);
+      expect(jobs.queued.flat()).toHaveLength(1);
+    });
+
+    it("waits for the call to work: a failed attempt fires nothing, and its retry fires once", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await sortAdvisories(seeded);
+      await saveAction(seeded, "critical", advisory, [await addDestination(seeded, "me")]);
+      const itemId = await capture(seeded, "A security advisory");
+
+      await expect(processItem(db, itemId, answering({ status: 400 }).deps)).rejects.toThrow();
+      expect(await deliveriesOf(itemId)).toEqual([]);
+      expect(await actLog(itemId)).toEqual([]);
+
+      await processItem(db, itemId, answering().deps);
+      expect(await deliveriesOf(itemId)).toHaveLength(1);
+      expect(await actLog(itemId)).toHaveLength(1);
+    });
+
+    it("on an Item out of retries, fires a Category-only Action and not a Rating one", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await sortAdvisories(seeded);
+      const me = await addDestination(seeded, "me");
+      const categoryOnly = await saveAction(seeded, "critical", advisory, [me]);
+      await saveAction(seeded, "severe", severeEnough, [me]);
+      const itemId = await capture(seeded, "A security advisory");
+      const jobs = recordingJobs(answering({ status: 400 }).deps);
+
+      await expect(processItem(db, itemId, { ...jobs.deps, lastAttempt: true })).rejects.toThrow();
+
+      const finished = await reload(itemId);
+      expect(finished.severity).toBeNull();
+      expect(finished.processedAt).not.toBeNull();
+      expect((await deliveriesOf(itemId)).map((row) => row.actionId)).toEqual([categoryOnly]);
+      expect(jobs.queued.flat()).toHaveLength(1);
+      expect(await sentences(itemId)).toEqual(["Action critical fired: Category is advisory. Queued for me"]);
+    });
+
+    it("does nothing on a last attempt for an Item that has finished or gone", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      await saveAction(seeded, "critical", advisory, [await addDestination(seeded, "me")]);
+      const finished = await capture(seeded, "A security advisory");
+      await processItem(db, finished, deps);
+
+      await processItem(db, finished, { ...deps, lastAttempt: true });
+      await processItem(db, crypto.randomUUID(), { ...deps, lastAttempt: true });
+
+      expect(await deliveriesOf(finished)).toHaveLength(1);
+      expect(await actLog(finished)).toHaveLength(1);
+    });
+
+    it("sees the Rating and the fields stored in the same transaction", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await db.insert(extractorRule).values({
+        workspaceId: seeded.workspaceId,
+        name: "versions",
+        kind: "deterministic",
+        definition: {
+          extractor: "versions",
+          when: titleContains("advisory"),
+          fields: [{ name: "version", type: "string", from: "title", regex: "v(\\d+)" }],
+        },
+      });
+      const me = await addDestination(seeded, "me");
+      await saveAction(seeded, "severe", severeEnough, [me]);
+      await saveAction(seeded, "versioned", { field: "fields.version", op: "is", value: "2" }, [me]);
+      await saveAction(seeded, "other-version", { field: "fields.version", op: "is", value: "3" }, [me]);
+      await saveAction(seeded, "wrong-type", { field: "fields.version", op: "is", value: 2 }, [me]);
+      const itemId = await capture(seeded, "An advisory for v2");
+
+      await processItem(db, itemId, answering().deps);
+
+      expect(await sentences(itemId)).toEqual([
+        "Action severe fired: Severity is at least 2. Queued for me",
+        "Action versioned fired: Field version is 2. Queued for me",
+      ]);
+    });
+
+    it("tests the Source type and the Source's id", async () => {
+      const seeded = await seed();
+      const me = await addDestination(seeded, "me");
+      await saveAction(seeded, "from-rss", { field: "source.type", op: "is", value: "rss" }, [me]);
+      await saveAction(seeded, "from-blog", { field: "source", op: "is", value: seeded.sourceId }, [me]);
+      const itemId = await capture(seeded, "Anything");
+
+      await processItem(db, itemId, deps);
+
+      expect(await deliveriesOf(itemId)).toHaveLength(2);
+    });
+
+    it("collects an Item into a Digest: one row, no Delivery and no job", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const mail = await addDestination(seeded, "me");
+      const other = await addDestination(seeded, "team");
+      const actionId = await saveAction(seeded, "weekly", advisory, [mail, other], { kind: "digest" });
+      const itemId = await capture(seeded, "A security advisory");
+      const jobs = recordingJobs();
+
+      await processItem(db, itemId, jobs.deps);
+
+      expect(await digestRowsOf(itemId)).toEqual([{ actionId, itemId }]);
+      expect(await deliveriesOf(itemId)).toEqual([]);
+      expect(jobs.queued.flat()).toEqual([]);
+      expect(await sentences(itemId)).toEqual(["Action weekly fired: Category is advisory. Collected for me, team"]);
+    });
+
+    it("skips an Action whose definition no longer parses, notes it and runs the others", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const me = await addDestination(seeded, "me");
+      const broken = await saveAction(seeded, "broken", { field: "nonsense", op: "is", value: 1 }, [me]);
+      const fine = await saveAction(seeded, "fine", advisory, [me]);
+      const itemId = await capture(seeded, "A security advisory");
+
+      await processItem(db, itemId, deps);
+
+      expect((await deliveriesOf(itemId)).map((row) => row.actionId)).toEqual([fine]);
+      const [skipped, fired, ...rest] = await actLog(itemId);
+      expect(rest).toEqual([]);
+      expect(fired?.message).toBe("Action fine fired: Category is advisory. Queued for me");
+      expect(skipped).toMatchObject({
+        message: "Skipped Action broken: its definition no longer parses",
+        data: { actionId: broken, action: "broken" },
+      });
+    });
+
+    it("skips only the unconfirmed Destination, and names it", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const chat = await addDestination(seeded, "ops-chat", { type: "telegram" });
+      const waiting = await addDestination(seeded, "new-address", { confirmed: false });
+      await saveAction(seeded, "critical", advisory, [chat, waiting]);
+      const itemId = await capture(seeded, "A security advisory");
+
+      await processItem(db, itemId, deps);
+
+      expect((await deliveriesOf(itemId)).map((row) => row.destinationId)).toEqual([chat]);
+      expect(await actLog(itemId)).toMatchObject([
+        {
+          message:
+            "Action critical fired: Category is advisory. Queued for ops-chat. Skipped new-address: not confirmed yet",
+          data: { destinations: ["ops-chat"], skipped: ["new-address"] },
+        },
+      ]);
+    });
+
+    it("writes nothing for an Action with no confirmed Destination, and doesn't call it unmatched", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const waiting = await addDestination(seeded, "new-address", { confirmed: false });
+      const unlinked = await addDestination(seeded, "new-chat", { type: "telegram", confirmed: false });
+      await saveAction(seeded, "critical", advisory, [waiting]);
+      await saveAction(seeded, "weekly", advisory, [unlinked], { kind: "digest" });
+      const itemId = await capture(seeded, "A security advisory");
+      const jobs = recordingJobs();
+
+      await processItem(db, itemId, jobs.deps);
+
+      expect(await deliveriesOf(itemId)).toEqual([]);
+      expect(await digestRowsOf(itemId)).toEqual([]);
+      expect(jobs.queued).toEqual([]);
+      expect(await sentences(itemId)).toEqual([
+        "Action critical didn't fire: it has no confirmed Destination. Skipped new-address: not confirmed yet",
+        "Action weekly didn't fire: it has no confirmed Destination. Skipped new-chat: not confirmed yet",
+      ]);
+    });
+
+    it("keeps the Log row a readable length when the Condition is long", async () => {
+      const seeded = await seed();
+      await saveAction(seeded, "long", { not: titleContains("x".repeat(2000)) }, [await addDestination(seeded, "me")]);
+      const itemId = await capture(seeded, "Anything");
+
+      await processItem(db, itemId, deps);
+
+      const [row] = await actLog(itemId);
+      expect(row?.message).toHaveLength(1000);
+    });
+
+    it("notes nothing about an unconfirmed Destination when the Condition doesn't hold", async () => {
+      const seeded = await seed();
+      await saveAction(seeded, "critical", advisory, [await addDestination(seeded, "new", { confirmed: false })]);
+      const itemId = await capture(seeded, "Nothing special");
+
+      await processItem(db, itemId, deps);
+
+      expect(await sentences(itemId)).toEqual(noMatch);
+    });
+
+    it("delivers to a webhook Destination, which has nothing to confirm", async () => {
+      const seeded = await seed();
+      await sortAdvisories(seeded);
+      const hook = await addDestination(seeded, "crm-inbox", { type: "webhook", confirmed: false });
+      await saveAction(seeded, "to-crm", advisory, [hook], { kind: "webhook" });
+      const itemId = await capture(seeded, "A security advisory");
+
+      await processItem(db, itemId, deps);
+
+      expect((await deliveriesOf(itemId)).map((row) => row.destinationId)).toEqual([hook]);
+    });
+
+    it("isn't reached by a manual Extractor Rule run", async () => {
+      const seeded = await seed();
+      const [rule] = await db
+        .insert(extractorRule)
+        .values({
+          workspaceId: seeded.workspaceId,
+          name: "versions",
+          kind: "deterministic",
+          enabled: false,
+          definition: {
+            extractor: "versions",
+            when: titleContains("v2"),
+            fields: [{ name: "version", type: "string", from: "title", regex: "v(\\d+)" }],
+          },
+        })
+        .returning();
+      await saveAction(seeded, "versioned", { field: "fields.version", op: "exists" }, [
+        await addDestination(seeded, "me"),
+      ]);
+      const itemId = await capture(seeded, "An advisory for v2");
+      await processItem(db, itemId, deps);
+
+      const run = { workspaceId: seeded.workspaceId, itemId, ruleId: present(rule).id };
+      await runExtractorRuleByHand(db, run, deps.agent);
+
+      expect(await fieldValues(itemId)).toHaveLength(1);
+      expect(await deliveriesOf(itemId)).toEqual([]);
+      expect(await sentences(itemId)).toEqual(noMatch);
     });
   });
 });

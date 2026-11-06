@@ -9,6 +9,7 @@ import { buildAgentPrompt, type PromptContext } from "../agent/prompt.ts";
 import { fieldKey, ratingSchema, ratingTask } from "../agent/rating.ts";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
 import { type AgentExtractorRule, agentExtractorRuleSchema } from "../rules/schema.ts";
+import { type ActDeps, finishItem } from "./act.ts";
 import { type AgentDeps, modelFor } from "./classify.ts";
 import { categoriesOf, logSkippedRule, storeExtraction, toExtraction } from "./extract.ts";
 import { logOnce, rulesFor } from "./rules-for-item.ts";
@@ -38,20 +39,6 @@ async function applyingRules(db: Db, target: ConditionItem & { id: string }) {
     }
   }
   return rules;
-}
-
-/** Commits `work` with `processed_at`, unless the Item is gone or another run already finished it. */
-async function finish(db: Db, itemId: string, now: () => Date, work: (tx: Tx) => Promise<void>) {
-  await db.transaction(async (tx) => {
-    const [row] = await tx
-      .select({ processedAt: item.processedAt })
-      .from(item)
-      .where(eq(item.id, itemId))
-      .for("update");
-    if (row?.processedAt !== null) return;
-    await work(tx);
-    await tx.update(item).set({ processedAt: now() }).where(eq(item.id, itemId));
-  });
 }
 
 /**
@@ -127,6 +114,7 @@ export async function runExtractAndRate(
   db: Db,
   target: Target,
   deps: AgentDeps,
+  act: ActDeps,
   now: () => Date,
 ): Promise<AgentFailure | undefined> {
   const { id: itemId, workspaceId } = target;
@@ -134,7 +122,7 @@ export async function runExtractAndRate(
   const model = await modelFor(db, itemId, workspaceId);
   if (model === undefined) {
     const message = "Not rated: this Workspace had no model to rate it with";
-    await finish(db, itemId, now, async (tx) => {
+    await finishItem(db, itemId, now, act, async (tx) => {
       await tx.insert(itemLog).values({ itemId, stage: "rate", message });
     });
     return undefined;
@@ -168,6 +156,6 @@ export async function runExtractAndRate(
     });
     return { ...result, message };
   }
-  await finish(db, itemId, now, (tx) => storeAnswer(tx, target, rules, result.output, now));
+  await finishItem(db, itemId, now, act, (tx) => storeAnswer(tx, target, rules, result.output, now));
   return undefined;
 }

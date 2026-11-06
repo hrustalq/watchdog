@@ -1,11 +1,12 @@
 // What happens to an Item after capture (docs: Processing pipeline, "Stages"). The worker's
 // process-item queue calls this once per captured Item.
-import { and, type Db, eq, isNull, item, source, type Tx } from "@watchdog/db";
+import { type Db, eq, item, source, type Tx } from "@watchdog/db";
+import { type ActDeps, finishItem } from "./act.ts";
 import { type AgentDeps, runAgentClassifiers, runDeterministicClassifiers } from "./classify.ts";
 import { runDeterministicExtractorRules } from "./extract.ts";
 import { runExtractAndRate } from "./rate.ts";
 
-export interface ProcessItemDeps {
+export interface ProcessItemDeps extends ActDeps {
   now?: () => Date;
   agent: AgentDeps;
   /** No retry follows this run, so a failed call still finishes the Item, which stays unrated. */
@@ -55,24 +56,20 @@ async function runStages(db: Db, itemId: string, deps: ProcessItemDeps, now: () 
   // The extract-and-rate call waits until classify succeeds (docs: Processing pipeline, "Failures").
   if (classifyFailure !== undefined) throw new Error(`The classify call failed: ${classifyFailure.message}`);
 
-  const rateFailure = await runExtractAndRate(db, unfinished, deps.agent, now);
+  const rateFailure = await runExtractAndRate(db, unfinished, deps.agent, deps, now);
   if (rateFailure !== undefined) throw new Error(`The extract-and-rate call failed: ${rateFailure.message}`);
 }
 
 /**
- * Runs an Item through the pipeline and sets `processed_at`, which makes a repeated run do nothing. A
- * last attempt sets it however the run ends, so nothing keeps the Item pending.
+ * Runs an Item through the pipeline, ending with the Act stage, and sets `processed_at`, which makes a
+ * repeated run do nothing. A last attempt finishes the Item however the run ends, so nothing keeps it
+ * pending.
  */
 export async function processItem(db: Db, itemId: string, deps: ProcessItemDeps): Promise<void> {
   const now = deps.now ?? (() => new Date());
   try {
     await runStages(db, itemId, deps, now);
   } finally {
-    if (deps.lastAttempt === true) {
-      await db
-        .update(item)
-        .set({ processedAt: now() })
-        .where(and(eq(item.id, itemId), isNull(item.processedAt)));
-    }
+    if (deps.lastAttempt === true) await finishItem(db, itemId, now, deps);
   }
 }

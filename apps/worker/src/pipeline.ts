@@ -5,6 +5,9 @@ import { fromDrizzle, type PgBoss } from "pg-boss";
 
 export const processItemQueue = "process-item";
 
+// Nothing sends a Delivery until #191 adds the deliver queue, which replaces this.
+const enqueueDeliveries: ProcessItemDeps["enqueueDeliveries"] = () => Promise.resolve();
+
 /** Queues one job per Item over the capture's transaction, so they commit or roll back together. */
 export function itemEnqueuer(boss: PgBoss): PollSourceDeps["enqueueItems"] {
   return async (tx, itemIds) => {
@@ -46,7 +49,7 @@ export async function startPipeline(db: Db, boss: PgBoss, agent: ProcessItemDeps
       if (job === undefined) return;
       const { itemId } = job.data;
       try {
-        await processItem(db, itemId, { agent, lastAttempt: job.retryCount >= job.retryLimit });
+        await processItem(db, itemId, { agent, enqueueDeliveries, lastAttempt: job.retryCount >= job.retryLimit });
       } catch (error) {
         console.error(`Processing Item ${itemId} failed:`, error);
         throw error;
