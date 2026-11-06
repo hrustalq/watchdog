@@ -4,6 +4,7 @@ import { EgressLimitError } from "../egress/egress.ts";
 import { encryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
 import { type Destination, FinalSendError, RetryAfterSendError } from "./deliver.ts";
+import { groupedAlert } from "./group.ts";
 import { createTelegramSender } from "./telegram.ts";
 
 const encryptionKey = Buffer.alloc(32, 7);
@@ -18,6 +19,12 @@ const message: AlertMessage = {
   link,
   why: "Severity is at least 4",
 };
+
+const group = (count: number, title = "An advisory") =>
+  groupedAlert(
+    Array.from({ length: count }, (_, index) => ({ id: String(index), title, severity: 4, importance: 3 })),
+    "https://watchdog.test",
+  );
 
 const unlinked: Destination = {
   id: "0a1b",
@@ -136,6 +143,27 @@ describe("createTelegramSender", () => {
       expect(textOf(telegram).isWellFormed()).toBe(true);
       expect(textOf(telegram).length).toBeLessThanOrEqual(4096);
     }
+  });
+
+  it("sends a Grouped alert as one message listing each Item", async () => {
+    const telegram = fakeTelegram();
+
+    await sender(telegram).send(chat(), group(25));
+
+    expect(telegram.requests).toHaveLength(1);
+    const lines = textOf(telegram).split("\n");
+    expect(lines[0]).toBe("25 alerts");
+    expect(lines.slice(1).filter((line) => line.includes("An advisory"))).toHaveLength(25);
+  });
+
+  it("cuts a Grouped alert at Telegram's limit, and links to the Feed for the rest", async () => {
+    const telegram = fakeTelegram();
+
+    await sender(telegram).send(chat(), group(50, "x".repeat(200)));
+
+    const text = textOf(telegram);
+    expect(text.length).toBeLessThanOrEqual(4096);
+    expect(text.split("\n").at(-1)).toMatch(/^and \d+ more: https:\/\/watchdog\.test\/$/);
   });
 
   it("names how long to wait when Telegram answers 429 with retry_after", async () => {

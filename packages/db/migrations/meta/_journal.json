@@ -71,6 +71,13 @@
       "when": 1793930770787,
       "tag": "0009_actions_destinations_deliveries",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794004767433,
+      "tag": "0010_delivery_groups",
+      "breakpoints": true
     }
   ]
 }

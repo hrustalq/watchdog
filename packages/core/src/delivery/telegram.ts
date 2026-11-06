@@ -6,6 +6,7 @@ import type { createEgressFetch } from "../egress/egress.ts";
 import { decryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
 import { FinalSendError, RetryAfterSendError, type Sender } from "./deliver.ts";
+import { groupedAlertText } from "./group.ts";
 
 const maxLength = 4096;
 // Telegram's limits are 1 message a second per chat and 30 a second across the bot. These leave a margin,
@@ -84,7 +85,7 @@ export function createTelegramSender(
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             chat_id: chatId,
-            text: alertText(message),
+            text: "lines" in message ? groupedAlertText(message, maxLength) : alertText(message),
             // Telegram would otherwise fetch and show the first URL in the text, which an Item's text can choose.
             link_preview_options: { is_disabled: true },
           }),

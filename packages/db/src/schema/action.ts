@@ -72,6 +72,10 @@ export const delivery = pgTable(
     attempts: integer("attempts").notNull().default(0),
     /** When a held or grouped Delivery goes, or a failed attempt is retried. */
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    /** The Grouped alert it waits for or went out in. The rows of one share it, and it counts as one message. */
+    groupId: uuid("group_id"),
+    /** When a hold ended, from which its 24 hours of retries run. Without a hold, they run from created_at. */
+    retryFrom: timestamp("retry_from", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     lastError: text("last_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -79,12 +83,16 @@ export const delivery = pgTable(
   (table) => [
     check("delivery_status_check", sql`${table.status} in ('queued', 'held', 'grouped', 'sent', 'failed')`),
     unique("delivery_action_id_item_id_destination_id_key").on(table.actionId, table.itemId, table.destinationId),
-    // The queue: what is due to a Destination and when, for grouping and the worker's sweep.
+    // The queue: what is due to a Destination and when, for grouping.
     index("delivery_destination_id_status_next_attempt_at_idx").on(
       table.destinationId,
       table.status,
       table.nextAttemptAt,
     ),
+    // The worker's sweep, which runs every minute over every Destination's few waiting rows.
+    index("delivery_waiting_next_attempt_at_idx")
+      .on(table.nextAttemptAt)
+      .where(sql`${table.status} in ('held', 'grouped')`),
     // The Log's view of an Item, and the cascade when the Item is deleted.
     index("delivery_item_id_idx").on(table.itemId),
   ],

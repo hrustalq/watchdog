@@ -32,10 +32,13 @@ boss.on("error", (error) => {
 });
 await boss.start();
 const db = createDb(config.databaseUrl);
+// A send holds a connection for as long as it takes, up to one a job, so slow chats can't use up the
+// connections the pipeline and polls need.
+const deliveryDb = createDb(config.databaseUrl);
 const egressFetch = createEgressFetch(config);
 // #193 and #194 replace these. Until then an attempt fails, and the Item's Log says why.
 const noSender = { send: () => Promise.reject(new Error("this type of Destination can't send yet")) };
-await startDelivery(db, boss, {
+await startDelivery(deliveryDb, boss, {
   senders: {
     telegram: createTelegramSender(config.telegram.botToken, {
       fetch: egressFetch,
@@ -65,6 +68,7 @@ const stop = async () => {
   try {
     await boss.stop();
     await db.$client.end();
+    await deliveryDb.$client.end();
     console.log("Worker stopped: pg-boss stopped cleanly");
   } catch (error) {
     console.error("Worker stopped: pg-boss failed to stop:", error);
