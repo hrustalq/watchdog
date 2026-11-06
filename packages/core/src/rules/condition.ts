@@ -1,6 +1,6 @@
 // Evaluating a Condition against an Item (docs: Rule model, "Condition grammar").
 import { regexMatches } from "./regex.ts";
-import type { Condition, Predicate } from "./schema.ts";
+import { type Condition, type Predicate, predicates, ratingFields } from "./schema.ts";
 
 /**
  * What a Condition can read from an Item: its `item` row plus its Source's type. Forgetting one of
@@ -85,21 +85,19 @@ export function evaluateCondition(condition: Condition, item: ConditionItem): bo
     .some((value) => value !== undefined && value !== null && test(condition, value));
 }
 
-function testsRating(condition: Condition): boolean {
-  if ("all" in condition) return condition.all.some(testsRating);
-  if ("any" in condition) return condition.any.some(testsRating);
-  if ("not" in condition) return testsRating(condition.not);
-  return condition.field === "severity" || condition.field === "importance";
-}
-
 /**
  * Whether an Item that finished the pipeline meets an Action's Condition (docs: Processing
  * pipeline, "The Act stage"). A Condition that tests the Rating anywhere in its tree doesn't hold
  * on an unrated Item, `not` included: an Item nobody has rated meets neither "Severity ≥ 4" nor
  * "not Severity ≥ 4", so that check runs before `evaluateCondition`, which lets a missing field pass
- * inside `not`. Unrated means `severity` is null, so a corrected Rating counts as rated.
+ * inside `not`. Unrated means `severity` is null, so a corrected Rating counts as rated. The Rating
+ * is required here, because a stage that forgot it would look unrated on every Item.
  */
-export function evaluateActionCondition(condition: Condition, item: ConditionItem): boolean {
-  if (typeof item.severity !== "number" && testsRating(condition)) return false;
+export function evaluateActionCondition(
+  condition: Condition,
+  item: ConditionItem & { severity: number | null },
+): boolean {
+  const testsRating = [...predicates(condition)].some(({ field }) => ratingFields.includes(field));
+  if (item.severity === null && testsRating) return false;
   return evaluateCondition(condition, item);
 }

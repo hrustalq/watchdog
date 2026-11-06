@@ -177,8 +177,10 @@ describe("a missing field", () => {
 // An Action Condition on an Item that finished the pipeline unrated (docs: Processing pipeline,
 // "The Act stage").
 describe("an Action Condition on an unrated Item", () => {
-  const unrated: Partial<ConditionItem> = { ...item, severity: null, importance: null };
-  const acts = (condition: unknown, on: Partial<ConditionItem> = unrated) =>
+  type Rated = Partial<ConditionItem> & { severity: number | null };
+  const unrated: Rated = { ...item, severity: null, importance: null };
+  const rated: Rated = { ...item, severity: 2, importance: 5 };
+  const acts = (condition: unknown, on: Rated = unrated) =>
     evaluateActionCondition(conditionSchema.parse(condition), { ...envelope, ...on });
 
   it("doesn't hold when the Condition tests the Rating, inside not too", () => {
@@ -199,10 +201,21 @@ describe("an Action Condition on an unrated Item", () => {
     expect(acts({ field: "category", op: "is", value: "lead" })).toBe(false);
   });
 
-  it("evaluates a rated Item as usual, a corrected Rating included", () => {
-    expect(acts({ not: { field: "severity", op: "gte", value: 4 } }, item)).toBe(true);
-    expect(acts({ field: "importance", op: "gte", value: 5 }, item)).toBe(true);
-    expect(acts({ field: "importance", op: "gte", value: 5 }, { ...item, severity: 3 })).toBe(true);
+  it("evaluates a rated Item as usual", () => {
+    expect(acts({ not: { field: "severity", op: "gte", value: 4 } }, rated)).toBe(true);
+    expect(acts({ field: "importance", op: "gte", value: 5 }, rated)).toBe(true);
+    expect(acts({ field: "severity", op: "gte", value: 4 }, rated)).toBe(false);
+  });
+
+  it("reads severity alone to decide, as the docs define unrated", () => {
+    // Rated by severity: importance is then an ordinary missing field.
+    const half: Rated = { ...rated, importance: null };
+    expect(acts({ field: "importance", op: "gte", value: 1 }, half)).toBe(false);
+    expect(acts({ not: { field: "importance", op: "exists" } }, half)).toBe(true);
+    // Unrated by severity, whatever importance holds.
+    expect(acts({ field: "importance", op: "gte", value: 5 }, { ...rated, severity: null })).toBe(
+      false,
+    );
   });
 });
 

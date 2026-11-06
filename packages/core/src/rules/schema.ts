@@ -6,7 +6,9 @@ import { captureRegexError, regexError } from "./regex.ts";
 
 const sourceAndContent = ["source", "source.type", "title", "body", "author", "url", "language"];
 const sourceContentAndCategories = [...sourceAndContent, "category"];
-const namedFields = [...sourceContentAndCategories, "severity", "importance"];
+/** The Rating's fields. An unrated Item has neither (docs: Processing pipeline, "The Act stage"). */
+export const ratingFields = ["severity", "importance"];
+const namedFields = [...sourceContentAndCategories, ...ratingFields];
 
 // Extracted field names become object keys, in stored fields and the Agent's flat output schema
 // (ADR 0016), and assigning to `__proto__` wouldn't create a key.
@@ -133,7 +135,8 @@ export const conditionSchema = z
   })
   .pipe(nodeSchema);
 
-function* predicates(
+/** Every predicate in a Condition's tree, with its path for an issue. */
+export function* predicates(
   condition: Condition,
   path: PropertyKey[] = [],
 ): Generator<{ field: string; path: PropertyKey[] }> {
