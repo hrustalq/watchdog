@@ -533,7 +533,8 @@ describe("deliver", () => {
   });
 
   describe("before a send", () => {
-    const at = (time: string) => new Date(`2026-01-07T${time}Z`);
+    // In the future, so a waiting Delivery isn't due by the database's clock until a test says so.
+    const at = (time: string) => new Date(`2099-01-07T${time}Z`);
     const clock = (time: string) => () => at(time);
     const settings = (workspaceId: string, values: Partial<typeof workspace.$inferInsert>) =>
       db.update(workspace).set(values).where(eq(workspace.id, workspaceId));
@@ -589,7 +590,7 @@ describe("deliver", () => {
         expect(await rowOf(seeded.deliveryId)).toMatchObject({
           status: "held",
           attempts: 0,
-          nextAttemptAt: new Date("2026-01-08T07:00:00Z"),
+          nextAttemptAt: new Date("2099-01-08T07:00:00Z"),
         });
         expect(await actLog(seeded.itemId)).toMatchObject([
           { stage: "act", message: "Held until 07:00: quiet hours" },
@@ -758,6 +759,37 @@ describe("deliver", () => {
         expect(present(sent[1]).message).toMatchObject({ count: 24 });
         const finished = await rowOf(present(followers[0]).deliveryId);
         expect(finished).toMatchObject({ status: "sent", groupId: present(waiting[0]).groupId });
+      });
+
+      it("takes a closed window's alerts along when a new alert comes before the sweep does", async () => {
+        const seeded = await seed();
+        const { deps, sent } = recording();
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
+        const follower = await another(seeded);
+        await deliver(db, follower.deliveryId, { ...deps, now: clock("12:00:10") });
+        // The window has closed, and the sweep hasn't run yet.
+        await db.update(delivery).set({ nextAttemptAt: new Date(0) }).where(eq(delivery.id, follower.deliveryId));
+
+        const late = await another(seeded);
+        await deliver(db, late.deliveryId, { ...deps, now: clock("12:01:10") });
+
+        expect(sent).toHaveLength(2);
+        expect(present(sent[1]).message).toMatchObject({ count: 2 });
+        expect(await rowOf(follower.deliveryId)).toMatchObject({ status: "sent" });
+      });
+
+      it("strands nothing when an old job for a finished Delivery finds others due", async () => {
+        const seeded = await seed();
+        const { deps, sent } = recording();
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
+        const follower = await another(seeded);
+        await deliver(db, follower.deliveryId, { ...deps, now: clock("12:00:10") });
+        await db.update(delivery).set({ nextAttemptAt: new Date(0) }).where(eq(delivery.id, follower.deliveryId));
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:01:10") });
+
+        expect(sent).toHaveLength(2);
+        expect(await rowOf(follower.deliveryId)).toMatchObject({ status: "sent" });
       });
 
       it("sends a window's only follower as an ordinary alert", async () => {

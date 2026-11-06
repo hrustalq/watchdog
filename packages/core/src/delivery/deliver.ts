@@ -8,6 +8,7 @@ import {
   destination,
   eq,
   gt,
+  inArray,
   isNull,
   item,
   itemLog,
@@ -140,17 +141,7 @@ async function record(
 
 /** Holds or groups the alerts that can't go now, and returns the ones that can. */
 async function applySchedule(tx: Tx, due: DueDelivery[], target: Destination, now: Date) {
-  const [settings] = await tx
-    .select({
-      timezone: workspace.timezone,
-      quietHoursStart: workspace.quietHoursStart,
-      quietHoursEnd: workspace.quietHoursEnd,
-      severity5BypassesQuietHours: workspace.severity5BypassesQuietHours,
-      alertsPerHour: workspace.alertsPerHour,
-      burstWindowSeconds: workspace.burstWindowSeconds,
-    })
-    .from(workspace)
-    .where(eq(workspace.id, target.workspaceId));
+  const [settings] = await tx.select().from(workspace).where(eq(workspace.id, target.workspaceId));
   if (settings === undefined) return [];
 
   // One time for each message, because the rows of a Grouped alert count as one.
@@ -305,8 +296,24 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
     const [target] = await (isWebhook ? reading : reading.for("no key update"));
     if (target === undefined) return;
 
-    const due = await loadDue(tx, isWebhook ? eq(delivery.id, deliveryId) : eq(delivery.destinationId, target.id));
-    if (!due.some((row) => row.id === deliveryId)) return;
-    await send(tx, isWebhook ? due : await applySchedule(tx, due, target, now()), target, deps, now);
+    if (isWebhook) {
+      await send(tx, await loadDue(tx, eq(delivery.id, deliveryId)), target, deps, now);
+      return;
+    }
+    // Held alerts whose time has come join this send rather than wait for the sweep. If they waited, a
+    // new alert would go alone and restart the burst window, and a steady stream could hold them forever.
+    await tx
+      .update(delivery)
+      .set({ status: "queued", nextAttemptAt: null })
+      .where(
+        and(
+          eq(delivery.destinationId, target.id),
+          inArray(delivery.status, ["held", "grouped"]),
+          lte(delivery.nextAttemptAt, sql`now()`),
+        ),
+      );
+    const due = await loadDue(tx, eq(delivery.destinationId, target.id));
+    if (due.length === 0) return;
+    await send(tx, await applySchedule(tx, due, target, now()), target, deps, now);
   });
 }
