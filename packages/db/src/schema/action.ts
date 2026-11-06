@@ -1,0 +1,109 @@
+import { sql } from "drizzle-orm";
+import { check, index, integer, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { destination } from "./destination.ts";
+import { item } from "./item.ts";
+import { ruleColumns } from "./rule.ts";
+
+/**
+ * The third type of rule: what happens outside the Feed when an Item meets a Condition (docs:
+ * Rule model, "Actions"). `definition` holds the canonical model with its Destinations by id (the
+ * YAML shows their names, and renaming one changes nothing here); action_destination keeps the same
+ * set as foreign keys, so a Destination an Action points at can't be deleted.
+ *
+ * The two foreign keys to destination (here and on delivery) are DEFERRABLE INITIALLY DEFERRED,
+ * written by hand in migration 0009 because Drizzle can't declare it. Postgres checks a plain
+ * NO ACTION key when the statement that deleted the row ends, and a Workspace's cascade deletes
+ * its Destinations in a statement of its own before it reaches its Actions, so deleting a user
+ * would fail on a Destination its own Action still points at. Deferred, the check runs at commit,
+ * when the Actions are gone too. A Destination deleted on its own is still refused, at commit.
+ */
+export const action = pgTable(
+  "action",
+  {
+    ...ruleColumns,
+    kind: text("kind", { enum: ["alert", "webhook", "digest"] }).notNull(),
+  },
+  (table) => [
+    check("action_kind_check", sql`${table.kind} in ('alert', 'webhook', 'digest')`),
+    unique("action_workspace_id_name_key").on(table.workspaceId, table.name),
+  ],
+);
+
+/** The Destinations an Action points at. */
+export const actionDestination = pgTable(
+  "action_destination",
+  {
+    actionId: uuid("action_id")
+      .notNull()
+      .references(() => action.id, { onDelete: "cascade" }),
+    destinationId: uuid("destination_id")
+      .notNull()
+      .references(() => destination.id),
+  },
+  (table) => [
+    primaryKey({ columns: [table.actionId, table.destinationId] }),
+    // Deleting a Destination checks this foreign key, and the Destinations screen lists the Actions
+    // that point at one.
+    index("action_destination_destination_id_idx").on(table.destinationId),
+  ],
+);
+
+/**
+ * One alert or webhook Action's message to one Destination for one Item (docs: Actions and
+ * delivery, "Deliveries"). The unique key is "fires once per Item and Destination" (ADR 0028).
+ */
+export const delivery = pgTable(
+  "delivery",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    actionId: uuid("action_id")
+      .notNull()
+      .references(() => action.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => item.id, { onDelete: "cascade" }),
+    /** No delete action: a Destination with Deliveries can't be deleted. */
+    destinationId: uuid("destination_id")
+      .notNull()
+      .references(() => destination.id),
+    status: text("status", { enum: ["queued", "held", "grouped", "sent", "failed"] })
+      .notNull()
+      .default("queued"),
+    attempts: integer("attempts").notNull().default(0),
+    /** When a held or grouped Delivery goes, or a failed attempt is retried. */
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("delivery_status_check", sql`${table.status} in ('queued', 'held', 'grouped', 'sent', 'failed')`),
+    unique("delivery_action_id_item_id_destination_id_key").on(table.actionId, table.itemId, table.destinationId),
+    // The queue: what is due to a Destination and when, for grouping and the worker's sweep.
+    index("delivery_destination_id_status_next_attempt_at_idx").on(
+      table.destinationId,
+      table.status,
+      table.nextAttemptAt,
+    ),
+    // The Log's view of an Item, and the cascade when the Item is deleted.
+    index("delivery_item_id_idx").on(table.itemId),
+  ],
+);
+
+/** The Items a Digest has collected and not yet sent. The Digest's send deletes the rows it sent. */
+export const digestItem = pgTable(
+  "digest_item",
+  {
+    actionId: uuid("action_id")
+      .notNull()
+      .references(() => action.id, { onDelete: "cascade" }),
+    itemId: uuid("item_id")
+      .notNull()
+      .references(() => item.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.actionId, table.itemId] }),
+    // As on delivery.
+    index("digest_item_item_id_idx").on(table.itemId),
+  ],
+);

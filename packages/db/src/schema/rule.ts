@@ -15,11 +15,11 @@ import { item } from "./item.ts";
 import { workspace } from "./workspace.ts";
 
 /**
- * What a Classifier and an Extractor Rule share. `definition` holds the canonical rule model, whose
- * zod schemas live in packages/core. This package doesn't depend on core (ADR 0024), so callers
- * parse the column.
+ * What every rule shares (an Action in action.ts overrides `kind`). `definition` holds the
+ * canonical rule model, whose zod schemas live in packages/core. This package doesn't depend on
+ * core (ADR 0024), so callers parse the column.
  */
-const ruleColumns = {
+export const ruleColumns = {
   id: uuid("id").primaryKey().defaultRandom(),
   workspaceId: uuid("workspace_id")
     .notNull()
