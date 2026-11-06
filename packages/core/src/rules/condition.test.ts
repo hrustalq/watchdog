@@ -1,6 +1,6 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { type ConditionItem, evaluateCondition } from "./condition.ts";
+import { type ConditionItem, evaluateActionCondition, evaluateCondition } from "./condition.ts";
 import { conditionSchema } from "./schema.ts";
 
 const item: ConditionItem = {
@@ -171,6 +171,38 @@ describe("a missing field", () => {
   ])("fails $field $op, and holds inside not", (predicate) => {
     expect(holds(predicate, {})).toBe(false);
     expect(holds({ not: predicate }, {})).toBe(true);
+  });
+});
+
+// An Action Condition on an Item that finished the pipeline unrated (docs: Processing pipeline,
+// "The Act stage").
+describe("an Action Condition on an unrated Item", () => {
+  const unrated: Partial<ConditionItem> = { ...item, severity: null, importance: null };
+  const acts = (condition: unknown, on: Partial<ConditionItem> = unrated) =>
+    evaluateActionCondition(conditionSchema.parse(condition), { ...envelope, ...on });
+
+  it("doesn't hold when the Condition tests the Rating, inside not too", () => {
+    expect(acts({ not: { field: "severity", op: "gte", value: 4 } })).toBe(false);
+    expect(acts({ field: "severity", op: "gte", value: 4 })).toBe(false);
+    expect(acts({ field: "importance", op: "lte", value: 5 })).toBe(false);
+  });
+
+  it("doesn't hold when a Rating test sits anywhere in the tree", () => {
+    const advisory = { field: "category", op: "is", value: "release" };
+    expect(acts({ any: [advisory, { field: "importance", op: "gte", value: 1 }] })).toBe(false);
+    expect(acts({ all: [advisory, { not: { field: "severity", op: "exists" } }] })).toBe(false);
+  });
+
+  it("holds when a Condition without a Rating field does, so an advisory still alerts", () => {
+    expect(acts({ field: "category", op: "is", value: "release" })).toBe(true);
+    expect(acts({ all: [{ field: "fields.plan", op: "is", value: "Pro" }] })).toBe(true);
+    expect(acts({ field: "category", op: "is", value: "lead" })).toBe(false);
+  });
+
+  it("evaluates a rated Item as usual, a corrected Rating included", () => {
+    expect(acts({ not: { field: "severity", op: "gte", value: 4 } }, item)).toBe(true);
+    expect(acts({ field: "importance", op: "gte", value: 5 }, item)).toBe(true);
+    expect(acts({ field: "importance", op: "gte", value: 5 }, { ...item, severity: 3 })).toBe(true);
   });
 });
 
