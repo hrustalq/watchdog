@@ -80,6 +80,79 @@ const rules: [string, Rule][] = [
   ],
 ];
 
+// The Rule model page's Action examples, verbatim.
+const actionExamples = [
+  [
+    "an alert",
+    `
+action: critical-advisories
+when:
+  all:
+    - { field: category, op: is, value: security-advisory }
+    - { field: severity, op: gte, value: 4 }
+kind: alert
+destinations: [ops-chat, me]
+`,
+    {
+      action: "critical-advisories",
+      when: {
+        all: [
+          { field: "category", op: "is", value: "security-advisory" },
+          { field: "severity", op: "gte", value: 4 },
+        ],
+      },
+      kind: "alert",
+      destinations: ["ops-chat", "me"],
+    },
+  ],
+  [
+    "a webhook",
+    `
+action: leads-to-crm
+when: { field: category, op: is, value: lead }
+kind: webhook
+destinations: [crm-inbox]
+`,
+    {
+      action: "leads-to-crm",
+      when: { field: "category", op: "is", value: "lead" },
+      kind: "webhook",
+      destinations: ["crm-inbox"],
+    },
+  ],
+  [
+    "a Digest",
+    `
+action: competitor-weekly
+when: { field: category, op: is, value: competitor-launch }
+kind: digest
+schedule: "0 9 * * 1"
+destinations: [me]
+`,
+    {
+      action: "competitor-weekly",
+      when: { field: "category", op: "is", value: "competitor-launch" },
+      kind: "digest",
+      schedule: "0 9 * * 1",
+      destinations: ["me"],
+    },
+  ],
+] as const;
+
+describe("the Rule model page's Action examples", () => {
+  it.each(actionExamples)("parses %s into the model", (_, yaml, model) => {
+    expect(ruleFromYaml(yaml)).toEqual(model);
+  });
+
+  it.each(actionExamples)("keeps %s through YAML without loss", (_, yaml, model) => {
+    const written = ruleToYaml(ruleFromYaml(yaml));
+    expect(ruleFromYaml(written)).toEqual(model);
+    // Re-serialising what it wrote gives the same text, keys in the page's order.
+    expect(ruleToYaml(ruleFromYaml(written))).toBe(written);
+    expect(Object.keys(ruleFromYaml(yaml))).toEqual(Object.keys(model));
+  });
+});
+
 describe("the Rule model page's example", () => {
   const { when: condition, ...rest } = deterministicClassifierSchema.parse(ruleFromYaml(example));
 
@@ -154,6 +227,16 @@ describe("ruleFromYaml", () => {
     expect(() => ruleFromYaml(yaml)).toThrow(ZodError);
     expect(() => ruleFromYaml(yaml)).toThrow("can't test");
     expect(() => ruleFromYaml(yaml)).toThrow("severity");
+  });
+
+  it("names schedule when a Digest lacks one or an alert has one", () => {
+    const severe = "{ field: severity, op: gte, value: 4 }";
+    expect(() =>
+      ruleFromYaml(`action: a\nwhen: ${severe}\nkind: digest\ndestinations: [me]\n`),
+    ).toThrow("schedule");
+    expect(() =>
+      ruleFromYaml(`action: a\nwhen: ${severe}\nkind: alert\nschedule: "0 9 * * 1"\ndestinations: [me]\n`),
+    ).toThrow("schedule");
   });
 
   it("refuses a key the model doesn't have, instead of dropping it", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  actionSchema,
   agentClassifierSchema,
   agentExtractorRuleSchema,
   conditionSchema,
@@ -324,6 +325,105 @@ describe("agentExtractorRuleSchema", () => {
   });
 });
 
+describe("actionSchema", () => {
+  const when = { field: "severity", op: "gte", value: 4 };
+  const alert = { action: "critical", when, kind: "alert", destinations: ["ops-chat", "me"] };
+  const webhook = { action: "to-crm", when, kind: "webhook", destinations: ["crm-inbox"] };
+  const digest = {
+    action: "weekly",
+    when,
+    kind: "digest",
+    schedule: "0 9 * * 1",
+    destinations: ["me"],
+  };
+
+  it.each([
+    ["an alert", alert],
+    ["a webhook", webhook],
+    ["a Digest", digest],
+  ])("accepts %s", (_, action) => {
+    expect(actionSchema.parse(action)).toEqual(action);
+  });
+
+  it.each(["severity", "importance", "fields.price", "category", "source", "title"])(
+    "lets when test %s, since an Action runs after every other stage",
+    (field) => {
+      expect(actionSchema.safeParse({ ...alert, when: { field, op: "exists" } }).success).toBe(true);
+    },
+  );
+
+  it("refuses a Condition over the 50-part cap", () => {
+    const parts = { all: Array(50).fill(when) };
+    expect(issuesOf(actionSchema.safeParse({ ...alert, when: parts }))[0]?.message).toContain("50");
+  });
+
+  it("refuses a field no rule can test, pointing into when", () => {
+    const issue = issuesOf(actionSchema.safeParse({ ...alert, when: { field: "nope", op: "exists" } }))[0];
+    expect(issue?.message).toContain('"nope"');
+    expect(issue?.path).toEqual(["when", "field"]);
+  });
+
+  it("refuses a Digest without a schedule, naming the field", () => {
+    const { schedule: _schedule, ...withoutSchedule } = digest;
+    expect(issuesOf(actionSchema.safeParse(withoutSchedule))[0]?.path).toEqual(["schedule"]);
+  });
+
+  it.each([
+    ["an alert", alert],
+    ["a webhook", webhook],
+  ])("refuses a schedule on %s, naming the field", (_, action) => {
+    const issue = issuesOf(actionSchema.safeParse({ ...action, schedule: "0 9 * * 1" }))[0];
+    expect(issue?.message).toContain("schedule");
+  });
+
+  it.each([
+    ["no list", undefined],
+    ["an empty list", []],
+    ["a blank name", [" "]],
+  ])("refuses %s of destinations, naming the field", (_, destinations) => {
+    const issue = issuesOf(actionSchema.safeParse({ ...alert, destinations }))[0];
+    expect(issue?.path[0]).toBe("destinations");
+  });
+
+  it.each([
+    ["no kind", undefined],
+    ["a kind it doesn't know", "sms"],
+  ])("says what a kind is for %s", (_, kind) => {
+    const { message } = issuesOf(actionSchema.safeParse({ ...alert, kind }))[0] ?? { message: "" };
+    expect(message).toContain("alert, webhook or digest");
+  });
+
+  it("refuses a blank name and a key it doesn't know", () => {
+    expect(actionSchema.safeParse({ ...alert, action: " " }).success).toBe(false);
+    expect(actionSchema.safeParse({ ...alert, notes: "x" }).success).toBe(false);
+  });
+
+  it.each([
+    ["text that isn't cron", "weekly", "isn't a cron expression"],
+    ["too few fields", "* * * *", "isn't a cron expression"],
+    ["a date that never comes", "0 0 31 2 *", "isn't a cron expression"],
+  ])("refuses a Digest whose schedule is %s", (_, schedule, expected) => {
+    const issue = issuesOf(actionSchema.safeParse({ ...digest, schedule }))[0];
+    expect(issue?.message).toContain(expected);
+    expect(issue?.path).toEqual(["schedule"]);
+  });
+
+  it("leaves a schedule's minimum interval to the save, which knows the mode", () => {
+    expect(actionSchema.safeParse({ ...digest, schedule: "* * * * *" }).success).toBe(true);
+  });
+
+  it("keeps a Digest's schedule without the whitespace around it", () => {
+    const parsed = actionSchema.parse({ ...digest, schedule: " 0 9 * * 1\n" });
+    expect(parsed).toEqual(digest);
+  });
+
+  it("refuses a Destination listed twice, pointing at the second", () => {
+    const issue = issuesOf(actionSchema.safeParse({ ...alert, destinations: ["me", "x", " me "] }))[0];
+    expect(issue?.message).toContain('"me"');
+    expect(issue?.path).toEqual(["destinations", 2]);
+  });
+});
+
 describe("ruleSchema", () => {
   const when = { field: "title", op: "exists" };
 
@@ -332,6 +432,9 @@ describe("ruleSchema", () => {
     { classifier: "a", prompt: "p", categories: ["x"] },
     { extractor: "a", when, fields: [{ name: "n", type: "string", jsonpath: "$.a" }] },
     { extractor: "a", when, prompt: "p", fields: [{ name: "n", type: "string" }] },
+    { action: "a", when, kind: "alert", destinations: ["d"] },
+    { action: "a", when, kind: "webhook", destinations: ["d"] },
+    { action: "a", when, kind: "digest", schedule: "0 9 * * 1", destinations: ["d"] },
   ])("accepts every rule kind", (rule) => {
     expect(ruleSchema.parse(rule)).toEqual(rule);
   });
@@ -343,9 +446,25 @@ describe("ruleSchema", () => {
     );
   });
 
-  it("refuses something that is neither a Classifier nor an Extractor Rule", () => {
-    expect(issuesOf(ruleSchema.safeParse({ when }))[0]?.message).toContain("classifier");
-    expect(issuesOf(ruleSchema.safeParse("text"))[0]?.message).toContain("classifier");
-    expect(issuesOf(ruleSchema.safeParse(null))[0]?.message).toContain("classifier");
+  it("refuses something that is no rule, naming every kind", () => {
+    for (const value of [{ when }, "text", null]) {
+      const { message } = issuesOf(ruleSchema.safeParse(value))[0] ?? { message: "" };
+      expect(message).toContain("classifier");
+      expect(message).toContain("extractor");
+      expect(message).toContain("action");
+    }
+  });
+
+  it("lets an Action test the Rating under not, and still refuses an Extractor Rule that does", () => {
+    const notSevere = { not: { field: "severity", op: "gte", value: 4 } };
+    const action = { action: "a", when: notSevere, kind: "alert", destinations: ["d"] };
+    const extractor = {
+      extractor: "a",
+      when: notSevere,
+      prompt: "p",
+      fields: [{ name: "n", type: "string" }],
+    };
+    expect(ruleSchema.parse(action)).toEqual(action);
+    expect(issuesOf(ruleSchema.safeParse(extractor))[0]?.message).toContain('"severity"');
   });
 });

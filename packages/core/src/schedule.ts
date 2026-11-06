@@ -17,17 +17,28 @@ const firingsChecked = 1000;
 const yearsChecked = 5 * 366 * 24 * 60 * minute;
 
 // The worker checks a Source's schedule after every poll, and a check walks up to 1000 firings.
+// A Digest's schedule is text a person typed, so neither the entries nor their size can grow with it.
 const checked = new Map<string, string | undefined>();
+const maxChecked = 1000;
+const maxLength = 200;
 
-/** Why a Source can't use this cron expression in this mode, or undefined when it can. */
-export function scheduleError(schedule: string, mode: Mode): string | undefined {
-  const key = `${mode} ${schedule}`;
-  if (!checked.has(key)) checked.set(key, findError(schedule.trim(), mode));
+/**
+ * Why a Source or a Digest can't use this cron expression in this mode, or undefined when it can.
+ * Without a mode, only whether it is a cron expression at all.
+ */
+export function scheduleError(schedule: string, mode?: Mode): string | undefined {
+  if (schedule.length > maxLength) {
+    return `A schedule can be at most ${String(maxLength)} characters.`;
+  }
+  const key = `${mode ?? "any"} ${schedule}`;
+  if (!checked.has(key)) {
+    if (checked.size >= maxChecked) checked.clear();
+    checked.set(key, findError(schedule.trim(), mode));
+  }
   return checked.get(key);
 }
 
-function findError(schedule: string, mode: Mode) {
-  const minimum = minimumMinutes[mode] * minute;
+function findError(schedule: string, mode: Mode | undefined) {
   try {
     // The parser fills in missing fields, so "* * * *" would pass it.
     const fields = schedule.split(/\s+/).length;
@@ -37,7 +48,7 @@ function findError(schedule: string, mode: Mode) {
     let last = first;
     for (let i = 0; i < firingsChecked && last - first < yearsChecked; i++) {
       const next = firings.next().getTime();
-      if (next - last < minimum) {
+      if (mode !== undefined && next - last < minimumMinutes[mode] * minute) {
         return `A schedule can't run more often than every ${String(minimumMinutes[mode])} minutes on ${mode}.`;
       }
       last = next;

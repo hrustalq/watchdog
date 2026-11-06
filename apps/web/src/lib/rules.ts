@@ -139,6 +139,10 @@ function parseRule(text: string, target: RuleTarget | null): ParsedRule | { prob
     };
   }
   const rule = parsed.data;
+  // An Action has its own table and Destination checks, which arrive with GitHub issue #200.
+  if ("action" in rule) {
+    return { problems: [{ path: "", message: "The Rules screen can't save an Action yet." }] };
+  }
   const [type, name]: [RuleType, string] =
     "classifier" in rule ? ["classifier", rule.classifier] : ["extractor", rule.extractor];
   if (target !== null && target.type !== type) {

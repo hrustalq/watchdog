@@ -1,6 +1,6 @@
 // Evaluating a Condition against an Item (docs: Rule model, "Condition grammar").
 import { regexMatches } from "./regex.ts";
-import { type Condition, type Predicate, predicates, ratingFields } from "./schema.ts";
+import { type Condition, extracted, type Predicate, predicates, ratingFields } from "./schema.ts";
 
 /**
  * What a Condition can read from an Item: its `item` row plus its Source's type. Forgetting one of
@@ -21,8 +21,6 @@ export interface ConditionItem {
   /** Extracted fields by name. */
   fields?: Readonly<Record<string, unknown>> | null;
 }
-
-const extracted = "fields.";
 
 function read(field: string, item: ConditionItem): unknown {
   if (field.startsWith(extracted)) {
