@@ -15,6 +15,8 @@ const visibleField = (page: Page, label: string) => page.getByLabel(label, { exa
 
 const feedRow = (page: Page, title: string) => page.getByRole("listitem").filter({ hasText: title });
 
+const itemLog = (page: Page) => page.getByRole("region", { name: "Log" }).getByRole("listitem");
+
 /** Signs in to the install the first test claimed, because each test starts with a new browser context. */
 async function signInAgain(page: Page) {
   await page.goto(new URL("/sign-in", await setupLink()).href);
@@ -44,16 +46,19 @@ async function saveRule(page: Page) {
 
 /** On the Sources screen, adds a feed from the fixtures container (compose.smoke.yaml). */
 async function addRssSource(page: Page, path: string) {
+  const url = `http://fixtures/${path}`;
   // The page shows a copy of the form until the streamed one replaces it, and that drops what
   // was typed into the copy, so the browser refuses the empty field. A repeat after a submit that
   // went through says the feed is already watched, so a retry can't hide a failure.
   await expect(async () => {
-    await visibleField(page, "RSS feed URL").fill(`http://fixtures/${path}`);
+    await visibleField(page, "RSS feed URL").fill(url);
     await page.getByRole("button", { name: "Add Source" }).click();
     await expect(page.getByRole("status").filter({ hasText: "Source added." })).toBeVisible({
       timeout: 10_000,
     });
   }).toPass({ timeout: 30_000 });
+  // The notice could be left over from the Source before this one, and the list can't.
+  await expect(page.getByText(url, { exact: true })).toBeVisible();
 }
 
 // A new self-hosted install with no mail server, end to end: claim it with the setup link, sign in
@@ -108,22 +113,28 @@ test("a new install with no model classifies its first RSS Source's Items and le
   });
 
   await test.step("the Classifier sorts the Items, and they stay unrated", async () => {
-    const categories = (title: string) => feedRow(page, title).getByRole("list", { name: "Categories" });
-    await expect(categories(release)).toHaveText("release", untilPolled);
-    // Its excerpt says "release", and the Classifier tests only the title.
-    await expect(categories(other)).toHaveCount(0);
+    await expect(feedRow(page, release).getByRole("list", { name: "Categories" })).toHaveText("release", untilPolled);
     await expect(feedRow(page, release)).toContainText("Unrated");
     await expect(feedRow(page, other)).toContainText("Unrated");
   });
 
+  const log = itemLog(page);
   await test.step("open an Item and see its Log", async () => {
     await page.getByRole("link", { name: release }).click();
-    const log = page.getByRole("region", { name: "Log" }).getByRole("listitem");
     await expect(log.filter({ hasText: "capture" })).toContainText(
       "Captured from PostgreSQL news as part of the Backfill",
     );
     await expect(log.filter({ hasText: "classify" })).toContainText("Classifier Release news assigned release");
     await expect(log.filter({ hasText: "Not rated" })).toContainText("this Workspace had no model to rate it with");
+  });
+
+  await test.step("an Item that doesn't meet the Condition gets no Category", async () => {
+    await page.getByRole("link", { name: "Feed", exact: true }).click();
+    await page.getByRole("link", { name: other }).click();
+    // The rate row is the last of a run, so by then the classify row would be there. Its text says
+    // "release", and the Classifier tests only the title.
+    await expect(log.filter({ hasText: "Not rated" })).toBeVisible();
+    await expect(log.filter({ hasText: "classify" })).toHaveCount(0);
   });
 });
 
@@ -157,8 +168,7 @@ test("the Rules editor keeps a draft only where it should, with and without Java
     await name.fill("Security news");
     await value.fill("security");
     await categories.fill("security");
-    await save.click();
-    await expect(page.getByRole("status").filter({ hasText: "Rule saved." })).toBeVisible();
+    await saveRule(page);
     await newRule.click();
     await expect(name).toHaveValue("");
     await expect(value).toHaveValue("");
@@ -262,7 +272,7 @@ test("a Correction changes the Rating the Agent gives a later, similar Item", as
   const similar = "Acme hosted query planner reaches general availability";
   const unrelated = "Acme opens a Lisbon office";
   const category = "competitor-launch";
-  const log = page.getByRole("region", { name: "Log" }).getByRole("listitem");
+  const log = itemLog(page);
 
   await test.step("add a model that points at fake-llm, and it answers a test", async () => {
     await signInAgain(page);
@@ -322,12 +332,15 @@ test("a Correction changes the Rating the Agent gives a later, similar Item", as
       "Importance 5 of 5",
       untilPolled,
     );
-    await expect(feedRow(page, unrelated), "the Correction reached an unrelated Item").toContainText(
+    await expect(feedRow(page, unrelated), "the fake model took an unrelated Item for a similar one").toContainText(
       "Importance 2 of 5",
       untilPolled,
     );
+    await expect(feedRow(page, corrected)).toContainText("Importance 5 of 5");
     // Level with the corrected Item, and captured after it.
-    await expect(page.getByRole("heading", { level: 2 }).first()).toHaveText(similar);
+    const rows = page.getByRole("heading", { level: 2 });
+    await expect(rows.first()).toHaveText(similar);
+    await expect(rows.nth(1)).toHaveText(corrected);
   });
 
   await test.step("Usage shows the calls", async () => {

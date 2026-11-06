@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The Source the Agent rates after the smoke test's Correction. One title is similar to the corrected
-     Item's in before-correction.xml, and one isn't, so a Correction has to reach only the similar Item.
+     Item's in before-correction.xml, and one isn't, so the fake model raises only the similar Item.
      The dates work as in feed.xml. -->
 <rss version="2.0">
   <channel>
