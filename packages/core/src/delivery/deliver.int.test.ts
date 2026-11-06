@@ -20,6 +20,7 @@ import { z } from "zod";
 import { encryptSecret } from "../secrets/secrets.ts";
 import { deliver, type Destination, FinalSendError, RetryAfterSendError, type Sender } from "./deliver.ts";
 import type { AlertMessage } from "./content.ts";
+import type { GroupedAlert } from "./group.ts";
 import { createTelegramSender } from "./telegram.ts";
 
 /** The value, which the test expects to be there. */
@@ -95,12 +96,20 @@ describe("deliver", () => {
     const actionId = present(saved).id;
     await db.insert(actionDestination).values({ actionId, destinationId });
     const [row] = await db.insert(delivery).values({ actionId, itemId, destinationId }).returning();
-    return { ownerId, itemId, destinationId, actionId, deliveryId: present(row).id };
+    return {
+      ownerId,
+      workspaceId,
+      sourceId: present(src).id,
+      itemId,
+      destinationId,
+      actionId,
+      deliveryId: present(row).id,
+    };
   }
 
   /** The deps, recording what the sender got and which retries were queued. */
   function recording(send: Sender["send"] = () => Promise.resolve()) {
-    const sent: { destination: Destination; message: AlertMessage }[] = [];
+    const sent: { destination: Destination; message: AlertMessage | GroupedAlert }[] = [];
     const retries: { deliveryId: string; at: Date }[] = [];
     const sender: Sender = {
       send: async (target, message) => {
@@ -181,7 +190,7 @@ describe("deliver", () => {
 
     await deliver(db, seeded.deliveryId, deps);
 
-    expect(present(sent[0]).message.why).toBe("Action critical fired");
+    expect(present(sent[0]).message).toMatchObject({ why: "Action critical fired" });
   });
 
   it("retries a failing sender with growing delays, each attempt in the Log, then sends once", async () => {
@@ -521,6 +530,353 @@ describe("deliver", () => {
     expect(retries).toEqual([]);
     expect(await rowOf(seeded.deliveryId)).toMatchObject({ status, attempts: 0 });
     expect(await actLog(seeded.itemId)).toEqual([]);
+  });
+
+  describe("before a send", () => {
+    const at = (time: string) => new Date(`2026-01-07T${time}Z`);
+    const clock = (time: string) => () => at(time);
+    const settings = (workspaceId: string, values: Partial<typeof workspace.$inferInsert>) =>
+      db.update(workspace).set(values).where(eq(workspace.id, workspaceId));
+    const overnight = { quietHoursStart: "22:00:00", quietHoursEnd: "07:00:00" };
+    /** What the sweep does when a waiting Delivery's time comes. */
+    const release = (deliveryId: string) =>
+      db.update(delivery).set({ status: "queued", nextAttemptAt: null }).where(eq(delivery.id, deliveryId));
+
+    /** Another queued alert of the same Action to the same Destination, about a new Item. */
+    async function another(seeded: Awaited<ReturnType<typeof seed>>, itemValues: Partial<typeof item.$inferInsert> = {}) {
+      const [captured] = await db
+        .insert(item)
+        .values({
+          workspaceId: seeded.workspaceId,
+          sourceId: seeded.sourceId,
+          externalId: crypto.randomUUID(),
+          title: "Another advisory",
+          body: "An entry.",
+          raw: {},
+          severity: 4,
+          importance: 3,
+          ...itemValues,
+        })
+        .returning();
+      const itemId = present(captured).id;
+      const [row] = await db
+        .insert(delivery)
+        .values({ actionId: seeded.actionId, itemId, destinationId: seeded.destinationId })
+        .returning();
+      return { itemId, deliveryId: present(row).id };
+    }
+
+    /** A message to the seeded Destination that went out at this time. */
+    async function sentEarlier(
+      seeded: Awaited<ReturnType<typeof seed>>,
+      sentAt: Date,
+      values: Partial<typeof delivery.$inferInsert> = {},
+    ) {
+      const { deliveryId } = await another(seeded);
+      await db.update(delivery).set({ status: "sent", sentAt, ...values }).where(eq(delivery.id, deliveryId));
+    }
+
+    describe("quiet hours", () => {
+      it("holds a Severity 4 alert until they end, and says so in the Log", async () => {
+        const seeded = await seed({ severity: 4 });
+        await settings(seeded.workspaceId, overnight);
+        const { deps, sent, retries } = recording();
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("23:00:00") });
+
+        expect(sent).toEqual([]);
+        expect(retries).toEqual([]);
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({
+          status: "held",
+          attempts: 0,
+          nextAttemptAt: new Date("2026-01-08T07:00:00Z"),
+        });
+        expect(await actLog(seeded.itemId)).toMatchObject([
+          { stage: "act", message: "Held until 07:00: quiet hours" },
+        ]);
+      });
+
+      it("sends a Severity 5 alert now when the bypass is on", async () => {
+        const seeded = await seed({ severity: 5 });
+        await settings(seeded.workspaceId, { ...overnight, severity5BypassesQuietHours: true });
+        const { deps, sent } = recording();
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("23:00:00") });
+
+        expect(sent).toHaveLength(1);
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent" });
+      });
+
+      it("sends the bypassing alert and holds the rest when they're due together", async () => {
+        const seeded = await seed({ severity: 5 });
+        await settings(seeded.workspaceId, { ...overnight, severity5BypassesQuietHours: true });
+        const rest = await another(seeded, { severity: 4 });
+        const { deps, sent } = recording();
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("23:00:00") });
+
+        expect(sent).toHaveLength(1);
+        expect(present(sent[0]).message).toMatchObject({ title: "A security advisory" });
+        expect(await rowOf(rest.deliveryId)).toMatchObject({ status: "held" });
+      });
+
+      it("sends a held alert once they have ended", async () => {
+        const seeded = await seed({ severity: 4 });
+        await settings(seeded.workspaceId, overnight);
+        const { deps, sent } = recording();
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("23:00:00") });
+
+        await release(seeded.deliveryId);
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("07:00:00") });
+
+        expect(sent).toHaveLength(1);
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent", attempts: 1 });
+      });
+
+      it("takes a timezone change into account on the next check", async () => {
+        const seeded = await seed({ severity: 4 });
+        await settings(seeded.workspaceId, overnight);
+        const { deps, sent } = recording();
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("23:00:00") });
+        expect(sent).toEqual([]);
+
+        // 01:00 UTC is still quiet in UTC, and 10:00 in Tokyo isn't.
+        await settings(seeded.workspaceId, { timezone: "Asia/Tokyo" });
+        await release(seeded.deliveryId);
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("01:00:00") });
+
+        expect(sent).toHaveLength(1);
+      });
+
+      it("doesn't apply to a webhook", async () => {
+        const seeded = await seed({ severity: 4 });
+        await settings(seeded.workspaceId, overnight);
+        await db.update(destination).set({ type: "webhook" }).where(eq(destination.id, seeded.destinationId));
+        const { deps, sent } = recording();
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("23:00:00") });
+
+        expect(sent).toHaveLength(1);
+      });
+    });
+
+    describe("the rate limit", () => {
+      it("holds the 21st alert of an hour until the oldest leaves it, then sends it", async () => {
+        const seeded = await seed();
+        for (let minute = 10; minute < 30; minute++) await sentEarlier(seeded, at(`11:${String(minute)}:00`));
+        const { deps, sent } = recording();
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
+
+        expect(sent).toEqual([]);
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "held", nextAttemptAt: at("12:10:00") });
+        expect(await actLog(seeded.itemId)).toMatchObject([{ message: "Held until 12:10: rate limit" }]);
+
+        await release(seeded.deliveryId);
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:10:00") });
+
+        expect(sent).toHaveLength(1);
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent" });
+      });
+
+      it("counts a Grouped alert as one", async () => {
+        const seeded = await seed();
+        const groupId = crypto.randomUUID();
+        for (let index = 0; index < 25; index++) await sentEarlier(seeded, at("11:30:00"), { groupId });
+        const { deps, sent } = recording();
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
+
+        expect(sent).toHaveLength(1);
+      });
+
+      it("counts only what went to this Destination, in the last hour, and was sent", async () => {
+        const seeded = await seed();
+        for (let index = 0; index < 20; index++) await sentEarlier(seeded, at("10:30:00"));
+        const elsewhere = await seed();
+        for (let index = 0; index < 20; index++) await sentEarlier(elsewhere, at("11:30:00"));
+        const failed = await another(seeded);
+        await db.update(delivery).set({ status: "failed" }).where(eq(delivery.id, failed.deliveryId));
+        const { deps, sent } = recording();
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
+
+        expect(sent).toHaveLength(1);
+      });
+    });
+
+    describe("bursts", () => {
+      it("sends 25 alerts due together to one Destination as one message listing 25 Items", async () => {
+        const seeded = await seed();
+        const others = await Promise.all(Array.from({ length: 24 }, () => another(seeded)));
+        const { deps, sent } = recording();
+
+        await deliver(db, seeded.deliveryId, deps);
+        // The other 24 jobs, which find their rows already sent.
+        for (const { deliveryId } of others) await deliver(db, deliveryId, deps);
+
+        expect(sent).toHaveLength(1);
+        expect(present(sent[0]).message).toMatchObject({ count: 25 });
+        expect(present(sent[0]).message).toHaveProperty("lines", expect.toSatisfy((lines) => lines.length === 25));
+        const rows = await db.select().from(delivery).where(eq(delivery.destinationId, seeded.destinationId));
+        expect(rows.map((row) => row.status)).toEqual(Array.from({ length: 25 }, () => "sent"));
+        expect(new Set(rows.map((row) => row.groupId)).size).toBe(1);
+        expect(present(rows[0]).groupId).not.toBeNull();
+        for (const { itemId } of [seeded, ...others]) {
+          expect(await actLog(itemId)).toMatchObject([{ message: "Sent to ops-chat in a group of 25" }]);
+        }
+      });
+
+      it("sends the first alert at once and the 24 that follow in its window as one message", async () => {
+        const seeded = await seed();
+        const { deps, sent } = recording();
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
+        expect(sent).toHaveLength(1);
+        expect(present(sent[0]).message).toMatchObject({ title: "A security advisory" });
+
+        const followers = [];
+        for (let second = 10; second < 34; second++) {
+          const follower = await another(seeded);
+          await deliver(db, follower.deliveryId, { ...deps, now: clock(`12:00:${String(second)}`) });
+          followers.push(follower);
+        }
+
+        expect(sent).toHaveLength(1);
+        const waiting = await Promise.all(followers.map(({ deliveryId }) => rowOf(deliveryId)));
+        expect(waiting.map((row) => row?.status)).toEqual(followers.map(() => "grouped"));
+        expect(new Set(waiting.map((row) => row?.nextAttemptAt?.getTime()))).toEqual(
+          new Set([at("12:01:00").getTime()]),
+        );
+        expect(new Set(waiting.map((row) => row?.groupId)).size).toBe(1);
+        expect(present(waiting[0]).groupId).not.toBeNull();
+        expect(await actLog(present(followers[0]).itemId)).toMatchObject([{ message: "Held until 12:01: burst window" }]);
+
+        for (const { deliveryId } of followers) await release(deliveryId);
+        for (const { deliveryId } of followers) await deliver(db, deliveryId, { ...deps, now: clock("12:01:00") });
+
+        expect(sent).toHaveLength(2);
+        expect(present(sent[1]).message).toMatchObject({ count: 24 });
+        const finished = await rowOf(present(followers[0]).deliveryId);
+        expect(finished).toMatchObject({ status: "sent", groupId: present(waiting[0]).groupId });
+      });
+
+      it("sends a window's only follower as an ordinary alert", async () => {
+        const seeded = await seed();
+        const { deps, sent } = recording();
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
+        const follower = await another(seeded);
+        await deliver(db, follower.deliveryId, { ...deps, now: clock("12:00:10") });
+
+        await release(follower.deliveryId);
+        await deliver(db, follower.deliveryId, { ...deps, now: clock("12:01:00") });
+
+        expect(present(sent[1]).message).toMatchObject({ title: "Another advisory", why: "Severity is at least 4" });
+        expect(await actLog(follower.itemId)).toMatchObject([
+          { message: "Held until 12:01: burst window" },
+          { message: "Sent to ops-chat" },
+        ]);
+      });
+
+      it("lists a group as Top would order it, with unrated Items last", async () => {
+        const seeded = await seed({ title: "Middle", severity: 3, importance: 3 });
+        await another(seeded, { title: "Unrated", severity: null, importance: null });
+        await another(seeded, { title: "Highest", severity: 5, importance: 5 });
+        const { deps, sent } = recording();
+
+        await deliver(db, seeded.deliveryId, deps);
+
+        const { lines } = z
+          .object({ lines: z.array(z.object({ title: z.string() })) })
+          .parse(present(sent[0]).message);
+        expect(lines.map((line) => line.title)).toEqual(["Highest", "Middle", "Unrated"]);
+      });
+
+      it("never groups a webhook's Deliveries", async () => {
+        const seeded = await seed();
+        const other = await another(seeded);
+        await db.update(destination).set({ type: "webhook" }).where(eq(destination.id, seeded.destinationId));
+        const { deps, sent } = recording();
+
+        await deliver(db, seeded.deliveryId, deps);
+        await deliver(db, other.deliveryId, deps);
+
+        expect(sent).toHaveLength(2);
+        expect(present(sent[0]).message).toHaveProperty("why");
+      });
+
+      it("retries a failed group's rows together, and sends them as one message", async () => {
+        const seeded = await seed();
+        const other = await another(seeded);
+        let failures = 1;
+        const { deps, sent, retries } = recording(() =>
+          failures-- > 0 ? Promise.reject(new Error("Down")) : Promise.resolve(),
+        );
+        const failedAt = new Date();
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: () => failedAt });
+
+        const retryAt = new Date(failedAt.getTime() + 30_000);
+        expect(retries).toEqual(
+          expect.arrayContaining([
+            { deliveryId: seeded.deliveryId, at: retryAt },
+            { deliveryId: other.deliveryId, at: retryAt },
+          ]),
+        );
+        for (const { deliveryId, itemId } of [seeded, other]) {
+          expect(await rowOf(deliveryId)).toMatchObject({ status: "queued", attempts: 1, nextAttemptAt: retryAt });
+          expect(await actLog(itemId)).toMatchObject([
+            { message: `Sending to ops-chat failed: Down, retrying at ${retryAt.toISOString()}` },
+          ]);
+        }
+
+        await db.update(delivery).set({ nextAttemptAt: failedAt }).where(eq(delivery.destinationId, seeded.destinationId));
+        await deliver(db, other.deliveryId, deps);
+
+        expect(sent).toHaveLength(2);
+        expect(present(sent[1]).message).toMatchObject({ count: 2 });
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent", attempts: 2 });
+      });
+
+      it("fails only the row of a group that is past its 24 hours", async () => {
+        const seeded = await seed();
+        const other = await another(seeded);
+        const now = new Date();
+        await db
+          .update(delivery)
+          .set({ createdAt: new Date(now.getTime() - 24 * hour) })
+          .where(eq(delivery.id, seeded.deliveryId));
+        const { deps } = recording(() => Promise.reject(new Error("Down")));
+
+        await deliver(db, other.deliveryId, { ...deps, now: () => now });
+
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "failed" });
+        expect(await rowOf(other.deliveryId)).toMatchObject({ status: "queued", attempts: 1 });
+      });
+
+      it("never repeats an Item when jobs for one Destination run at the same time", async () => {
+        const seeded = await seed();
+        const others = await Promise.all(Array.from({ length: 5 }, () => another(seeded)));
+        const { deps, sent } = recording(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        });
+
+        await Promise.all([seeded, ...others].map(({ deliveryId }) => deliver(db, deliveryId, deps)));
+
+        expect(sent).toHaveLength(1);
+        expect(present(sent[0]).message).toMatchObject({ count: 6 });
+      });
+
+      it("lets a new Delivery be inserted for a Destination during a send to it", async () => {
+        const seeded = await seed();
+        const { deps } = recording(async () => {
+          await another(seeded);
+        });
+
+        await deliver(db, seeded.deliveryId, deps);
+
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent" });
+      });
+    });
   });
 
   it("finds nothing to do once the Item is deleted", async () => {

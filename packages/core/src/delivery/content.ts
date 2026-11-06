@@ -13,7 +13,7 @@ export interface AlertMessage {
   why: string;
 }
 
-interface AlertItem {
+export interface AlertItem {
   id: string;
   title: string | null;
   summary: string | null;
@@ -21,17 +21,18 @@ interface AlertItem {
   importance: number | null;
 }
 
-export function alertContent(item: AlertItem, source: string, why: string, appUrl: string): AlertMessage {
+export function itemHeadline(item: Omit<AlertItem, "summary">, appUrl: string) {
   const { severity, importance } = item;
   return {
     title: item.title ?? "Untitled Item",
-    source,
     rating:
       severity === null || importance === null
         ? "unrated"
         : `Severity ${String(severity)}, Importance ${String(importance)}`,
-    summary: item.summary,
     link: new URL(`/items/${item.id}`, appUrl).href,
-    why,
   };
+}
+
+export function alertContent(item: AlertItem, source: string, why: string, appUrl: string): AlertMessage {
+  return { ...itemHeadline(item, appUrl), source, summary: item.summary, why };
 }

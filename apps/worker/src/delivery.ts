@@ -1,9 +1,10 @@
 // Sends each Delivery in its own job (docs: Actions and delivery, "Deliveries"; ADR 0028).
 import { deliver, type DeliverDeps, type ProcessItemDeps } from "@watchdog/core";
-import { type Db, sql } from "@watchdog/db";
+import { and, type Db, delivery, inArray, lte, sql } from "@watchdog/db";
 import { fromDrizzle, type PgBoss } from "pg-boss";
 
 export const deliverQueue = "deliver";
+const sweepQueue = "deliver-sweep";
 
 /** Queues one job per new Delivery over the Act stage's transaction, so they commit or roll back together. */
 export function deliveryEnqueuer(boss: PgBoss): ProcessItemDeps["enqueueDeliveries"] {
@@ -36,6 +37,22 @@ export async function createDeliveryQueue(boss: PgBoss) {
   await boss.updateQueue(deliverQueue, queueOptions);
 }
 
+/**
+ * Puts held and grouped Deliveries whose time has come back in the queue, in one transaction with their
+ * jobs, so a later sweep can't queue them twice. `deliver` then checks them against the settings as they
+ * are now, and sends what is due to a Destination together.
+ */
+export async function enqueueDueDeliveries(db: Db, boss: PgBoss) {
+  await db.transaction(async (tx) => {
+    const due = await tx
+      .update(delivery)
+      .set({ status: "queued", nextAttemptAt: null })
+      .where(and(inArray(delivery.status, ["held", "grouped"]), lte(delivery.nextAttemptAt, sql`now()`)))
+      .returning({ id: delivery.id });
+    if (due.length > 0) await deliveryEnqueuer(boss)(tx, due.map(({ id }) => id));
+  });
+}
+
 /** Call before the pipeline starts: queueing a job fails on a queue that doesn't exist. */
 export async function startDelivery(
   db: Db,
@@ -43,6 +60,7 @@ export async function startDelivery(
   deps: Pick<DeliverDeps, "senders" | "appUrl">,
 ) {
   await createDeliveryQueue(boss);
+  await boss.createQueue(sweepQueue);
 
   const retryDelivery: DeliverDeps["retryDelivery"] = async (tx, deliveryId, at) => {
     await boss.insert(deliverQueue, [{ data: { deliveryId }, startAfter: at }], { db: fromDrizzle(tx, sql) });
@@ -57,4 +75,10 @@ export async function startDelivery(
       throw error;
     }
   });
+
+  // pg-boss runs a schedule once a minute however many workers there are. The first sweep doesn't wait
+  // for it, so what came due while no worker ran goes at once.
+  await boss.work(sweepQueue, () => enqueueDueDeliveries(db, boss));
+  await boss.schedule(sweepQueue, "* * * * *");
+  await boss.send(sweepQueue);
 }

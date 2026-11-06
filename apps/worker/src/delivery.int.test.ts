@@ -18,7 +18,13 @@ import {
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { PgBoss } from "pg-boss";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createDeliveryQueue, deliverQueue, deliveryEnqueuer, startDelivery } from "./delivery.ts";
+import {
+  createDeliveryQueue,
+  deliverQueue,
+  deliveryEnqueuer,
+  enqueueDueDeliveries,
+  startDelivery,
+} from "./delivery.ts";
 
 /** The value, which the test expects to be there. */
 function present<T>(value: T | undefined): T {
@@ -269,6 +275,113 @@ describe("the deliver queue", () => {
     }, waitLong);
     expect(send).toHaveBeenCalledTimes(1);
     expect(await logOf(itemId)).toEqual(["Sent to ops-chat"]);
+  });
+
+  describe("waiting Deliveries", () => {
+    /** Another queued alert to the seeded Delivery's Destination, about a new Item. */
+    async function another(deliveryId: string, externalId: string) {
+      const first = present(await rowOf(deliveryId));
+      const firstItem = present(await db.query.item.findFirst({ where: eq(item.id, first.itemId) }));
+      const [captured] = await db
+        .insert(item)
+        .values({
+          workspaceId: firstItem.workspaceId,
+          sourceId: firstItem.sourceId,
+          externalId,
+          title: externalId,
+          body: "An entry.",
+          raw: {},
+        })
+        .returning();
+      const [row] = await db
+        .insert(delivery)
+        .values({ actionId: first.actionId, itemId: present(captured).id, destinationId: first.destinationId })
+        .returning();
+      return present(row).id;
+    }
+
+    const wait = (deliveryId: string, status: "held" | "grouped", nextAttemptAt: Date) =>
+      db.update(delivery).set({ status, nextAttemptAt }).where(eq(delivery.id, deliveryId));
+
+    it("sends a held Delivery whose time passed while no worker ran, once one starts", async () => {
+      const { deliveryId, itemId } = await seed();
+      await wait(deliveryId, "held", new Date(Date.now() - 60_000));
+      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+
+      await startWorker(send);
+
+      await vi.waitFor(async () => {
+        expect(await rowOf(deliveryId)).toMatchObject({ status: "sent", attempts: 1 });
+      }, waitLong);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(await logOf(itemId)).toEqual(["Sent to ops-chat"]);
+    });
+
+    it("leaves a Delivery alone until its time comes", async () => {
+      const { deliveryId } = await seed();
+      const until = new Date(Date.now() + 60 * 60 * 1000);
+      await wait(deliveryId, "held", until);
+
+      await enqueueDueDeliveries(db, boss);
+
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "held", nextAttemptAt: until });
+      expect(await jobsOf(deliveryId)).toEqual([]);
+    });
+
+    it("queues one job for a due Delivery however many sweeps run", async () => {
+      const { deliveryId } = await seed();
+      await wait(deliveryId, "held", new Date(Date.now() - 60_000));
+
+      await enqueueDueDeliveries(db, boss);
+      await enqueueDueDeliveries(db, boss);
+
+      expect(await jobsOf(deliveryId)).toHaveLength(1);
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "queued", nextAttemptAt: null });
+    });
+
+    it("sends the grouped Deliveries of a closed window as one message", async () => {
+      const { deliveryId } = await seed();
+      const others = [await another(deliveryId, "two"), await another(deliveryId, "three")];
+      const groupId = crypto.randomUUID();
+      const closed = new Date(Date.now() - 1000);
+      for (const id of [deliveryId, ...others]) {
+        await wait(id, "grouped", closed);
+        await db.update(delivery).set({ groupId }).where(eq(delivery.id, id));
+      }
+      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+
+      await startWorker(send);
+
+      await vi.waitFor(async () => {
+        expect(await rowOf(deliveryId)).toMatchObject({ status: "sent", groupId });
+      }, waitLong);
+      // The other jobs have to finish too, to show that they send nothing.
+      await vi.waitFor(async () => {
+        const jobs = (await Promise.all([deliveryId, ...others].map(jobsOf))).flat();
+        expect(jobs.map((job) => job.state)).toEqual(["completed", "completed", "completed"]);
+      }, waitLong);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0]?.[1]).toMatchObject({ count: 3 });
+    });
+
+    it("sends 25 alerts queued in one minute to one Destination as one message", async () => {
+      const { deliveryId } = await seed();
+      const others = await Promise.all(
+        Array.from({ length: 24 }, (_, index) => another(deliveryId, `item-${String(index)}`)),
+      );
+      const ids = [deliveryId, ...others];
+      await db.transaction((tx) => deliveryEnqueuer(boss)(tx, ids));
+      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+
+      await startWorker(send);
+
+      await vi.waitFor(async () => {
+        const jobs = (await Promise.all(ids.map(jobsOf))).flat();
+        expect(jobs.filter((job) => job.state !== "completed")).toEqual([]);
+      }, waitLong);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send.mock.calls[0]?.[1]).toMatchObject({ count: 25 });
+    });
   });
 
   it("ends the job quietly when the Delivery is gone", async () => {
