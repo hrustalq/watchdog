@@ -1,6 +1,6 @@
 // Sends each Delivery in its own job (docs: Actions and delivery, "Deliveries"; ADR 0028).
-import { deliver, type DeliverDeps, type ProcessItemDeps } from "@watchdog/core";
-import { and, type Db, delivery, inArray, lte, sql } from "@watchdog/db";
+import { deliver, type DeliverDeps, type ProcessItemDeps, releaseDueDeliveries } from "@watchdog/core";
+import { type Db, sql } from "@watchdog/db";
 import { fromDrizzle, type PgBoss } from "pg-boss";
 
 export const deliverQueue = "deliver";
@@ -38,17 +38,13 @@ export async function createDeliveryQueue(boss: PgBoss) {
 }
 
 /**
- * Puts held and grouped Deliveries whose time has come back in the queue, in one transaction with their
- * jobs, so a later sweep can't queue them twice. `deliver` then checks them against the settings as they
- * are now, and sends what is due to a Destination together.
+ * Releases held and grouped Deliveries whose time has come, in one transaction with their jobs, so a
+ * later sweep can't queue them twice. `deliver` then checks them against the settings as they are now,
+ * and sends what is due to a Destination together.
  */
 export async function enqueueDueDeliveries(db: Db, boss: PgBoss) {
   await db.transaction(async (tx) => {
-    const due = await tx
-      .update(delivery)
-      .set({ status: "queued", nextAttemptAt: null })
-      .where(and(inArray(delivery.status, ["held", "grouped"]), lte(delivery.nextAttemptAt, sql`now()`)))
-      .returning({ id: delivery.id });
+    const due = await releaseDueDeliveries(tx);
     if (due.length > 0) await deliveryEnqueuer(boss)(tx, due.map(({ id }) => id));
   });
 }

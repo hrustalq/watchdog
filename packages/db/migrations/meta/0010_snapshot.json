@@ -1,5 +1,5 @@
 {
-  "id": "7709cc12-c581-4a42-baae-3a8f3fd14903",
+  "id": "402ffd59-e119-4635-aae2-26091b5f0f29",
   "prevId": "aa24c0ac-24a2-4e92-8ed8-5e12b7d82f4a",
   "version": "7",
   "dialect": "postgresql",
@@ -1809,6 +1809,12 @@
         "group_id": {
           "name": "group_id",
           "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "retry_from": {
+          "name": "retry_from",
+          "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
         },

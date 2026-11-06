@@ -56,6 +56,24 @@ describe("groupedAlertText", () => {
     expect(text).toContain("Real Fake · Severity 5 · Severity 4, Importance 3");
   });
 
+  it("shortens a long title, so one Item can't push out the others", () => {
+    const text = groupedAlertText(
+      groupedAlert([rated("long", "x".repeat(5000)), rated("short", "Short")], appUrl),
+      4096,
+    );
+
+    const lines = text.split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[1]).toMatch(/^x{199}… · Severity 4, Importance 3 · https:\/\/watchdog\.test\/items\/long$/);
+    expect(lines[2]).toContain("Short");
+  });
+
+  it("doesn't split a character made of two UTF-16 units when it shortens a title", () => {
+    const text = groupedAlertText(groupedAlert([rated("a", `${"x".repeat(198)}😀😀`), rated("b")], appUrl));
+
+    expect(text.split("\n")[1]).toMatch(/^x{198}… · /);
+  });
+
   it("cuts whole lines to fit a limit, and counts what it cut into the link to the Feed", () => {
     const group = groupedAlert(Array.from({ length: 50 }, (_, index) => rated(String(index), "x".repeat(100))), appUrl);
 

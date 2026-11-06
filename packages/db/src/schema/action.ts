@@ -74,6 +74,8 @@ export const delivery = pgTable(
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
     /** The Grouped alert it waits for or went out in. The rows of one share it, and it counts as one message. */
     groupId: uuid("group_id"),
+    /** When a hold ended, from which its 24 hours of retries run. Without a hold, they run from created_at. */
+    retryFrom: timestamp("retry_from", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     lastError: text("last_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

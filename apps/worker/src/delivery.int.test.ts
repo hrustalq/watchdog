@@ -339,6 +339,32 @@ describe("the deliver queue", () => {
       expect(await rowOf(deliveryId)).toMatchObject({ status: "queued", nextAttemptAt: null });
     });
 
+    it("passes over a row another transaction holds, rather than wait for it", async () => {
+      const { deliveryId } = await seed();
+      const other = await another(deliveryId, "two");
+      const past = new Date(Date.now() - 60_000);
+      await wait(deliveryId, "held", past);
+      await wait(other, "held", past);
+      const holding = Promise.withResolvers<undefined>();
+      const swept = Promise.withResolvers<undefined>();
+
+      const holder = db.transaction(async (tx) => {
+        await tx.select({ id: delivery.id }).from(delivery).where(eq(delivery.id, deliveryId)).for("update");
+        holding.resolve(undefined);
+        await swept.promise;
+      });
+      await holding.promise;
+      await enqueueDueDeliveries(db, boss);
+      swept.resolve(undefined);
+      await holder;
+
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "held" });
+      expect(await rowOf(other)).toMatchObject({ status: "queued" });
+
+      await enqueueDueDeliveries(db, boss);
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "queued" });
+    });
+
     it("sends the grouped Deliveries of a closed window as one message", async () => {
       const { deliveryId } = await seed();
       const others = [await another(deliveryId, "two"), await another(deliveryId, "three")];
@@ -353,7 +379,7 @@ describe("the deliver queue", () => {
       await startWorker(send);
 
       await vi.waitFor(async () => {
-        expect(await rowOf(deliveryId)).toMatchObject({ status: "sent", groupId });
+        expect(await rowOf(deliveryId)).toMatchObject({ status: "sent" });
       }, waitLong);
       // The other jobs have to finish too, to show that they send nothing.
       await vi.waitFor(async () => {

@@ -76,13 +76,13 @@ const reasonLength = 500;
  * is held, grouped, finished or gone, or waiting for a retry whose job committed with that time. The
  * database's clock decides, as it does when pg-boss starts a job, so clock skew can't strand a retry.
  */
-async function loadDue(tx: Tx, which: SQL) {
-  return tx
+async function loadDue(reader: Db | Tx, which: SQL) {
+  return reader
     .select({
       id: delivery.id,
       createdAt: delivery.createdAt,
       attempts: delivery.attempts,
-      groupId: delivery.groupId,
+      retryFrom: delivery.retryFrom,
       item: {
         id: item.id,
         title: item.title,
@@ -109,6 +109,24 @@ async function loadDue(tx: Tx, which: SQL) {
 
 type DueDelivery = Awaited<ReturnType<typeof loadDue>>[number];
 
+/**
+ * Puts held and grouped Deliveries whose time has come back in the queue, and returns them. A row another
+ * transaction holds is passed over, because that one is releasing it, and the next sweep finds any that
+ * wasn't. So a slow send to one Destination can't hold up another's, and two callers can't deadlock.
+ */
+export async function releaseDueDeliveries(tx: Tx, which?: SQL) {
+  const due = tx
+    .select({ id: delivery.id })
+    .from(delivery)
+    .where(and(which, inArray(delivery.status, ["held", "grouped"]), lte(delivery.nextAttemptAt, sql`now()`)))
+    .for("update", { skipLocked: true });
+  return tx
+    .update(delivery)
+    .set({ status: "queued", nextAttemptAt: null })
+    .where(inArray(delivery.id, due))
+    .returning({ id: delivery.id });
+}
+
 /** The Condition as it reads now. The Log's row from when the Action fired keeps how it read then. */
 function whyItFired({ name, definition }: { name: string; definition: unknown }) {
   const parsed = actionSchema.safeParse(definition);
@@ -122,7 +140,7 @@ async function record(
   target: Destination,
   outcome: Partial<typeof delivery.$inferInsert>,
   log: { message: string; data?: Record<string, unknown> },
-  alsoRecord?: () => Promise<void>,
+  alsoRecord?: (tx: Tx) => Promise<void>,
 ) {
   const updated = await tx
     .update(delivery)
@@ -136,7 +154,7 @@ async function record(
     message: storableMessage(log.message),
     data: { actionId: row.action.id, destinationId: target.id, destination: target.name, ...log.data },
   });
-  await alsoRecord?.();
+  await alsoRecord?.(tx);
 }
 
 /** Holds or groups the alerts that can't go now, and returns the ones that can. */
@@ -180,7 +198,12 @@ async function applySchedule(tx: Tx, due: DueDelivery[], target: Destination, no
       tx,
       row,
       target,
-      { status: grouped ? "grouped" : "held", nextAttemptAt: decision.until, groupId: grouped ? groupId : null },
+      {
+        status: grouped ? "grouped" : "held",
+        nextAttemptAt: decision.until,
+        retryFrom: decision.until,
+        groupId: grouped ? groupId : null,
+      },
       {
         message: `Held until ${localTime(decision.until, settings.timezone)}: ${grouped ? "burst window" : decision.reason}`,
         data: { heldUntil: decision.until.toISOString() },
@@ -190,8 +213,17 @@ async function applySchedule(tx: Tx, due: DueDelivery[], target: Destination, no
   return sending;
 }
 
-/** Sends the Deliveries as one message and records how it went on each. */
-async function send(tx: Tx, rows: DueDelivery[], target: Destination, deps: DeliverDeps, now: () => Date) {
+/**
+ * Sends the Deliveries as one message and records how it went on each. `recording` runs each outcome in
+ * the transaction that's holding the Destination, or in one of its own when nothing is.
+ */
+async function send(
+  rows: DueDelivery[],
+  target: Destination,
+  deps: DeliverDeps,
+  now: () => Date,
+  recording: (write: (tx: Tx) => Promise<void>) => Promise<void>,
+) {
   const [first] = rows;
   if (first === undefined) return;
   const message =
@@ -209,23 +241,25 @@ async function send(tx: Tx, rows: DueDelivery[], target: Destination, deps: Deli
 
     for (const row of rows) {
       const attempts = row.attempts + 1;
-      const windowEnd = row.createdAt.getTime() + retryWindowMs;
+      const windowEnd = (row.retryFrom ?? row.createdAt).getTime() + retryWindowMs;
       if (final || failed.getTime() >= windowEnd) {
-        await record(
-          tx,
-          row,
-          target,
-          { attempts, status: "failed", nextAttemptAt: null, lastError: reason },
-          {
-            message: `${failure}. ${final ? "It won't be retried" : "No more retries after 24 hours"}`,
-            data: { attempt: attempts, final: true },
-          },
-          async () => {
-            await tx
-              .update(destination)
-              .set({ lastError: reason, lastErrorAt: failed })
-              .where(eq(destination.id, target.id));
-          },
+        await recording((tx) =>
+          record(
+            tx,
+            row,
+            target,
+            { attempts, status: "failed", nextAttemptAt: null, lastError: reason },
+            {
+              message: `${failure}. ${final ? "It won't be retried" : "No more retries after 24 hours"}`,
+              data: { attempt: attempts, final: true },
+            },
+            async (inTx) => {
+              await inTx
+                .update(destination)
+                .set({ lastError: reason, lastErrorAt: failed })
+                .where(eq(destination.id, target.id));
+            },
+          ),
         );
         continue;
       }
@@ -237,36 +271,43 @@ async function send(tx: Tx, rows: DueDelivery[], target: Destination, deps: Deli
           ? failed.getTime() + error.retryAfterMs
           : Math.min(failed.getTime() + backoff, windowEnd),
       );
-      await record(
-        tx,
-        row,
-        target,
-        { attempts, nextAttemptAt: retryAt, lastError: reason },
-        {
-          message: `${failure}, retrying at ${retryAt.toISOString()}`,
-          data: { attempt: attempts, retryAt: retryAt.toISOString() },
-        },
-        () => deps.retryDelivery(tx, row.id, retryAt),
+      await recording((tx) =>
+        record(
+          tx,
+          row,
+          target,
+          { attempts, nextAttemptAt: retryAt, lastError: reason },
+          {
+            message: `${failure}, retrying at ${retryAt.toISOString()}`,
+            data: { attempt: attempts, retryAt: retryAt.toISOString() },
+          },
+          (inTx) => deps.retryDelivery(inTx, row.id, retryAt),
+        ),
       );
     }
     return;
   }
 
   const sentAt = now();
-  const groupId = rows.length === 1 ? null : (rows.find((row) => row.groupId !== null)?.groupId ?? crypto.randomUUID());
+  // New for each message, even after waiting under an id, because a group's rows can go out in two sends.
+  const groupId = rows.length === 1 ? null : crypto.randomUUID();
   const sentTo = `Sent to ${target.name}${rows.length === 1 ? "" : ` in a group of ${String(rows.length)}`}`;
   for (const row of rows) {
     const attempts = row.attempts + 1;
-    await record(
-      tx,
-      row,
-      target,
-      { attempts, status: "sent", sentAt, nextAttemptAt: null, lastError: null, groupId },
-      { message: sentTo, data: { attempt: attempts } },
+    await recording((tx) =>
+      record(
+        tx,
+        row,
+        target,
+        { attempts, status: "sent", sentAt, nextAttemptAt: null, lastError: null, groupId },
+        { message: sentTo, data: { attempt: attempts } },
+      ),
     );
   }
   if (target.lastError !== null) {
-    await tx.update(destination).set({ lastError: null, lastErrorAt: null }).where(eq(destination.id, target.id));
+    await recording(async (tx) => {
+      await tx.update(destination).set({ lastError: null, lastErrorAt: null }).where(eq(destination.id, target.id));
+    });
   }
 }
 
@@ -279,41 +320,37 @@ async function send(tx: Tx, rows: DueDelivery[], target: Destination, deps: Deli
  * Jobs for one Destination take turns on its row, held through the send, so two can't both send an Item
  * (ADR 0028). Finding its rows sent, a waiting job ends at once, so a burst holds the queue only for one
  * send. The lock lets a new Delivery in, because it doesn't touch the key its foreign key reads. A
- * webhook gets one request per Item with no settings to check, so its sends don't wait for each other.
+ * webhook gets one request per Item with no settings to check, so it takes no lock and holds no
+ * connection through its request.
  */
 export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Promise<void> {
   const now = deps.now ?? (() => new Date());
   const [found] = await db
-    .select({ destinationId: delivery.destinationId, type: destination.type })
+    .select({ destination })
     .from(delivery)
     .innerJoin(destination, eq(delivery.destinationId, destination.id))
     .where(eq(delivery.id, deliveryId));
   if (found === undefined) return;
-  const isWebhook = found.type === "webhook";
+  if (found.destination.type === "webhook") {
+    const due = await loadDue(db, eq(delivery.id, deliveryId));
+    await send(due, found.destination, deps, now, (write) => db.transaction(write));
+    return;
+  }
 
   await db.transaction(async (tx) => {
-    const reading = tx.select().from(destination).where(eq(destination.id, found.destinationId));
-    const [target] = await (isWebhook ? reading : reading.for("no key update"));
+    const [target] = await tx
+      .select()
+      .from(destination)
+      .where(eq(destination.id, found.destination.id))
+      .for("no key update");
     if (target === undefined) return;
 
-    if (isWebhook) {
-      await send(tx, await loadDue(tx, eq(delivery.id, deliveryId)), target, deps, now);
-      return;
-    }
     // Held alerts whose time has come join this send rather than wait for the sweep. If they waited, a
     // new alert would go alone and restart the burst window, and a steady stream could hold them forever.
-    await tx
-      .update(delivery)
-      .set({ status: "queued", nextAttemptAt: null })
-      .where(
-        and(
-          eq(delivery.destinationId, target.id),
-          inArray(delivery.status, ["held", "grouped"]),
-          lte(delivery.nextAttemptAt, sql`now()`),
-        ),
-      );
+    await releaseDueDeliveries(tx, eq(delivery.destinationId, target.id));
     const due = await loadDue(tx, eq(delivery.destinationId, target.id));
     if (due.length === 0) return;
-    await send(tx, await applySchedule(tx, due, target, now()), target, deps, now);
+    const sending = await applySchedule(tx, due, target, now());
+    await send(sending, target, deps, now, (write) => write(tx));
   });
 }
