@@ -122,6 +122,12 @@ export function egressPolicy(config: Pick<Config, "mode" | "egressAllowlist">) {
     !matches(blocked, address) || hosts.has(host.toLowerCase()) || matches(allowed, address);
 }
 
+/** The address a URL names directly, without the brackets IPv6 takes, or undefined for a host name. */
+export function urlIpLiteral(url: URL) {
+  const literal = url.hostname.replace(/^\[(.*)\]$/, "$1");
+  return isIP(literal) === 0 ? undefined : literal;
+}
+
 /**
  * A fetch that refuses blocked addresses. It checks the address the socket connects to, after DNS,
  * on every redirect, and limits each request's time and response size.
@@ -171,8 +177,8 @@ export function createEgressFetch(
       if (url.protocol !== "http:" && url.protocol !== "https:") {
         throw new EgressBlockedError(url.href, `only http and https URLs are fetched`);
       }
-      const literal = url.hostname.replace(/^\[(.*)\]$/, "$1");
-      if (isIP(literal) !== 0) check(literal, literal);
+      const literal = urlIpLiteral(url);
+      if (literal !== undefined) check(literal, literal);
 
       let response;
       try {
