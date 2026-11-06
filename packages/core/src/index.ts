@@ -10,6 +10,7 @@ export {
   type EgressRule,
 } from "./egress/egress.ts";
 export { deliver, type DeliverDeps, type Sender } from "./delivery/deliver.ts";
+export { createTelegramSender } from "./delivery/telegram.ts";
 export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/capture.ts";
 export { runExtractorRuleByHand } from "./pipeline/manual-run.ts";
 export { processItem, type ProcessItemDeps } from "./pipeline/process-item.ts";

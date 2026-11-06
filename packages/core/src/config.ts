@@ -46,7 +46,11 @@ const schema = z
     SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
     google: z.object({ GOOGLE_CLIENT_ID: z.string(), GOOGLE_CLIENT_SECRET: z.string() }).optional(),
     github: z.object({ GITHUB_CLIENT_ID: z.string(), GITHUB_CLIENT_SECRET: z.string() }).optional(),
-    TELEGRAM_BOT_TOKEN: z.string().optional(),
+    // Goes into the Bot API's URL. The message can't repeat the value, which is a credential.
+    TELEGRAM_BOT_TOKEN: z
+      .string()
+      .regex(/^\d+:[\w-]+$/, "must look like <digits>:<token>, as BotFather gives it")
+      .optional(),
     TELEGRAM_API_ID: z.coerce.number().int().positive().optional(),
     TELEGRAM_API_HASH: z.string().optional(),
     OBSCURA_CDP_URL: z.url({ protocol: /^(wss?|https?)$/ }).optional(),

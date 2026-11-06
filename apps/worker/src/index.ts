@@ -1,5 +1,5 @@
 import { rmSync, writeFileSync } from "node:fs";
-import { createAgentFetch, createEgressFetch, loadConfig } from "@watchdog/core";
+import { createAgentFetch, createEgressFetch, createTelegramSender, loadConfig } from "@watchdog/core";
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { startDelivery } from "./delivery.ts";
@@ -32,10 +32,18 @@ boss.on("error", (error) => {
 });
 await boss.start();
 const db = createDb(config.databaseUrl);
-// #192, #193 and #194 replace these. Until then an attempt fails, and the Item's Log says why.
+const egressFetch = createEgressFetch(config);
+// #193 and #194 replace these. Until then an attempt fails, and the Item's Log says why.
 const noSender = { send: () => Promise.reject(new Error("this type of Destination can't send yet")) };
 await startDelivery(db, boss, {
-  senders: { telegram: noSender, email: noSender, webhook: noSender },
+  senders: {
+    telegram: createTelegramSender(config.telegram.botToken, {
+      fetch: egressFetch,
+      encryptionKey: config.encryptionKey,
+    }),
+    email: noSender,
+    webhook: noSender,
+  },
   appUrl: config.auth.url,
 });
 await startPipeline(db, boss, {
@@ -43,7 +51,7 @@ await startPipeline(db, boss, {
   encryptionKey: config.encryptionKey,
 });
 await startScheduler(db, boss, config.mode, {
-  fetch: createEgressFetch(config),
+  fetch: egressFetch,
   enqueueItems: itemEnqueuer(boss),
 });
 

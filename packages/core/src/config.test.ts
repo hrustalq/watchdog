@@ -182,7 +182,7 @@ describe("loadConfig", () => {
     expect(
       loadConfig({
         ...minimal,
-        TELEGRAM_BOT_TOKEN: "token",
+        TELEGRAM_BOT_TOKEN: "123456:AAH-token_value",
         TELEGRAM_API_ID: "12345",
         TELEGRAM_API_HASH: "hash",
         OBSCURA_CDP_URL: "ws://obscura:9222",
@@ -191,11 +191,24 @@ describe("loadConfig", () => {
         GLITCHTIP_DSN: "https://key@glitchtip.example.com/1",
       }),
     ).toMatchObject({
-      telegram: { botToken: "token", apiId: 12345, apiHash: "hash" },
+      telegram: { botToken: "123456:AAH-token_value", apiId: 12345, apiHash: "hash" },
       obscura: { cdpUrl: "ws://obscura:9222", cdpToken: "cdp-token" },
       egressAllowlist: [{ type: "subnet", address: "10.0.0.5", prefix: 32, family: "ipv4" }],
       glitchtipDsn: "https://key@glitchtip.example.com/1",
     });
+  });
+
+  it.each(["a-secret-value", "123456", ":a-secret-value", "abc:a-secret-value", "123:a secret/value"])(
+    "refuses TELEGRAM_BOT_TOKEN=%s, naming the variable without repeating its value",
+    (value) => {
+      const load = () => loadConfig({ ...minimal, TELEGRAM_BOT_TOKEN: value });
+      expect(load).toThrow(/TELEGRAM_BOT_TOKEN: must look like <digits>:<token>/);
+      expect(load).not.toThrow(value);
+    },
+  );
+
+  it("treats a blank TELEGRAM_BOT_TOKEN as no bot", () => {
+    expect(loadConfig({ ...minimal, TELEGRAM_BOT_TOKEN: "" }).telegram.botToken).toBeUndefined();
   });
 
   it("rejects a malformed optional variable", () => {

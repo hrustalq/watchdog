@@ -39,20 +39,22 @@ afterEach(() => {
   running.clear();
 });
 
+/** Only what the worker needs, so a developer's own environment can't leak in. */
+const workerEnv = (databaseUrl: string) => ({
+  PATH: process.env.PATH,
+  TMPDIR: tmp,
+  DATABASE_URL: databaseUrl,
+  BETTER_AUTH_SECRET: "a-test-secret-of-at-least-32-characters",
+  BETTER_AUTH_URL: "http://localhost:3000",
+  WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
+  // The test's feed server listens on loopback, which the egress guard blocks by default.
+  EGRESS_ALLOWLIST: "127.0.0.1",
+});
+
 /** Runs the worker the way its container does, until it logs that it's ready. */
 async function startWorker(databaseUrl: string) {
   const child = spawn(process.execPath, [path.join(import.meta.dirname, "index.ts")], {
-    // Only what the worker needs, so a developer's own environment can't leak in.
-    env: {
-      PATH: process.env.PATH,
-      TMPDIR: tmp,
-      DATABASE_URL: databaseUrl,
-      BETTER_AUTH_SECRET: "a-test-secret-of-at-least-32-characters",
-      BETTER_AUTH_URL: "http://localhost:3000",
-      WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
-      // The test's feed server listens on loopback, which the egress guard blocks by default.
-      EGRESS_ALLOWLIST: "127.0.0.1",
-    },
+    env: workerEnv(databaseUrl),
   });
   running.add(child);
   child.once("exit", () => running.delete(child));
@@ -82,6 +84,20 @@ async function startWorker(databaseUrl: string) {
       await exited;
     },
   };
+}
+
+/** Runs the worker with one more variable, expecting it to stop at boot. */
+async function bootFailure(databaseUrl: string, extra: Record<string, string>) {
+  const child = spawn(process.execPath, [path.join(import.meta.dirname, "index.ts")], {
+    env: { ...workerEnv(databaseUrl), ...extra },
+  });
+  running.add(child);
+  let output = "";
+  child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
+  const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
+  running.delete(child);
+  return { code, output };
 }
 
 async function databaseState(url: string) {
@@ -117,6 +133,14 @@ describe("worker", () => {
     expect(await worker.stop()).toBe(0);
     expect(worker.output()).toContain("pg-boss stopped");
     expect(existsSync(ready)).toBe(false);
+  }, 60_000);
+
+  it("stops at boot on a malformed TELEGRAM_BOT_TOKEN, naming the variable and not its value", async () => {
+    const { code, output } = await bootFailure(postgres.url, { TELEGRAM_BOT_TOKEN: "not-a-real-token" });
+
+    expect(code).toBe(1);
+    expect(output).toContain("TELEGRAM_BOT_TOKEN");
+    expect(output).not.toContain("not-a-real-token");
   }, 60_000);
 
   it("doesn't re-run applied migrations when it starts again", async () => {
@@ -354,16 +378,15 @@ describe("worker", () => {
       expect(await restarted.stop()).toBe(0);
     }, 150_000);
 
-    it("runs a Delivery's job again when the worker was killed during the send", async () => {
-      // A first run creates the queue and is killed, so the job waits with no worker to take it.
-      await (await startWorker(postgres.url)).kill();
+    /** A Delivery of a captured Item to a new Destination of that type, with its job queued. */
+    async function queueDelivery(type: "email" | "telegram") {
       const itemId = await captureItem();
       const found = await db.query.item.findFirst({ where: eq(item.id, itemId) });
-      const [mail] = await db
+      const [target] = await db
         .insert(destination)
-        .values({ workspaceId: found?.workspaceId ?? "", type: "email", name: "me", confirmedAt: new Date() })
+        .values({ workspaceId: found?.workspaceId ?? "", type, name: "me", confirmedAt: new Date() })
         .returning();
-      const destinationId = mail?.id ?? "";
+      const destinationId = target?.id ?? "";
       const [saved] = await db
         .insert(action)
         .values({
@@ -384,6 +407,30 @@ describe("worker", () => {
         .returning();
       const deliveryId = row?.id ?? "";
       await db.transaction((tx) => deliveryEnqueuer(boss)(tx, [deliveryId]));
+      return { itemId, deliveryId };
+    }
+
+    it("starts without a Telegram bot, and a Telegram Delivery's Log says the bot isn't set up", async () => {
+      await (await startWorker(postgres.url)).kill();
+      const { itemId } = await queueDelivery("telegram");
+
+      const worker = await startWorker(postgres.url);
+      await vi.waitFor(
+        async () => {
+          const rows = await db.select().from(itemLog).where(eq(itemLog.itemId, itemId));
+          expect(rows.map((row) => row.message)).toEqual(
+            expect.arrayContaining([expect.stringMatching(/^Sending to me failed: the Telegram bot isn't set up/)]),
+          );
+        },
+        { timeout: 90_000, interval: 250 },
+      );
+      expect(await worker.stop()).toBe(0);
+    }, 150_000);
+
+    it("runs a Delivery's job again when the worker was killed during the send", async () => {
+      // A first run creates the queue and is killed, so the job waits with no worker to take it.
+      await (await startWorker(postgres.url)).kill();
+      const { deliveryId } = await queueDelivery("email");
       const deliveryJob = async () =>
         (
           await db.$client.query<{ state: string }>(
