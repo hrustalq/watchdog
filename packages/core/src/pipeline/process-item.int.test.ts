@@ -2055,7 +2055,7 @@ describe("processItem", () => {
       expect(jobs.queued.flat().sort()).toEqual(deliveries.map((row) => row.id).sort());
       expect(await actLog(itemId)).toMatchObject([
         {
-          message: "Action critical fired: Category is advisory. Sent to me, ops-chat",
+          message: "Action critical fired: Category is advisory. Queued for me, ops-chat",
           data: {
             actionId,
             action: "critical",
@@ -2223,7 +2223,7 @@ describe("processItem", () => {
       expect(finished.processedAt).not.toBeNull();
       expect((await deliveriesOf(itemId)).map((row) => row.actionId)).toEqual([categoryOnly]);
       expect(jobs.queued.flat()).toHaveLength(1);
-      expect(await sentences(itemId)).toEqual(["Action critical fired: Category is advisory. Sent to me"]);
+      expect(await sentences(itemId)).toEqual(["Action critical fired: Category is advisory. Queued for me"]);
     });
 
     it("does nothing on a last attempt for an Item that has finished or gone", async () => {
@@ -2263,8 +2263,8 @@ describe("processItem", () => {
       await processItem(db, itemId, answering().deps);
 
       expect(await sentences(itemId)).toEqual([
-        "Action severe fired: Severity is at least 2. Sent to me",
-        "Action versioned fired: Field version is 2. Sent to me",
+        "Action severe fired: Severity is at least 2. Queued for me",
+        "Action versioned fired: Field version is 2. Queued for me",
       ]);
     });
 
@@ -2310,7 +2310,7 @@ describe("processItem", () => {
       expect((await deliveriesOf(itemId)).map((row) => row.actionId)).toEqual([fine]);
       const [skipped, fired, ...rest] = await actLog(itemId);
       expect(rest).toEqual([]);
-      expect(fired?.message).toBe("Action fine fired: Category is advisory. Sent to me");
+      expect(fired?.message).toBe("Action fine fired: Category is advisory. Queued for me");
       expect(skipped).toMatchObject({
         message: "Skipped Action broken: its definition no longer parses",
         data: { actionId: broken, action: "broken" },
@@ -2331,7 +2331,7 @@ describe("processItem", () => {
       expect(await actLog(itemId)).toMatchObject([
         {
           message:
-            "Action critical fired: Category is advisory. Sent to ops-chat. Skipped new-address: it isn't confirmed yet",
+            "Action critical fired: Category is advisory. Queued for ops-chat. Skipped new-address: not confirmed yet",
           data: { destinations: ["ops-chat"], skipped: ["new-address"] },
         },
       ]);
@@ -2353,9 +2353,20 @@ describe("processItem", () => {
       expect(await digestRowsOf(itemId)).toEqual([]);
       expect(jobs.queued).toEqual([]);
       expect(await sentences(itemId)).toEqual([
-        "Action critical didn't fire: new-address isn't confirmed yet",
-        "Action weekly didn't fire: new-chat isn't confirmed yet",
+        "Action critical didn't fire: it has no confirmed Destination. Skipped new-address: not confirmed yet",
+        "Action weekly didn't fire: it has no confirmed Destination. Skipped new-chat: not confirmed yet",
       ]);
+    });
+
+    it("keeps the Log row a readable length when the Condition is long", async () => {
+      const seeded = await seed();
+      await saveAction(seeded, "long", { not: titleContains("x".repeat(2000)) }, [await addDestination(seeded, "me")]);
+      const itemId = await capture(seeded, "Anything");
+
+      await processItem(db, itemId, deps);
+
+      const [row] = await actLog(itemId);
+      expect(row?.message).toHaveLength(1000);
     });
 
     it("notes nothing about an unconfirmed Destination when the Condition doesn't hold", async () => {

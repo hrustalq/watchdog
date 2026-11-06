@@ -17,6 +17,7 @@ import {
   sql,
   type Tx,
 } from "@watchdog/db";
+import { storableMessage } from "../agent/call-agent.ts";
 import { evaluateActionCondition } from "../rules/condition.ts";
 import { actionSchema } from "../rules/schema.ts";
 import { conditionToWords } from "../rules/words.ts";
@@ -85,7 +86,8 @@ const namesOf = (rows: { name: string }[]) => rows.map(({ name }) => name);
 /** Records the Item's Deliveries and Digest rows, and says in its Log what happened. */
 async function runActStage(tx: Tx, itemId: string, deps: ActDeps) {
   const log = async (message: string, data: Record<string, unknown> = {}) => {
-    await tx.insert(itemLog).values({ itemId, stage: "act", message, data });
+    // A Condition can hold long values, and the Log holds a readable sentence.
+    await tx.insert(itemLog).values({ itemId, stage: "act", message: storableMessage(message), data });
   };
 
   const target = await conditionItem(tx, itemId);
@@ -117,8 +119,9 @@ async function runActStage(tx: Tx, itemId: string, deps: ActDeps) {
     const confirmed = all.filter(isConfirmed);
     const skipped = namesOf(all.filter((row) => !isConfirmed(row)));
     const data = { ...named, kind, condition: conditionToWords(when), destinations: namesOf(confirmed), skipped };
+    const skippedNote = skipped.length > 0 ? `. Skipped ${skipped.join(", ")}: not confirmed yet` : "";
     if (confirmed.length === 0) {
-      await log(`Action ${saved.name} didn't fire: ${skipped.join(", ")} isn't confirmed yet`, data);
+      await log(`Action ${saved.name} didn't fire: it has no confirmed Destination${skippedNote}`, data);
       continue;
     }
 
@@ -132,8 +135,8 @@ async function runActStage(tx: Tx, itemId: string, deps: ActDeps) {
         .returning({ id: delivery.id });
       queued.push(...inserted.map(({ id }) => id));
     }
-    const verb = kind === "digest" ? "Collected for" : "Sent to";
-    const skippedNote = skipped.length > 0 ? `. Skipped ${skipped.join(", ")}: it isn't confirmed yet` : "";
+    // "Queued", because whether it's sent is the Delivery's own `act` rows to say.
+    const verb = kind === "digest" ? "Collected for" : "Queued for";
     await log(
       `Action ${saved.name} fired: ${data.condition}. ${verb} ${data.destinations.join(", ")}${skippedNote}`,
       data,
