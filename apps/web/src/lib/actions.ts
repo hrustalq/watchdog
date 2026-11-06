@@ -9,12 +9,10 @@ export type WorkspaceDestination = Pick<typeof destination.$inferSelect, "name" 
 function destinationError(action: Action, name: string, destinations: readonly WorkspaceDestination[]) {
   const found = destinations.find((other) => other.name === name);
   if (found === undefined) return `This Workspace has no Destination named “${name}”.`;
+  if ((found.type === "webhook") === (action.kind === "webhook")) return undefined;
   if (action.kind === "webhook") {
-    return found.type === "webhook"
-      ? undefined
-      : `A webhook Action sends only to webhook Destinations, and “${name}” isn't one.`;
+    return `A webhook Action sends only to webhook Destinations, and “${name}” isn't one.`;
   }
-  if (found.type !== "webhook") return undefined;
   const noun = action.kind === "alert" ? "An alert" : "A Digest";
   return `${noun} sends only to Telegram and email Destinations, and “${name}” is a webhook Destination.`;
 }

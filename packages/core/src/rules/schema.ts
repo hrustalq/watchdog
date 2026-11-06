@@ -267,8 +267,12 @@ const digestSchedule = refusedBy((schedule) => scheduleError(schedule, "self-hos
 export const actionSchema = z.discriminatedUnion(
   "kind",
   [
-    z.strictObject({ action: label, when: conditionSchema, kind: z.literal("alert"), destinations }),
-    z.strictObject({ action: label, when: conditionSchema, kind: z.literal("webhook"), destinations }),
+    z.strictObject({
+      action: label,
+      when: conditionSchema,
+      kind: z.enum(["alert", "webhook"]),
+      destinations,
+    }),
     z.strictObject({
       action: label,
       when: conditionSchema,
