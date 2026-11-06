@@ -279,6 +279,14 @@ describe("Rules", () => {
         { path: "", message: containing("can't become") },
       ]);
     });
+
+    it("refuses an Action, which it has nowhere to store yet", async () => {
+      const yaml = "action: a\nwhen: { field: severity, op: gte, value: 4 }\nkind: alert\ndestinations: [me]\n";
+      expect(await problems(yaml)).toEqual([{ path: "", message: containing("can't save an Action") }]);
+      expect(await problemsInDraft(db, ours, null, yaml)).toEqual([
+        { path: "", message: containing("can't save an Action") },
+      ]);
+    });
   });
 
   describe("field names across Extractor Rules", () => {
