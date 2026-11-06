@@ -2,11 +2,9 @@
 import { type PollSourceDeps, processItem, type ProcessItemDeps } from "@watchdog/core";
 import { type Db, sql } from "@watchdog/db";
 import { fromDrizzle, type PgBoss } from "pg-boss";
+import { deliveryEnqueuer } from "./delivery.ts";
 
 export const processItemQueue = "process-item";
-
-// Nothing sends a Delivery until #191 adds the deliver queue, which replaces this.
-const enqueueDeliveries: ProcessItemDeps["enqueueDeliveries"] = () => Promise.resolve();
 
 /** Queues one job per Item over the capture's transaction, so they commit or roll back together. */
 export function itemEnqueuer(boss: PgBoss): PollSourceDeps["enqueueItems"] {
@@ -40,6 +38,7 @@ export async function createPipelineQueue(boss: PgBoss) {
 /** Call before anything can capture: queueing a job fails on a queue that doesn't exist. */
 export async function startPipeline(db: Db, boss: PgBoss, agent: ProcessItemDeps["agent"]) {
   await createPipelineQueue(boss);
+  const enqueueDeliveries = deliveryEnqueuer(boss);
 
   // Naming the first type argument stops inference, so the options' type has to be named too.
   await boss.work<{ itemId: string }, unknown, { localConcurrency: 4; includeMetadata: true }>(

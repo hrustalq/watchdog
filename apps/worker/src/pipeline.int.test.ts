@@ -23,6 +23,7 @@ import {
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { PgBoss } from "pg-boss";
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { createDeliveryQueue, deliverQueue } from "./delivery.ts";
 import { createPipelineQueue, itemEnqueuer, processItemQueue, startPipeline } from "./pipeline.ts";
 
 /** The value, which the test expects to be there. */
@@ -63,6 +64,8 @@ describe("pipeline", () => {
     workspaceId = present(ws).id;
     boss = new PgBoss(postgres.url);
     await boss.start();
+    // No worker takes these jobs here, so a test can look at them.
+    await createDeliveryQueue(boss);
     await startPipeline(db, boss, {
       fetch: (input, init) => modelFetch(input, init),
       encryptionKey: Buffer.alloc(32, 7),
@@ -185,6 +188,11 @@ describe("pipeline", () => {
     );
 
     expect(deliveries).toMatchObject([{ itemId, destinationId, status: "queued" }]);
+    const { rows } = await db.$client.query<{ deliveryId: string }>(
+      "select data->>'deliveryId' as \"deliveryId\" from pgboss.job where name = $1",
+      [deliverQueue],
+    );
+    expect(rows).toEqual([{ deliveryId: present(deliveries[0]).id }]);
   });
 
   it("classifies a captured Item in its job", async () => {

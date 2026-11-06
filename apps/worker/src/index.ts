@@ -2,6 +2,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { createAgentFetch, createEgressFetch, loadConfig } from "@watchdog/core";
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
+import { startDelivery } from "./delivery.ts";
 import { itemEnqueuer, startPipeline } from "./pipeline.ts";
 import { readyFile } from "./ready.ts";
 import { startScheduler } from "./scheduler.ts";
@@ -31,6 +32,12 @@ boss.on("error", (error) => {
 });
 await boss.start();
 const db = createDb(config.databaseUrl);
+// #192, #193 and #194 replace these. Until then an attempt fails, and the Item's Log says why.
+const noSender = { send: () => Promise.reject(new Error("this type of Destination can't send yet")) };
+await startDelivery(db, boss, {
+  senders: { telegram: noSender, email: noSender, webhook: noSender },
+  appUrl: config.auth.url,
+});
 await startPipeline(db, boss, {
   fetch: createAgentFetch(config),
   encryptionKey: config.encryptionKey,
@@ -40,7 +47,7 @@ await startScheduler(db, boss, config.mode, {
   enqueueItems: itemEnqueuer(boss),
 });
 
-// The first SIGTERM or SIGINT stops pg-boss, which stops the tick and lets running polls finish.
+// The first SIGTERM or SIGINT stops pg-boss, which stops the tick and lets running polls and sends finish.
 // A second signal while it stops is ignored.
 let stopping = false;
 const stop = async () => {

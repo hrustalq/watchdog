@@ -1,0 +1,287 @@
+import type { Sender } from "@watchdog/core";
+import {
+  action,
+  actionDestination,
+  closeDb,
+  createDb,
+  type Db,
+  delivery,
+  destination,
+  eq,
+  item,
+  itemLog,
+  migrate,
+  source,
+  user,
+  workspace,
+} from "@watchdog/db";
+import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
+import { PgBoss } from "pg-boss";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { createDeliveryQueue, deliverQueue, deliveryEnqueuer, startDelivery } from "./delivery.ts";
+
+/** The value, which the test expects to be there. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("Expected a value");
+  return value;
+}
+
+const waitLong = { timeout: 30_000, interval: 100 };
+
+describe("the deliver queue", () => {
+  let postgres: TestPostgres;
+  let db: Db;
+  /** Only queues and expires jobs. Each test starts its own worker, so it picks the sender. */
+  let boss: PgBoss;
+  let worker: PgBoss | undefined;
+
+  beforeAll(async () => {
+    postgres = await startPostgres();
+    await migrate(postgres.url);
+    db = createDb(postgres.url);
+    boss = new PgBoss({ connectionString: postgres.url, schedule: false, supervise: false });
+    await boss.start();
+    await createDeliveryQueue(boss);
+    return async () => {
+      await boss.stop();
+      await closeDb(db);
+      await postgres.stop();
+    };
+  }, 120_000);
+
+  afterEach(async () => {
+    await worker?.stop({ timeout: 1_000 });
+    worker = undefined;
+    // A job a test left waiting would go to the next test's sender.
+    await db.$client.query("delete from pgboss.job where name = $1", [deliverQueue]);
+  });
+
+  /** A queued Delivery with no job yet. */
+  async function seed() {
+    const ownerId = crypto.randomUUID();
+    await db.insert(user).values({ id: ownerId, name: "Owner", email: `${ownerId}@example.com` });
+    const [ws] = await db.insert(workspace).values({ name: "Workspace", ownerUserId: ownerId }).returning();
+    const workspaceId = present(ws).id;
+    const [src] = await db
+      .insert(source)
+      .values({
+        workspaceId,
+        type: "rss",
+        name: "Feed",
+        config: { url: "https://feeds.test/feed.rss" },
+        schedule: "*/15 * * * *",
+      })
+      .returning();
+    const [captured] = await db
+      .insert(item)
+      .values({ workspaceId, sourceId: present(src).id, externalId: "one", title: "One", body: "An entry.", raw: {} })
+      .returning();
+    const itemId = present(captured).id;
+    const [chat] = await db
+      .insert(destination)
+      .values({ workspaceId, type: "telegram", name: "ops-chat", confirmedAt: new Date() })
+      .returning();
+    const destinationId = present(chat).id;
+    const [saved] = await db
+      .insert(action)
+      .values({
+        workspaceId,
+        name: "ones",
+        kind: "alert",
+        definition: {
+          action: "ones",
+          when: { field: "title", op: "is", value: "One" },
+          kind: "alert",
+          destinations: [destinationId],
+        },
+      })
+      .returning();
+    const actionId = present(saved).id;
+    await db.insert(actionDestination).values({ actionId, destinationId });
+    const [row] = await db.insert(delivery).values({ actionId, itemId, destinationId }).returning();
+    return { itemId, deliveryId: present(row).id };
+  }
+
+  const enqueue = (deliveryId: string) =>
+    db.transaction((tx) => deliveryEnqueuer(boss)(tx, [deliveryId]));
+
+  async function startWorker(send: Sender["send"]) {
+    worker = new PgBoss({ connectionString: postgres.url, schedule: false, supervise: false });
+    await worker.start();
+    const sender = { send };
+    await startDelivery(db, worker, {
+      senders: { telegram: sender, email: sender, webhook: sender },
+      appUrl: "https://watchdog.test",
+    });
+    return worker;
+  }
+
+  const rowOf = async (deliveryId: string) => db.query.delivery.findFirst({ where: eq(delivery.id, deliveryId) });
+  const logOf = async (itemId: string) =>
+    (await db.select().from(itemLog).where(eq(itemLog.itemId, itemId)).orderBy(itemLog.id)).map((row) => row.message);
+  const jobsOf = async (deliveryId: string) =>
+    (
+      await db.$client.query<{ state: string; start_after: Date; keep_until: Date }>(
+        "select state, start_after, keep_until from pgboss.job where name = $1 and data->>'deliveryId' = $2",
+        [deliverQueue, deliveryId],
+      )
+    ).rows;
+
+  it("keeps the queue's retries and expiry on an upgraded install too", async () => {
+    await boss.updateQueue(deliverQueue, { expireInSeconds: 60, retryLimit: 1 });
+
+    await createDeliveryQueue(boss);
+
+    expect(await boss.getQueue(deliverQueue)).toMatchObject({
+      expireInSeconds: 900,
+      retryLimit: 12,
+      retryBackoff: true,
+    });
+  });
+
+  it("queues no job when the transaction that inserts the Delivery rolls back", async () => {
+    const { deliveryId } = await seed();
+
+    await expect(
+      db.transaction(async (tx) => {
+        await deliveryEnqueuer(boss)(tx, [deliveryId]);
+        throw new Error("The Act stage failed after queueing");
+      }),
+    ).rejects.toThrow("The Act stage failed after queueing");
+
+    expect(await jobsOf(deliveryId)).toEqual([]);
+  });
+
+  it("holds a waiting job for 24 hours past its start at the very least", async () => {
+    const { deliveryId } = await seed();
+    await enqueue(deliveryId);
+
+    const [job] = await jobsOf(deliveryId);
+    const { keep_until: keepUntil, start_after: startAfter } = present(job);
+    expect(keepUntil.getTime() - startAfter.getTime()).toBeGreaterThanOrEqual(24 * 60 * 60 * 1000);
+  });
+
+  it("sends a queued Delivery in its job", async () => {
+    const { deliveryId, itemId } = await seed();
+    const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+    await startWorker(send);
+
+    await enqueue(deliveryId);
+
+    await vi.waitFor(async () => {
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "sent", attempts: 1 });
+    }, waitLong);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await logOf(itemId)).toEqual(["Sent to ops-chat"]);
+  });
+
+  it("retries through new jobs at the times the Log names, and sends once on the third attempt", async () => {
+    const { deliveryId, itemId } = await seed();
+    let failures = 2;
+    const send = vi.fn<Sender["send"]>(() =>
+      failures-- > 0 ? Promise.reject(new Error("Chat unreachable")) : Promise.resolve(),
+    );
+    await startWorker(send);
+    await enqueue(deliveryId);
+
+    for (const attempts of [1, 2]) {
+      const row = await vi.waitFor(async () => {
+        const found = await rowOf(deliveryId);
+        expect(found).toMatchObject({ status: "queued", attempts });
+        return present(found);
+      }, waitLong);
+      // The attempt's job is finished, and the next waits for the time the row and the Log say.
+      const waiting = await vi.waitFor(async () => {
+        const jobs = await jobsOf(deliveryId);
+        expect(jobs.filter((job) => job.state === "active")).toEqual([]);
+        return jobs.filter((job) => job.state === "created");
+      }, waitLong);
+      expect(waiting.map((job) => job.start_after)).toEqual([row.nextAttemptAt]);
+      // Stands in for waiting out the delay.
+      await db.$client.query("update delivery set next_attempt_at = now() where id = $1", [deliveryId]);
+      await db.$client.query(
+        "update pgboss.job set start_after = now() where name = $1 and state = 'created' and data->>'deliveryId' = $2",
+        [deliverQueue, deliveryId],
+      );
+    }
+
+    await vi.waitFor(async () => {
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "sent", attempts: 3 });
+    }, waitLong);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(await logOf(itemId)).toEqual([
+      expect.stringContaining("Sending to ops-chat failed: Chat unreachable, retrying at"),
+      expect.stringContaining("Sending to ops-chat failed: Chat unreachable, retrying at"),
+      "Sent to ops-chat",
+    ]);
+
+    // A stray job for it changes nothing.
+    await enqueue(deliveryId);
+    await vi.waitFor(async () => {
+      expect((await jobsOf(deliveryId)).filter((job) => job.state !== "completed")).toEqual([]);
+    }, waitLong);
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("lets a running send finish when the worker stops", async () => {
+    const { deliveryId, itemId } = await seed();
+    const held = Promise.withResolvers<undefined>();
+    let started = false;
+    const running = await startWorker(async () => {
+      started = true;
+      await held.promise;
+    });
+    await enqueue(deliveryId);
+    await vi.waitFor(() => {
+      expect(started).toBe(true);
+    }, waitLong);
+
+    const stopped = running.stop();
+    held.resolve(undefined);
+    await stopped;
+    worker = undefined;
+
+    expect(await rowOf(deliveryId)).toMatchObject({ status: "sent", attempts: 1 });
+    expect(await logOf(itemId)).toEqual(["Sent to ops-chat"]);
+  });
+
+  it("runs a job again after its worker died during the send, and the Delivery still goes", async () => {
+    const { deliveryId, itemId } = await seed();
+    await enqueue(deliveryId);
+    // A worker that claims the job and is never heard from again.
+    expect(await boss.fetch(deliverQueue)).toHaveLength(1);
+    expect((await jobsOf(deliveryId)).map((job) => job.state)).toEqual(["active"]);
+
+    // Stands in for waiting out the expiry and the retry's delay.
+    await db.$client.query(
+      `update pgboss.job set started_on = now() - interval '1 hour', retry_delay = 0, retry_backoff = false
+       where name = $1 and data->>'deliveryId' = $2`,
+      [deliverQueue, deliveryId],
+    );
+    await boss.supervise(deliverQueue);
+    expect((await jobsOf(deliveryId)).map((job) => job.state)).toEqual(["retry"]);
+
+    const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+    await startWorker(send);
+
+    await vi.waitFor(async () => {
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "sent", attempts: 1 });
+    }, waitLong);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(await logOf(itemId)).toEqual(["Sent to ops-chat"]);
+  });
+
+  it("ends the job quietly when the Delivery is gone", async () => {
+    const { deliveryId, itemId } = await seed();
+    await db.delete(item).where(eq(item.id, itemId));
+    const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+    await startWorker(send);
+
+    await enqueue(deliveryId);
+
+    await vi.waitFor(async () => {
+      expect((await jobsOf(deliveryId)).map((job) => job.state)).toEqual(["completed"]);
+    }, waitLong);
+    expect(send).not.toHaveBeenCalled();
+  });
+});

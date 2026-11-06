@@ -6,7 +6,7 @@ export default defineConfig([
 
   // The worker reports its lifecycle and failed jobs on stdout and stderr; there is no logger yet.
   {
-    files: ["src/index.ts", "src/scheduler.ts", "src/pipeline.ts"],
+    files: ["src/index.ts", "src/scheduler.ts", "src/pipeline.ts", "src/delivery.ts"],
     rules: { "no-console": "off" },
   },
 ]);

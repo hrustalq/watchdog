@@ -5,10 +5,13 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pollSource } from "@watchdog/core";
 import {
+  action,
   classifier,
   closeDb,
   createDb,
   type Db,
+  delivery,
+  destination,
   eq,
   item,
   itemCategory,
@@ -21,6 +24,7 @@ import {
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { PgBoss } from "pg-boss";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { deliverQueue, deliveryEnqueuer } from "./delivery.ts";
 import { itemEnqueuer, processItemQueue } from "./pipeline.ts";
 import { readyFile } from "./ready.ts";
 
@@ -347,6 +351,82 @@ describe("worker", () => {
 
       const restarted = await startWorker(postgres.url);
       await expectClassifiedSoon(itemId);
+      expect(await restarted.stop()).toBe(0);
+    }, 150_000);
+
+    it("runs a Delivery's job again when the worker was killed during the send", async () => {
+      // A first run creates the queue and is killed, so the job waits with no worker to take it.
+      await (await startWorker(postgres.url)).kill();
+      const itemId = await captureItem();
+      const found = await db.query.item.findFirst({ where: eq(item.id, itemId) });
+      const [mail] = await db
+        .insert(destination)
+        .values({ workspaceId: found?.workspaceId ?? "", type: "email", name: "me", confirmedAt: new Date() })
+        .returning();
+      const destinationId = mail?.id ?? "";
+      const [saved] = await db
+        .insert(action)
+        .values({
+          workspaceId: found?.workspaceId ?? "",
+          name: "ones",
+          kind: "alert",
+          definition: {
+            action: "ones",
+            when: { field: "title", op: "is", value: "One" },
+            kind: "alert",
+            destinations: [destinationId],
+          },
+        })
+        .returning();
+      const [row] = await db
+        .insert(delivery)
+        .values({ actionId: saved?.id ?? "", itemId, destinationId })
+        .returning();
+      const deliveryId = row?.id ?? "";
+      await db.transaction((tx) => deliveryEnqueuer(boss)(tx, [deliveryId]));
+      const deliveryJob = async () =>
+        (
+          await db.$client.query<{ state: string }>(
+            "select state from pgboss.job where name = $1 and data->>'deliveryId' = $2",
+            [deliverQueue, deliveryId],
+          )
+        ).rows.map((job) => job.state);
+
+      // Holding the row's lock keeps the attempt from being recorded, so the kill lands mid-job.
+      const lock = await db.$client.connect();
+      try {
+        await lock.query("begin");
+        await lock.query("select 1 from delivery where id = $1 for update", [deliveryId]);
+        const worker = await startWorker(postgres.url);
+        await vi.waitFor(async () => { expect(await deliveryJob()).toEqual(["active"]); }, {
+          timeout: 30_000,
+          interval: 100,
+        });
+        await worker.kill();
+      } finally {
+        await lock.query("rollback");
+        lock.release();
+      }
+      expect(await deliveryJob()).toEqual(["active"]);
+
+      // Stands in for waiting out the expiry and retry delay, as in the test above.
+      await db.$client.query(
+        `update pgboss.job set started_on = now() - interval '1 hour', retry_delay = 0,
+         retry_backoff = false where name = $1 and data->>'deliveryId' = $2`,
+        [deliverQueue, deliveryId],
+      );
+      await boss.supervise(deliverQueue);
+
+      const restarted = await startWorker(postgres.url);
+      // The worker's senders can't send yet, so the retried job's attempt is a recorded failure.
+      await vi.waitFor(
+        async () => {
+          const attempted = await db.query.delivery.findFirst({ where: eq(delivery.id, deliveryId) });
+          expect(attempted?.attempts).toBe(1);
+          expect(attempted?.nextAttemptAt).not.toBeNull();
+        },
+        { timeout: 90_000, interval: 250 },
+      );
       expect(await restarted.stop()).toBe(0);
     }, 150_000);
   });
