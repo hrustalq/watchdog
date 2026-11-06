@@ -2,6 +2,7 @@
 // so the schemas are strict: a key they don't know would otherwise vanish on the way through.
 import { z } from "zod";
 import { jsonPathError } from "./jsonpath.ts";
+import { scheduleError } from "../schedule.ts";
 import { captureRegexError, regexError } from "./regex.ts";
 
 const sourceAndContent = ["source", "source.type", "title", "body", "author", "url", "language"];
@@ -254,9 +255,36 @@ export type AgentClassifier = z.infer<typeof agentClassifierSchema>;
 export type DeterministicExtractorRule = z.infer<typeof deterministicExtractorRuleSchema>;
 export type AgentExtractorRule = z.infer<typeof agentExtractorRuleSchema>;
 
+// By name in the YAML and by id once stored, so only a save can tell whether they exist or fit the
+// kind, which it does with the Workspace's Destinations in hand.
+const destinations = z.array(label).min(1);
+
+// This schema has no mode, so it refuses what no mode allows. A save applies its own mode's minimum.
+const digestSchedule = refusedBy((schedule) => scheduleError(schedule, "self-hosted"));
+
+// An Action runs after every other stage, so its Condition can test any field (docs: Rule model,
+// "What each rule can test"). The keys are in the order the Rule model page writes them.
+export const actionSchema = z.discriminatedUnion(
+  "kind",
+  [
+    z.strictObject({ action: label, when: conditionSchema, kind: z.literal("alert"), destinations }),
+    z.strictObject({ action: label, when: conditionSchema, kind: z.literal("webhook"), destinations }),
+    z.strictObject({
+      action: label,
+      when: conditionSchema,
+      kind: z.literal("digest"),
+      schedule: digestSchedule,
+      destinations,
+    }),
+  ],
+  { error: "An Action's kind is alert, webhook or digest." },
+);
+
+export type Action = z.infer<typeof actionSchema>;
+
 export type Classifier = DeterministicClassifier | AgentClassifier;
 export type ExtractorRule = DeterministicExtractorRule | AgentExtractorRule;
-export type Rule = Classifier | ExtractorRule;
+export type Rule = Classifier | ExtractorRule | Action;
 
 export const classifierSchema = byShape<Classifier>((value) =>
   has(value, "prompt") ? agentClassifierSchema : deterministicClassifierSchema,
@@ -266,9 +294,10 @@ export const extractorRuleSchema = byShape<ExtractorRule>((value) =>
   has(value, "prompt") ? agentExtractorRuleSchema : deterministicExtractorRuleSchema,
 );
 
-const notARule = refused('A rule starts with "classifier:" or "extractor:" and its name.');
+const notARule = refused('A rule starts with "classifier:", "extractor:" or "action:" and its name.');
 
 export const ruleSchema = byShape<Rule>((value) => {
   if (has(value, "classifier")) return classifierSchema;
-  return has(value, "extractor") ? extractorRuleSchema : notARule;
+  if (has(value, "extractor")) return extractorRuleSchema;
+  return has(value, "action") ? actionSchema : notARule;
 });

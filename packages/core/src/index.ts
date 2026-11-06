@@ -30,6 +30,8 @@ export {
   evaluateCondition,
 } from "./rules/condition.ts";
 export {
+  type Action,
+  actionSchema,
   agentClassifierSchema,
   type AgentClassifier,
   agentExtractorRuleSchema,
@@ -48,4 +50,5 @@ export {
   type Rule,
   ruleSchema,
 } from "./rules/schema.ts";
+export { conditionToWords } from "./rules/words.ts";
 export { ruleFromYaml, ruleToYaml } from "./rules/yaml.ts";
