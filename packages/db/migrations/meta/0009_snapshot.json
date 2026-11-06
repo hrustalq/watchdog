@@ -1,5 +1,5 @@
 {
-  "id": "113466fa-4891-4ec7-98a9-b79bc4c46a3e",
+  "id": "ec4a03bc-9069-439c-a566-d83d356c7387",
   "prevId": "9711432c-76fd-4074-9097-ed815a9e27a1",
   "version": "7",
   "dialect": "postgresql",
@@ -1558,23 +1558,7 @@
           "notNull": true
         }
       },
-      "indexes": {
-        "telegram_link_code_destination_id_idx": {
-          "name": "telegram_link_code_destination_id_idx",
-          "columns": [
-            {
-              "expression": "destination_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
+      "indexes": {},
       "foreignKeys": {
         "telegram_link_code_destination_id_destination_id_fk": {
           "name": "telegram_link_code_destination_id_destination_id_fk",

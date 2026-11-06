@@ -79,7 +79,6 @@ ALTER TABLE "delivery" ADD CONSTRAINT "delivery_item_id_item_id_fk" FOREIGN KEY 
 ALTER TABLE "delivery" ADD CONSTRAINT "delivery_destination_id_destination_id_fk" FOREIGN KEY ("destination_id") REFERENCES "public"."destination"("id") ON DELETE no action ON UPDATE no action DEFERRABLE INITIALLY DEFERRED;--> statement-breakpoint
 ALTER TABLE "digest_item" ADD CONSTRAINT "digest_item_action_id_action_id_fk" FOREIGN KEY ("action_id") REFERENCES "public"."action"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "digest_item" ADD CONSTRAINT "digest_item_item_id_item_id_fk" FOREIGN KEY ("item_id") REFERENCES "public"."item"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-CREATE INDEX "telegram_link_code_destination_id_idx" ON "telegram_link_code" USING btree ("destination_id");--> statement-breakpoint
 CREATE INDEX "action_destination_destination_id_idx" ON "action_destination" USING btree ("destination_id");--> statement-breakpoint
 CREATE INDEX "delivery_destination_id_status_next_attempt_at_idx" ON "delivery" USING btree ("destination_id","status","next_attempt_at");--> statement-breakpoint
 CREATE INDEX "delivery_item_id_idx" ON "delivery" USING btree ("item_id");--> statement-breakpoint

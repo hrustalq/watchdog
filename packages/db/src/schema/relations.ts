@@ -2,7 +2,7 @@ import { relations } from "drizzle-orm";
 import { action, actionDestination, delivery, digestItem } from "./action.ts";
 import { agentCall, modelConfig } from "./agent.ts";
 import { correction } from "./correction.ts";
-import { destination, telegramLinkCode } from "./destination.ts";
+import { destination } from "./destination.ts";
 import { item, itemLog } from "./item.ts";
 import { profile } from "./profile.ts";
 import { classifier, extractorRule, itemCategory, itemField } from "./rule.ts";
@@ -64,11 +64,6 @@ export const destinationRelations = relations(destination, ({ one, many }) => ({
   workspace: one(workspace, { fields: [destination.workspaceId], references: [workspace.id] }),
   actions: many(actionDestination),
   deliveries: many(delivery),
-  linkCodes: many(telegramLinkCode),
-}));
-
-export const telegramLinkCodeRelations = relations(telegramLinkCode, ({ one }) => ({
-  destination: one(destination, { fields: [telegramLinkCode.destinationId], references: [destination.id] }),
 }));
 
 export const actionRelations = relations(action, ({ one, many }) => ({

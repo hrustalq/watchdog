@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { check, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspace } from "./workspace.ts";
 
 /**
@@ -44,17 +44,10 @@ export const destination = pgTable(
  * A code from a Telegram deep link, waiting for the bot to be sent `/start <code>` (ADR 0029).
  * Only the SHA-256 hash is stored, as for the setup token. A used code is deleted.
  */
-export const telegramLinkCode = pgTable(
-  "telegram_link_code",
-  {
-    codeHash: text("code_hash").primaryKey(),
-    destinationId: uuid("destination_id")
-      .notNull()
-      .references(() => destination.id, { onDelete: "cascade" }),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  },
-  (table) => [
-    // Deleting a Destination deletes its codes. Without this, that scans every Workspace's codes.
-    index("telegram_link_code_destination_id_idx").on(table.destinationId),
-  ],
-);
+export const telegramLinkCode = pgTable("telegram_link_code", {
+  codeHash: text("code_hash").primaryKey(),
+  destinationId: uuid("destination_id")
+    .notNull()
+    .references(() => destination.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});

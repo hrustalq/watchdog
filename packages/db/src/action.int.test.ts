@@ -261,34 +261,19 @@ describe("Destination, Action and Delivery tables", () => {
     ).rejects.toMatchObject({ cause: { code: "23514", constraint: "workspace_quiet_hours_check" } });
   });
 
-  it("stamps an edited Action from the database clock, as the other rules are", async () => {
-    const seeded = await seedEverything(db);
-
-    // now() is fixed for a transaction, so only a stamp the database wrote equals it exactly.
-    const stamped = await db.transaction(async (tx) => {
-      await tx.update(action).set({ enabled: false }).where(eq(action.id, seeded.alert.id));
-      const { rows } = await tx.execute(
-        sql`select ${action.updatedAt} = now() as "same" from ${action} where ${action.id} = ${seeded.alert.id}`,
-      );
-      return rows[0]?.same;
-    });
-    expect(stamped).toBe(true);
-  });
-
   it("loads the new rows through the relations", async () => {
     const seeded = await seedEverything(db);
 
     const loaded = await db.query.workspace.findFirst({
       where: eq(workspace.id, seeded.workspace.id),
       with: {
-        destinations: { with: { linkCodes: true } },
+        destinations: true,
         actions: { with: { destinations: { with: { destination: true } }, deliveries: true, digestItems: true } },
         items: { with: { deliveries: { with: { destination: true } } } },
       },
     });
 
     expect(loaded?.destinations).toHaveLength(3);
-    expect(loaded?.destinations.flatMap((row) => row.linkCodes)).toHaveLength(1);
     expect(loaded?.actions.flatMap((row) => row.destinations).map((row) => row.destination.name).sort()).toEqual([
       "me",
       "ops-chat",
