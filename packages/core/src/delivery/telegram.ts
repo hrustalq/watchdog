@@ -45,6 +45,8 @@ function floodLimiter() {
       const freeAt = Math.max(botFreeAt, chatFreeAt.get(chatId) ?? 0);
       if (freeAt <= now) {
         botFreeAt = now + botGapMs;
+        // A chat whose second has passed needs no entry, which keeps this to the last second's chats.
+        for (const [chat, at] of chatFreeAt) if (at <= now) chatFreeAt.delete(chat);
         chatFreeAt.set(chatId, now + chatGapMs);
         return;
       }
@@ -76,28 +78,42 @@ export function createTelegramSender(
       const chatId = decryptSecret(destination.secretCiphertext, deps.encryptionKey);
       await nextTurn(chatId);
 
-      const response = await deps.fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: alertText(message),
-          // Telegram would otherwise fetch and show the first URL in the text, which an Item's text can choose.
-          link_preview_options: { is_disabled: true },
-        }),
-      });
+      const response = await deps
+        .fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: alertText(message),
+            // Telegram would otherwise fetch and show the first URL in the text, which an Item's text can choose.
+            link_preview_options: { is_disabled: true },
+          }),
+        })
+        .catch((error: unknown) => {
+          // undici's own message is only "fetch failed", and a connection tried on several addresses has
+          // a cause with no message. The guard's errors say what happened already.
+          if (!(error instanceof TypeError && error.cause instanceof Error)) throw error;
+          const why = error.cause.message === "" ? "" : `: ${error.cause.message}`;
+          throw new Error(`Telegram can't be reached${why}`);
+        });
       if (response.ok) {
-        await response.body?.cancel();
+        // The message went, whatever happens to the rest of the answer. Reading it keeps the connection open.
+        await response.arrayBuffer().catch(() => undefined);
         return;
       }
 
       const { status } = response;
       const answer = refusal.parse(await response.json().catch(() => undefined));
       const said = answer.description === undefined ? "" : `: ${answer.description}`;
-      if (status === 403) throw new FinalSendError(`the bot was removed from the chat (Telegram said ${String(status)}${said})`);
+      if (status === 403) {
+        throw new FinalSendError(`the bot was removed from the chat or blocked (Telegram said ${String(status)}${said})`);
+      }
       const retryAfter = answer.parameters?.retry_after;
       if (status === 429 && retryAfter !== undefined) {
-        throw new RetryAfterSendError(`Telegram's flood limit asked to wait ${String(retryAfter)} seconds`, retryAfter * 1000);
+        throw new RetryAfterSendError(
+          `Telegram's flood limit asked to wait ${String(retryAfter)} seconds`,
+          retryAfter * 1000,
+        );
       }
       throw new Error(`Telegram refused the message with ${String(status)}${said}`);
     },

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { EgressLimitError } from "../egress/egress.ts";
 import { encryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
 import { type Destination, FinalSendError, RetryAfterSendError } from "./deliver.ts";
@@ -192,6 +193,37 @@ describe("createTelegramSender", () => {
     await expect(sender(telegram).send(unlinked, message)).rejects.toThrow(/isn't linked/);
 
     expect(telegram.requests).toEqual([]);
+  });
+
+  it("counts a message as sent when the answer breaks off after the 200", async () => {
+    const broken = new ReadableStream({
+      start(controller) {
+        controller.error(new Error("socket hang up"));
+      },
+    });
+    const telegram = fakeTelegram(() => new Response(broken));
+
+    await expect(sender(telegram).send(chat(), message)).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ["the cause", "getaddrinfo ENOTFOUND api.telegram.org", /^Telegram can't be reached: getaddrinfo ENOTFOUND api\.telegram\.org$/],
+    ["no more when the cause has no message", "", /^Telegram can't be reached$/],
+  ])("says Telegram can't be reached, with %s, on a network failure", async (_name, cause, reason) => {
+    const fetch = () => Promise.reject(new TypeError("fetch failed", { cause: new Error(cause) }));
+
+    const failure = await failureOf(createTelegramSender(botToken, { fetch, encryptionKey }).send(chat(), message));
+
+    expect(failure.message).toMatch(reason);
+    expect(failure).not.toBeInstanceOf(FinalSendError);
+  });
+
+  it("keeps the egress guard's own reason", async () => {
+    const fetch = () => Promise.reject(new EgressLimitError("api.telegram.org took longer than 30000 ms"));
+
+    const failure = await failureOf(createTelegramSender(botToken, { fetch, encryptionKey }).send(chat(), message));
+
+    expect(failure.message).toBe("api.telegram.org took longer than 30000 ms");
   });
 
   it("says the bot isn't set up when there is no token, and calls nothing", async () => {

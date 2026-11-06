@@ -39,22 +39,21 @@ afterEach(() => {
   running.clear();
 });
 
-/** Only what the worker needs, so a developer's own environment can't leak in. */
-const workerEnv = (databaseUrl: string) => ({
-  PATH: process.env.PATH,
-  TMPDIR: tmp,
-  DATABASE_URL: databaseUrl,
-  BETTER_AUTH_SECRET: "a-test-secret-of-at-least-32-characters",
-  BETTER_AUTH_URL: "http://localhost:3000",
-  WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
-  // The test's feed server listens on loopback, which the egress guard blocks by default.
-  EGRESS_ALLOWLIST: "127.0.0.1",
-});
-
 /** Runs the worker the way its container does, until it logs that it's ready. */
-async function startWorker(databaseUrl: string) {
+async function startWorker(databaseUrl: string, extraEnv: Record<string, string> = {}) {
   const child = spawn(process.execPath, [path.join(import.meta.dirname, "index.ts")], {
-    env: workerEnv(databaseUrl),
+    // Only what the worker needs, so a developer's own environment can't leak in.
+    env: {
+      PATH: process.env.PATH,
+      TMPDIR: tmp,
+      DATABASE_URL: databaseUrl,
+      BETTER_AUTH_SECRET: "a-test-secret-of-at-least-32-characters",
+      BETTER_AUTH_URL: "http://localhost:3000",
+      WATCHDOG_ENCRYPTION_KEY: "A".repeat(43) + "=",
+      // The test's feed server listens on loopback, which the egress guard blocks by default.
+      EGRESS_ALLOWLIST: "127.0.0.1",
+      ...extraEnv,
+    },
   });
   running.add(child);
   child.once("exit", () => running.delete(child));
@@ -65,7 +64,8 @@ async function startWorker(databaseUrl: string) {
     child.stdout.on("data", () => {
       if (output.includes("Worker ready")) resolve();
     });
-    child.once("exit", () => {
+    // "close", not "exit": a process can exit before its last output has been read.
+    child.once("close", () => {
       reject(new Error(`Worker exited before it was ready:\n${output}`));
     });
   });
@@ -84,20 +84,6 @@ async function startWorker(databaseUrl: string) {
       await exited;
     },
   };
-}
-
-/** Runs the worker with one more variable, expecting it to stop at boot. */
-async function bootFailure(databaseUrl: string, extra: Record<string, string>) {
-  const child = spawn(process.execPath, [path.join(import.meta.dirname, "index.ts")], {
-    env: { ...workerEnv(databaseUrl), ...extra },
-  });
-  running.add(child);
-  let output = "";
-  child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
-  child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
-  const code = await new Promise<number | null>((resolve) => child.once("exit", resolve));
-  running.delete(child);
-  return { code, output };
 }
 
 async function databaseState(url: string) {
@@ -136,11 +122,12 @@ describe("worker", () => {
   }, 60_000);
 
   it("stops at boot on a malformed TELEGRAM_BOT_TOKEN, naming the variable and not its value", async () => {
-    const { code, output } = await bootFailure(postgres.url, { TELEGRAM_BOT_TOKEN: "not-a-real-token" });
+    const start = startWorker(postgres.url, { TELEGRAM_BOT_TOKEN: "not-a-real-token" });
 
-    expect(code).toBe(1);
-    expect(output).toContain("TELEGRAM_BOT_TOKEN");
-    expect(output).not.toContain("not-a-real-token");
+    const failure: unknown = await start.catch((error: unknown) => error);
+
+    expect(String(failure)).toMatch(/^Error: Worker exited before it was ready:[\s\S]*TELEGRAM_BOT_TOKEN/);
+    expect(String(failure)).not.toContain("not-a-real-token");
   }, 60_000);
 
   it("doesn't re-run applied migrations when it starts again", async () => {
