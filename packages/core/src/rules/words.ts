@@ -39,7 +39,8 @@ function predicateWords(predicate: Predicate, negated: boolean) {
 
 /** The node with any group of one replaced by its only part, which means the same. */
 function withoutLoneGroups(node: Condition): Condition {
-  const parts = "all" in node ? node.all : "any" in node ? node.any : [];
+  if (!("all" in node || "any" in node)) return node;
+  const parts = "all" in node ? node.all : node.any;
   const [only] = parts;
   return only !== undefined && parts.length === 1 ? withoutLoneGroups(only) : node;
 }

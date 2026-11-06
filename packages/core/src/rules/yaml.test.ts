@@ -230,12 +230,12 @@ describe("ruleFromYaml", () => {
   });
 
   it("names schedule when a Digest lacks one or an alert has one", () => {
-    const when = "{ field: severity, op: gte, value: 4 }";
+    const severe = "{ field: severity, op: gte, value: 4 }";
     expect(() =>
-      ruleFromYaml(`action: a\nwhen: ${when}\nkind: digest\ndestinations: [me]\n`),
+      ruleFromYaml(`action: a\nwhen: ${severe}\nkind: digest\ndestinations: [me]\n`),
     ).toThrow("schedule");
     expect(() =>
-      ruleFromYaml(`action: a\nwhen: ${when}\nkind: alert\nschedule: "0 9 * * 1"\ndestinations: [me]\n`),
+      ruleFromYaml(`action: a\nwhen: ${severe}\nkind: alert\nschedule: "0 9 * * 1"\ndestinations: [me]\n`),
     ).toThrow("schedule");
   });
 

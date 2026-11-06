@@ -441,9 +441,14 @@ describe("ruleSchema", () => {
   });
 
   it("lets an Action test the Rating under not, and still refuses an Extractor Rule that does", () => {
-    const when = { not: { field: "severity", op: "gte", value: 4 } };
-    const action = { action: "a", when, kind: "alert", destinations: ["d"] };
-    const extractor = { extractor: "a", when, prompt: "p", fields: [{ name: "n", type: "string" }] };
+    const notSevere = { not: { field: "severity", op: "gte", value: 4 } };
+    const action = { action: "a", when: notSevere, kind: "alert", destinations: ["d"] };
+    const extractor = {
+      extractor: "a",
+      when: notSevere,
+      prompt: "p",
+      fields: [{ name: "n", type: "string" }],
+    };
     expect(ruleSchema.parse(action)).toEqual(action);
     expect(issuesOf(ruleSchema.safeParse(extractor))[0]?.message).toContain('"severity"');
   });
