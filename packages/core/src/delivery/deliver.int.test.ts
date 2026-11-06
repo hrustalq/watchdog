@@ -187,9 +187,9 @@ describe("deliver", () => {
     const { deps, sent, retries } = recording(() =>
       failures-- > 0 ? Promise.reject(new Error("Chat unreachable")) : Promise.resolve(),
     );
-    const first = new Date("2026-11-07T10:00:00.000Z");
-    const second = new Date("2026-11-07T10:00:30.000Z");
-    const third = new Date("2026-11-07T10:01:30.000Z");
+    const first = new Date("2026-01-07T10:00:00.000Z");
+    const second = new Date("2026-01-07T10:00:30.000Z");
+    const third = new Date("2026-01-07T10:01:30.000Z");
     await db.update(delivery).set({ createdAt: first }).where(eq(delivery.id, seeded.deliveryId));
 
     await deliver(db, seeded.deliveryId, { ...deps, now: () => first });
@@ -218,12 +218,12 @@ describe("deliver", () => {
     ]);
     expect(await actLog(seeded.itemId)).toMatchObject([
       {
-        message: "Sending to ops-chat failed: Chat unreachable, retrying at 2026-11-07T10:00:30.000Z",
-        data: { attempt: 1, retryAt: "2026-11-07T10:00:30.000Z" },
+        message: "Sending to ops-chat failed: Chat unreachable, retrying at 2026-01-07T10:00:30.000Z",
+        data: { attempt: 1, retryAt: "2026-01-07T10:00:30.000Z" },
       },
       {
-        message: "Sending to ops-chat failed: Chat unreachable, retrying at 2026-11-07T10:01:30.000Z",
-        data: { attempt: 2, retryAt: "2026-11-07T10:01:30.000Z" },
+        message: "Sending to ops-chat failed: Chat unreachable, retrying at 2026-01-07T10:01:30.000Z",
+        data: { attempt: 2, retryAt: "2026-01-07T10:01:30.000Z" },
       },
       { message: "Sent to ops-chat", data: { attempt: 3 } },
     ]);
@@ -236,7 +236,7 @@ describe("deliver", () => {
 
   it("makes the last retry when the Delivery turns 24 hours old, however long the backoff has grown", async () => {
     const seeded = await seed();
-    const created = new Date("2026-11-07T10:00:00.000Z");
+    const created = new Date("2026-01-07T10:00:00.000Z");
     await db.update(delivery).set({ createdAt: created, attempts: 11 }).where(eq(delivery.id, seeded.deliveryId));
     const { deps, retries } = recording(() => Promise.reject(new Error("Down")));
     const lateAttempt = new Date(created.getTime() + 20 * hour);
@@ -253,7 +253,7 @@ describe("deliver", () => {
     const now = new Date();
     await db
       .update(delivery)
-      .set({ createdAt: new Date(now.getTime() - 24 * hour), attempts: 12, nextAttemptAt: now })
+      .set({ createdAt: new Date(now.getTime() - 24 * hour), attempts: 12 })
       .where(eq(delivery.id, seeded.deliveryId));
     const { deps, retries } = recording(() => Promise.reject(new Error("Chat unreachable")));
 
@@ -274,6 +274,49 @@ describe("deliver", () => {
     ]);
     const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
     expect(shown).toMatchObject({ lastError: "Chat unreachable", lastErrorAt: now });
+  });
+
+  it("clears the Destination's error when a later send works", async () => {
+    const seeded = await seed();
+    await db
+      .update(destination)
+      .set({ lastError: "Chat unreachable", lastErrorAt: new Date() })
+      .where(eq(destination.id, seeded.destinationId));
+    const { deps } = recording();
+
+    await deliver(db, seeded.deliveryId, deps);
+
+    const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
+    expect(shown).toMatchObject({ lastError: null, lastErrorAt: null });
+  });
+
+  it("leaves a Delivery alone until its next attempt is due, because that attempt's job is waiting", async () => {
+    const seeded = await seed();
+    await db
+      .update(delivery)
+      .set({ attempts: 7, nextAttemptAt: new Date(Date.now() + hour) })
+      .where(eq(delivery.id, seeded.deliveryId));
+    const { deps, sent, retries } = recording();
+
+    // The job that recorded attempt 7, run again because its worker died before finishing it.
+    await deliver(db, seeded.deliveryId, deps);
+
+    expect(sent).toEqual([]);
+    expect(retries).toEqual([]);
+    expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "queued", attempts: 7 });
+  });
+
+  it("records nothing, and queues no second retry, when another job recorded this attempt during the send", async () => {
+    const seeded = await seed();
+    const { deps, retries } = recording(async () => {
+      await db.update(delivery).set({ attempts: 1 }).where(eq(delivery.id, seeded.deliveryId));
+      throw new Error("Down");
+    });
+
+    await deliver(db, seeded.deliveryId, deps);
+
+    expect(retries).toEqual([]);
+    expect(await actLog(seeded.itemId)).toEqual([]);
   });
 
   it("still tries once a Delivery that a long outage kept waiting past 24 hours", async () => {

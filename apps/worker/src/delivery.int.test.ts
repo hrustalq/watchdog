@@ -198,6 +198,7 @@ describe("the deliver queue", () => {
       }, waitLong);
       expect(waiting.map((job) => job.start_after)).toEqual([row.nextAttemptAt]);
       // Stands in for waiting out the delay.
+      await db.$client.query("update delivery set next_attempt_at = now() where id = $1", [deliveryId]);
       await db.$client.query(
         "update pgboss.job set start_after = now() where name = $1 and state = 'created' and data->>'deliveryId' = $2",
         [deliverQueue, deliveryId],
@@ -224,7 +225,7 @@ describe("the deliver queue", () => {
 
   it("lets a running send finish when the worker stops", async () => {
     const { deliveryId, itemId } = await seed();
-    const held = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<undefined>();
     let started = false;
     const running = await startWorker(async () => {
       started = true;
@@ -236,7 +237,7 @@ describe("the deliver queue", () => {
     }, waitLong);
 
     const stopped = running.stop();
-    held.resolve();
+    held.resolve(undefined);
     await stopped;
     worker = undefined;
 

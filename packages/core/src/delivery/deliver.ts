@@ -1,6 +1,21 @@
 // Sends one Delivery and records how it went (docs: Actions and delivery, "Deliveries"; ADR 0028). The
 // worker's deliver queue calls this once per job.
-import { action, and, type Db, delivery, destination, eq, item, itemLog, source, type Tx } from "@watchdog/db";
+import {
+  action,
+  and,
+  type Db,
+  delivery,
+  destination,
+  eq,
+  isNull,
+  item,
+  itemLog,
+  lte,
+  or,
+  source,
+  sql,
+  type Tx,
+} from "@watchdog/db";
 import { storableMessage } from "../agent/call-agent.ts";
 import { actionSchema } from "../rules/schema.ts";
 import { conditionToWords } from "../rules/words.ts";
@@ -31,8 +46,12 @@ const retryWindowMs = 24 * 60 * 60 * 1000;
 /** Short enough that the Log's sentence keeps what follows the reason. */
 const reasonLength = 500;
 
-/** A Delivery that a job should send now. Anything else is held, grouped, finished or gone. */
-async function loadQueued(db: Db, deliveryId: string) {
+/**
+ * A Delivery that a job should send now. Anything else is held, grouped, finished or gone, or waiting
+ * for a retry whose job committed with that time, so this job is an old one that ran again. The
+ * database's clock decides, as it does when pg-boss starts a job, so clock skew can't strand a retry.
+ */
+async function loadDue(db: Db, deliveryId: string) {
   const [row] = await db
     .select({
       createdAt: delivery.createdAt,
@@ -53,7 +72,13 @@ async function loadQueued(db: Db, deliveryId: string) {
     .innerJoin(source, eq(item.sourceId, source.id))
     .innerJoin(action, eq(delivery.actionId, action.id))
     .innerJoin(destination, eq(delivery.destinationId, destination.id))
-    .where(and(eq(delivery.id, deliveryId), eq(delivery.status, "queued")));
+    .where(
+      and(
+        eq(delivery.id, deliveryId),
+        eq(delivery.status, "queued"),
+        or(isNull(delivery.nextAttemptAt), lte(delivery.nextAttemptAt, sql`now()`)),
+      ),
+    );
   return row;
 }
 
@@ -70,13 +95,13 @@ function whyItFired({ name, definition }: { name: string; definition: unknown })
  */
 export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Promise<void> {
   const now = deps.now ?? (() => new Date());
-  const row = await loadQueued(db, deliveryId);
+  const row = await loadDue(db, deliveryId);
   if (row === undefined) return;
   const { destination: target } = row;
   const attempts = row.attempts + 1;
   const data = { actionId: row.action.id, destinationId: target.id, destination: target.name, attempt: attempts };
 
-  /** Commits the outcome, unless the Delivery was deleted during the send or another job settled it. */
+  /** Commits the outcome, unless the Delivery was deleted during the send or another job recorded first. */
   const record = async (
     outcome: Partial<typeof delivery.$inferInsert>,
     log: { message: string; data?: Record<string, unknown> },
@@ -86,7 +111,7 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
       const updated = await tx
         .update(delivery)
         .set({ attempts, ...outcome })
-        .where(and(eq(delivery.id, deliveryId), eq(delivery.status, "queued")))
+        .where(and(eq(delivery.id, deliveryId), eq(delivery.status, "queued"), eq(delivery.attempts, row.attempts)))
         .returning({ id: delivery.id });
       if (updated.length === 0) return;
       await tx.insert(itemLog).values({
@@ -135,5 +160,9 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
   await record(
     { status: "sent", sentAt: now(), nextAttemptAt: null, lastError: null },
     { message: `Sent to ${target.name}` },
+    async (tx) => {
+      if (target.lastError === null) return;
+      await tx.update(destination).set({ lastError: null, lastErrorAt: null }).where(eq(destination.id, target.id));
+    },
   );
 }
