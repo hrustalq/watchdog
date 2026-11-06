@@ -1,0 +1,46 @@
+// Sends alerts through the Mailer (docs: Actions and delivery, "Email addresses" and "Alerts").
+import { z } from "zod";
+import { ratingScale } from "../agent/rating.ts";
+import type { Mailer } from "../mail/mailer.ts";
+import type { AlertMessage } from "./content.ts";
+import { FinalSendError, type Sender } from "./deliver.ts";
+import { groupedAlertText } from "./group.ts";
+
+const config = z.object({ address: z.string().min(1) });
+
+/** What the Rating scale says a level means, which reads as a word for how urgent an Item is. */
+function severityWord(severity: number | null) {
+  const meaning = ratingScale.severity.levels.find(({ level }) => level === severity)?.meaning ?? "unrated";
+  return `${meaning.charAt(0).toUpperCase()}${meaning.slice(1)}`;
+}
+
+function alertText({ title, source, rating, summary, link, why }: AlertMessage) {
+  const heading = `${title}\nSource: ${source}\nRating: ${rating}`;
+  const body = summary === null || summary === "" ? heading : `${heading}\n\n${summary}`;
+  return `${body}\n\n${link}\nWhy it fired: ${why}`;
+}
+
+/**
+ * Plain text, with no markup part, so nothing in an Item's text can format the mail. A subject is a single
+ * header line, so a title's line breaks go.
+ */
+export function createEmailSender(mailer: Mailer, from: string | undefined): Sender {
+  return {
+    send: async (destination, message) => {
+      if (destination.confirmedAt === null) throw new FinalSendError("the address isn't confirmed yet");
+      const parsed = config.safeParse(destination.config);
+      if (!parsed.success) throw new FinalSendError("the Destination has no address");
+
+      const grouped = "lines" in message;
+      const subject = grouped
+        ? `${String(message.count)} alerts`
+        : `${severityWord(message.severity)} · ${message.title.replace(/\s+/g, " ")}`;
+      await mailer.send({
+        to: parsed.data.address,
+        subject: `[Watchdog] ${subject}`,
+        text: grouped ? groupedAlertText(message) : alertText(message),
+        ...(from !== undefined && { from }),
+      });
+    },
+  };
+}

@@ -7,6 +7,8 @@ export interface MailMessage {
   to: string;
   subject: string;
   text: string;
+  /** The sender, when it isn't SMTP_FROM. */
+  from?: string | undefined;
 }
 
 export interface Mailer {
@@ -40,10 +42,15 @@ export function createMailer(
     port: smtp.port,
     auth: { user: smtp.user, pass: smtp.password },
     requireTLS: mode === "hosted",
+    // The defaults let a stalled server hold a send for 12.5 minutes, and a send to a Destination makes
+    // the others wait for it.
+    connectionTimeout: 30_000,
+    greetingTimeout: 30_000,
+    socketTimeout: 60_000,
   });
   return {
-    send: async ({ to, subject, text }) => {
-      await transport.sendMail({ from: smtp.from, to, subject, text });
+    send: async ({ to, subject, text, from }) => {
+      await transport.sendMail({ from: from ?? smtp.from, to, subject, text });
     },
   };
 }

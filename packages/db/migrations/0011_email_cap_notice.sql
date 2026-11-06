@@ -1,0 +1,1 @@
+ALTER TABLE "workspace" ADD COLUMN "email_cap_notice_until" timestamp with time zone;

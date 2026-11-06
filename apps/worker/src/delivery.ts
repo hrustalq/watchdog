@@ -19,9 +19,9 @@ export function deliveryEnqueuer(boss: PgBoss): ProcessItemDeps["enqueueDeliveri
 
 // A failed send is recorded by `deliver`, which queues its own retry, so these retries are for a job
 // that couldn't finish: its worker died, or the database went away. As many as a Delivery has attempts,
-// so a run of crashes doesn't strand a row. A request through the egress guard takes 30 seconds, but
-// nodemailer's defaults let a stalled SMTP send take 12.5 minutes, so a job still active after 15 belongs
-// to a worker that died. pg-boss deletes a job left waiting past its retention, so a long outage keeps it
+// so a run of crashes doesn't strand a row. A request through the egress guard takes 30 seconds and the
+// Mailer's timeouts keep a stalled SMTP send to minutes, so a job still active after 15 belongs to a
+// worker that died. pg-boss deletes a job left waiting past its retention, so a long outage keeps it
 // as long as the Delivery's own 30 days.
 const queueOptions = {
   retryLimit: 12,
@@ -53,7 +53,7 @@ export async function enqueueDueDeliveries(db: Db, boss: PgBoss) {
 export async function startDelivery(
   db: Db,
   boss: PgBoss,
-  deps: Pick<DeliverDeps, "senders" | "appUrl">,
+  deps: Pick<DeliverDeps, "senders" | "appUrl" | "emailCap">,
 ) {
   await createDeliveryQueue(boss);
   await boss.createQueue(sweepQueue);
