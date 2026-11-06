@@ -1,6 +1,8 @@
 import { relations } from "drizzle-orm";
+import { action, actionDestination, delivery, digestItem } from "./action.ts";
 import { agentCall, modelConfig } from "./agent.ts";
 import { correction } from "./correction.ts";
+import { destination, telegramLinkCode } from "./destination.ts";
 import { item, itemLog } from "./item.ts";
 import { profile } from "./profile.ts";
 import { classifier, extractorRule, itemCategory, itemField } from "./rule.ts";
@@ -14,6 +16,8 @@ export const workspaceRelations = relations(workspace, ({ one, many }) => ({
   items: many(item),
   classifiers: many(classifier),
   extractorRules: many(extractorRule),
+  actions: many(action),
+  destinations: many(destination),
   corrections: many(correction),
   profile: one(profile),
   modelConfigs: many(modelConfig),
@@ -30,6 +34,8 @@ export const itemRelations = relations(item, ({ one, many }) => ({
   log: many(itemLog),
   categories: many(itemCategory),
   fields: many(itemField),
+  deliveries: many(delivery),
+  digestItems: many(digestItem),
 }));
 
 export const itemLogRelations = relations(itemLog, ({ one }) => ({
@@ -52,6 +58,40 @@ export const itemCategoryRelations = relations(itemCategory, ({ one }) => ({
 export const itemFieldRelations = relations(itemField, ({ one }) => ({
   item: one(item, { fields: [itemField.itemId], references: [item.id] }),
   extractorRule: one(extractorRule, { fields: [itemField.extractorRuleId], references: [extractorRule.id] }),
+}));
+
+export const destinationRelations = relations(destination, ({ one, many }) => ({
+  workspace: one(workspace, { fields: [destination.workspaceId], references: [workspace.id] }),
+  actions: many(actionDestination),
+  deliveries: many(delivery),
+  linkCodes: many(telegramLinkCode),
+}));
+
+export const telegramLinkCodeRelations = relations(telegramLinkCode, ({ one }) => ({
+  destination: one(destination, { fields: [telegramLinkCode.destinationId], references: [destination.id] }),
+}));
+
+export const actionRelations = relations(action, ({ one, many }) => ({
+  workspace: one(workspace, { fields: [action.workspaceId], references: [workspace.id] }),
+  destinations: many(actionDestination),
+  deliveries: many(delivery),
+  digestItems: many(digestItem),
+}));
+
+export const actionDestinationRelations = relations(actionDestination, ({ one }) => ({
+  action: one(action, { fields: [actionDestination.actionId], references: [action.id] }),
+  destination: one(destination, { fields: [actionDestination.destinationId], references: [destination.id] }),
+}));
+
+export const deliveryRelations = relations(delivery, ({ one }) => ({
+  action: one(action, { fields: [delivery.actionId], references: [action.id] }),
+  item: one(item, { fields: [delivery.itemId], references: [item.id] }),
+  destination: one(destination, { fields: [delivery.destinationId], references: [destination.id] }),
+}));
+
+export const digestItemRelations = relations(digestItem, ({ one }) => ({
+  action: one(action, { fields: [digestItem.actionId], references: [action.id] }),
+  item: one(item, { fields: [digestItem.itemId], references: [item.id] }),
 }));
 
 export const correctionRelations = relations(correction, ({ one }) => ({

@@ -76,7 +76,12 @@ describe("source", () => {
     let oldest: string | undefined;
     const old = createDb(url.href);
     try {
-      const [a = "", b = ""] = await twoWorkspaces(old);
+      // Raw SQL: the Drizzle table has columns a database at 0004 doesn't.
+      await old.execute(sql`insert into "user" (id, name, email) values ('a', 'A', 'a@example.com'), ('b', 'B', 'b@example.com')`);
+      const { rows } = await old.execute<{ id: string }>(
+        sql`insert into workspace (name, owner_user_id) values ('A', 'a'), ('B', 'b') returning id`,
+      );
+      const [a = "", b = ""] = rows.map((row) => row.id);
       const feed = "https://example.com/feed.xml";
       const [first] = await old
         .insert(source)

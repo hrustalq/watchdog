@@ -100,14 +100,17 @@ export const itemLog = pgTable(
       .notNull()
       .references(() => item.id, { onDelete: "cascade" }),
     at: timestamp("at", { withTimezone: true }).notNull().defaultNow(),
-    /** M3 adds act (a check, as on source.type). */
-    stage: text("stage", { enum: ["capture", "classify", "extract", "rate", "correct"] }).notNull(),
+    /** A check, as on source.type. */
+    stage: text("stage", { enum: ["capture", "classify", "extract", "rate", "correct", "act"] }).notNull(),
     /** The sentence the user reads, such as "Captured from Hacker News". */
     message: text("message").notNull(),
     data: jsonb("data").notNull().default({}),
   },
   (table) => [
-    check("item_log_stage_check", sql`${table.stage} in ('capture', 'classify', 'extract', 'rate', 'correct')`),
+    check(
+      "item_log_stage_check",
+      sql`${table.stage} in ('capture', 'classify', 'extract', 'rate', 'correct', 'act')`,
+    ),
     index("item_log_item_id_at_idx").on(table.itemId, table.at),
   ],
 );
