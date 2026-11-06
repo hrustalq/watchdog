@@ -1,5 +1,5 @@
-# The feed server of the smoke run (compose.smoke.yaml). Caddy's templates rewrite the dates in
-# feed.xml on every request, so they stay relative to the run: some inside the 7-day Backfill, one
+# The feed server of the smoke run (compose.smoke.yaml). Caddy's templates rewrite the dates in the
+# feeds on every request, so they stay relative to the run: some inside the 7-day Backfill, one
 # outside it.
 :80 {
 	root * /srv
