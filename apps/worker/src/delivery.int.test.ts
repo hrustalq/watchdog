@@ -20,6 +20,8 @@ import { PgBoss } from "pg-boss";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   createDeliveryQueue,
+  capNoticeQueuer,
+  createCapNoticeQueue,
   deliverQueue,
   deliveryEnqueuer,
   enqueueDueDeliveries,
@@ -275,6 +277,44 @@ describe("the deliver queue", () => {
     }, waitLong);
     expect(send).toHaveBeenCalledTimes(1);
     expect(await logOf(itemId)).toEqual(["Sent to ops-chat"]);
+  });
+
+  describe("the hosted email cap's notice", () => {
+    const jobs = async () =>
+      (await db.$client.query<{ id: string }>("select id from pgboss.job where name = 'email-cap-notice'")).rows;
+
+    it("goes out in a job of its own", async () => {
+      worker = new PgBoss({ connectionString: postgres.url, schedule: false, supervise: false });
+      await worker.start();
+      const sender = { send: () => Promise.resolve() };
+      const sendCapNotice = vi.fn<(workspaceId: string) => Promise<void>>(() => Promise.resolve());
+      await startDelivery(db, worker, {
+        senders: { telegram: sender, email: sender, webhook: sender },
+        appUrl: "https://watchdog.test",
+        sendCapNotice,
+      });
+      const workspaceId = crypto.randomUUID();
+
+      await db.transaction((tx) => capNoticeQueuer(boss).queueNotice(tx, workspaceId));
+
+      await vi.waitFor(() => {
+        expect(sendCapNotice).toHaveBeenCalledWith(workspaceId);
+      }, waitLong);
+    });
+
+    it("isn't queued when the transaction that holds the mail rolls back", async () => {
+      await createCapNoticeQueue(boss);
+      const before = (await jobs()).length;
+
+      await expect(
+        db.transaction(async (tx) => {
+          await capNoticeQueuer(boss).queueNotice(tx, crypto.randomUUID());
+          throw new Error("The hold failed");
+        }),
+      ).rejects.toThrow("The hold failed");
+
+      expect(await jobs()).toHaveLength(before);
+    });
   });
 
   describe("waiting Deliveries", () => {

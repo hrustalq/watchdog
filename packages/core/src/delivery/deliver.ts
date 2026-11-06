@@ -24,7 +24,7 @@ import { storableMessage } from "../agent/call-agent.ts";
 import { actionSchema } from "../rules/schema.ts";
 import { conditionToWords } from "../rules/words.ts";
 import { alertContent, type AlertMessage } from "./content.ts";
-import { capReason, type EmailCap, emailCapEnd, sendCapNoticeOnce } from "./email-cap.ts";
+import { capReason, type EmailCap, emailCapEnd, queueCapNoticeOnce, takeEmailCapTurn } from "./email-cap.ts";
 import { type GroupedAlert, groupedAlert } from "./group.ts";
 import { localTime, scheduleDelivery } from "./schedule-delivery.ts";
 
@@ -169,8 +169,8 @@ async function applySchedule(
   cap: EmailCap | undefined,
 ) {
   const emailCap = target.type === "email" ? cap : undefined;
-  const reading = tx.select().from(workspace).where(eq(workspace.id, target.workspaceId));
-  const [settings] = await (emailCap === undefined ? reading : reading.for("no key update"));
+  if (emailCap !== undefined) await takeEmailCapTurn(tx, target.workspaceId);
+  const [settings] = await tx.select().from(workspace).where(eq(workspace.id, target.workspaceId));
   if (settings === undefined) return [];
 
   const hold = (row: DueDelivery, until: Date, reason: string, groupId: string | null) =>
@@ -228,7 +228,7 @@ async function applySchedule(
   const capEnd = await emailCapEnd(tx, settings, now);
   if (capEnd === undefined) return sending;
   for (const row of sending) await hold(row, capEnd, capReason, null);
-  await sendCapNoticeOnce(tx, settings, capEnd, emailCap);
+  await queueCapNoticeOnce(tx, settings, capEnd, emailCap);
   return [];
 }
 

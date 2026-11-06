@@ -2,11 +2,11 @@ import { rmSync, writeFileSync } from "node:fs";
 import {
   createAgentFetch,
   createEgressFetch,
-  createEmailCap,
   createEmailSender,
   createMailer,
   createTelegramSender,
   loadConfig,
+  sendEmailCapNotice,
 } from "@watchdog/core";
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
@@ -58,7 +58,9 @@ await startDelivery(deliveryDb, boss, {
     webhook: noSender,
   },
   appUrl: config.auth.url,
-  ...(config.mode === "hosted" && { emailCap: createEmailCap(mailer, alertFrom) }),
+  ...(config.mode === "hosted" && {
+    sendCapNotice: (workspaceId: string) => sendEmailCapNotice(deliveryDb, workspaceId, mailer, alertFrom),
+  }),
 });
 await startPipeline(db, boss, {
   fetch: createAgentFetch(config),

@@ -4,9 +4,9 @@ import { ratingScale } from "../agent/rating.ts";
 import type { Mailer } from "../mail/mailer.ts";
 import type { AlertMessage } from "./content.ts";
 import { FinalSendError, type Sender } from "./deliver.ts";
-import { groupedAlertText } from "./group.ts";
+import { groupedAlertText, oneLine } from "./group.ts";
 
-const config = z.object({ address: z.string().min(1) });
+const config = z.object({ address: z.email() });
 
 /** What the Rating scale says a level means, which reads as a word for how urgent an Item is. */
 function severityWord(severity: number | null) {
@@ -22,25 +22,32 @@ function alertText({ title, source, rating, summary, link, why }: AlertMessage) 
 
 /**
  * Plain text, with no markup part, so nothing in an Item's text can format the mail. A subject is a single
- * header line, so a title's line breaks go.
+ * header line, so a title's line breaks go. On hosted the mail server is the operator's and the Log is the
+ * user's, so the server's own answer goes to the worker's log.
  */
 export function createEmailSender(mailer: Mailer, from: string | undefined): Sender {
   return {
     send: async (destination, message) => {
       if (destination.confirmedAt === null) throw new FinalSendError("the address isn't confirmed yet");
       const parsed = config.safeParse(destination.config);
-      if (!parsed.success) throw new FinalSendError("the Destination has no address");
+      if (!parsed.success) throw new FinalSendError("the Destination has no valid address");
 
       const grouped = "lines" in message;
       const subject = grouped
         ? `${String(message.count)} alerts`
-        : `${severityWord(message.severity)} · ${message.title.replace(/\s+/g, " ")}`;
-      await mailer.send({
-        to: parsed.data.address,
-        subject: `[Watchdog] ${subject}`,
-        text: grouped ? groupedAlertText(message) : alertText(message),
-        ...(from !== undefined && { from }),
-      });
+        : `${severityWord(message.severity)} · ${oneLine(message.title)}`;
+      try {
+        await mailer.send({
+          to: parsed.data.address,
+          subject: `[Watchdog] ${subject}`,
+          text: grouped ? groupedAlertText(message) : alertText(message),
+          ...(from !== undefined && { from }),
+        });
+      } catch (error) {
+        const answer = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`Sending a mail to Destination ${destination.id} failed: ${answer}\n`);
+        throw new Error("the mail server can't be reached or refused the mail", { cause: error });
+      }
     },
   };
 }

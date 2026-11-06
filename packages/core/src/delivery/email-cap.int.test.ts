@@ -20,7 +20,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createMailer, type MailMessage } from "../mail/mailer.ts";
 import { deliver, type DeliverDeps, type Destination } from "./deliver.ts";
-import { createEmailCap, type EmailCap } from "./email-cap.ts";
+import { type EmailCap, sendEmailCapNotice } from "./email-cap.ts";
 import { createEmailSender } from "./email.ts";
 
 /** The value, which the test expects to be there. */
@@ -127,7 +127,7 @@ describe("alert email", () => {
   /** Deps that send mail to a list, on hosted unless the test turns the cap off. */
   function recording({ capped = true, mailer }: { capped?: boolean; mailer?: (mail: MailMessage) => void } = {}) {
     const mails: MailMessage[] = [];
-    const notices: MailMessage[] = [];
+    const notices: string[] = [];
     const sender = createEmailSender(
       {
         send: (mail) => {
@@ -138,15 +138,12 @@ describe("alert email", () => {
       },
       undefined,
     );
-    const emailCap: EmailCap = createEmailCap(
-      {
-        send: (mail) => {
-          notices.push(mail);
-          return Promise.resolve();
-        },
+    const emailCap: EmailCap = {
+      queueNotice: (_tx, workspaceId) => {
+        notices.push(workspaceId);
+        return Promise.resolve();
       },
-      undefined,
-    );
+    };
     const noRetry = () => Promise.reject(new Error("No test here expects a retry"));
     const deps: DeliverDeps = {
       senders: { email: sender, telegram: sender, webhook: sender },
@@ -209,17 +206,139 @@ describe("alert email", () => {
       expect(await logOf(fiftyFirst.itemId)).toEqual(["Held until 00:00: the hosted limit of 50 mails a day"]);
     });
 
-    it("sends one notice to the user that day, however many mails it holds", async () => {
+    it("queues one notice that day, however many mails it holds", async () => {
       const seeded = await seed();
       const address = await seeded.addDestination({ type: "email", name: "me" });
       const { notices, deps } = recording();
       await send(seeded, address, deps, 53, at(7, "08:00:00"));
 
+      expect(notices).toEqual([seeded.workspaceId]);
+    });
+
+    it("tells the Workspace's owner what the notice says, from the alert sender", async () => {
+      const seeded = await seed({ timezone: "Asia/Tokyo" });
+      const notices: MailMessage[] = [];
+      const mailer = {
+        send: (mail: MailMessage) => {
+          notices.push(mail);
+          return Promise.resolve();
+        },
+      };
+
+      await sendEmailCapNotice(db, seeded.workspaceId, mailer, "alerts@example.com");
+
       expect(notices).toHaveLength(1);
-      expect(present(notices[0]).to).toBe(seeded.ownerEmail);
-      expect(present(notices[0]).subject).toBe("[Watchdog] Alert mail is held until tomorrow");
-      expect(present(notices[0]).text).toContain("50");
-      expect(present(notices[0]).text).toContain("Nothing is lost");
+      const notice = present(notices[0]);
+      expect(notice.to).toBe(seeded.ownerEmail);
+      expect(notice.from).toBe("alerts@example.com");
+      expect(notice.subject).toBe("[Watchdog] Alert mail is held until tomorrow");
+      expect(notice.text).toContain("50");
+      expect(notice.text).toContain("Asia/Tokyo");
+      expect(notice.text).toContain("Nothing is lost");
+    });
+
+    it("sends no notice for a Workspace that has gone", async () => {
+      const notices: MailMessage[] = [];
+
+      await sendEmailCapNotice(
+        db,
+        crypto.randomUUID(),
+        {
+          send: (mail) => {
+            notices.push(mail);
+            return Promise.resolve();
+          },
+        },
+        undefined,
+      );
+
+      expect(notices).toEqual([]);
+    });
+
+    it("records the hold and the notice together, so a failure repeats neither", async () => {
+      const seeded = await seed();
+      const address = await seeded.addDestination({ type: "email", name: "me" });
+      const { notices, deps } = recording();
+      await send(seeded, address, deps, 50, at(7, "08:00:00"));
+      const { deliveryId } = await seeded.alert(address);
+
+      await expect(
+        deliver(db, deliveryId, {
+          ...deps,
+          now: () => at(7, "12:00:00"),
+          emailCap: { queueNotice: () => Promise.reject(new Error("Queue down")) },
+        }),
+      ).rejects.toThrow("Queue down");
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "queued" });
+
+      // The job's own retry.
+      await deliver(db, deliveryId, { ...deps, now: () => at(7, "12:00:30") });
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "held" });
+      expect(notices).toEqual([seeded.workspaceId]);
+    });
+
+    it("still counts the day when its local midnight doesn't exist", async () => {
+      // On 8 March 2026 clocks in Havana go from 00:00 to 01:00, at 05:00 UTC.
+      const seeded = await seed({ timezone: "America/Havana" });
+      const address = await seeded.addDestination({ type: "email", name: "me" });
+      const { mails, deps } = recording();
+      await send(seeded, address, deps, 50, new Date("2026-03-08T05:10:00Z"));
+      expect(mails).toHaveLength(50);
+
+      const held = await seeded.alert(address);
+      await deliver(db, held.deliveryId, { ...deps, now: () => new Date("2026-03-08T12:00:00Z") });
+
+      // The next midnight there is at 04:00 UTC, now that the clocks are ahead.
+      expect(await rowOf(held.deliveryId)).toMatchObject({
+        status: "held",
+        nextAttemptAt: new Date("2026-03-09T04:00:00Z"),
+      });
+    });
+
+    it("lets only one of two addresses take the 50th place", async () => {
+      const seeded = await seed();
+      const first = await seeded.addDestination({ type: "email", name: "first" });
+      const second = await seeded.addDestination({ type: "email", name: "second" });
+      const { mails, deps } = recording();
+      await send(seeded, first, deps, 49, at(7, "08:00:00"));
+      const racing = [await seeded.alert(first), await seeded.alert(second)];
+
+      await Promise.all(
+        racing.map(({ deliveryId }) => deliver(db, deliveryId, { ...deps, now: () => at(7, "12:00:00") })),
+      );
+
+      expect(mails).toHaveLength(50);
+      const statuses = await Promise.all(racing.map(async ({ deliveryId }) => (await rowOf(deliveryId))?.status));
+      expect(statuses.sort()).toEqual(["held", "sent"]);
+    });
+
+    it("lets the Workspace be saved while a mail is going out", async () => {
+      const seeded = await seed();
+      const address = await seeded.addDestination({ type: "email", name: "me" });
+      const { deps } = recording({
+        mailer: () => undefined,
+      });
+      const { deliveryId } = await seeded.alert(address);
+      const email = deps.senders.email;
+
+      await deliver(db, deliveryId, {
+        ...deps,
+        senders: {
+          ...deps.senders,
+          email: {
+            send: async (target, message) => {
+              // Would wait for the send's own lock, and so never end, if the send held the Workspace's row.
+              await Promise.race([
+                db.update(workspace).set({ name: "Renamed" }).where(eq(workspace.id, seeded.workspaceId)),
+                new Promise((_, reject) => setTimeout(() => { reject(new Error("The save waited")); }, 3000)),
+              ]);
+              await email.send(target, message);
+            },
+          },
+        },
+      });
+
+      expect(await rowOf(deliveryId)).toMatchObject({ status: "sent" });
     });
 
     it("sends the held mails as one Grouped alert the next local day, and a new notice only if it fills up again", async () => {
@@ -307,25 +426,6 @@ describe("alert email", () => {
       expect(await rowOf(mail.deliveryId)).toMatchObject({ status: "held" });
     });
 
-    it("holds the mail when the notice can't go, and tries the notice again with the next one", async () => {
-      const seeded = await seed();
-      const address = await seeded.addDestination({ type: "email", name: "me" });
-      const { notices, deps } = recording();
-      await send(seeded, address, deps, 50, at(7, "08:00:00"));
-      const failing = await seeded.alert(address);
-
-      await deliver(db, failing.deliveryId, {
-        ...deps,
-        now: () => at(7, "12:00:00"),
-        emailCap: { sendNotice: () => Promise.reject(new Error("SMTP down")) },
-      });
-
-      expect(await rowOf(failing.deliveryId)).toMatchObject({ status: "held" });
-
-      const next = await seeded.alert(address);
-      await deliver(db, next.deliveryId, { ...deps, now: () => at(7, "12:05:00") });
-      expect(notices).toHaveLength(1);
-    });
   });
 
   it("sends all 60 of a day's mails on self-hosted, which has no cap", async () => {

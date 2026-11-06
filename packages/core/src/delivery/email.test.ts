@@ -157,19 +157,37 @@ describe("createEmailSender", () => {
     expect(sent).toEqual([]);
   });
 
-  it("refuses for good when the Destination holds no address", async () => {
-    const { sender } = recording();
+  it.each([
+    ["no address", {}],
+    ["two addresses, which would reach one that never confirmed", { address: "me@a.test, other@b.test" }],
+    ["text that isn't an address", { address: "not-an-address" }],
+  ])("refuses for good, and sends nothing, when the Destination holds %s", async (_name, config) => {
+    const { sent, sender } = recording();
 
-    await expect(sender.send({ ...confirmed, config: {} }, message)).rejects.toBeInstanceOf(FinalSendError);
+    await expect(sender.send({ ...confirmed, config }, message)).rejects.toBeInstanceOf(FinalSendError);
+    expect(sent).toEqual([]);
   });
 
-  it("lets the Mailer's failure through, so it's retried", async () => {
-    const sender = createEmailSender({ send: () => Promise.reject(new Error("SMTP down")) }, undefined);
+  it("fails so as to be retried, and keeps the operator's mail server out of the reason", async () => {
+    const sender = createEmailSender(
+      { send: () => Promise.reject(new Error("connect ETIMEDOUT 10.0.3.7:587")) },
+      undefined,
+    );
 
-    const send = sender.send(confirmed, message);
+    const failure = await sender.send(confirmed, message).catch((error: unknown) => error);
 
-    await expect(send).rejects.toThrow("SMTP down");
-    await expect(send).rejects.not.toBeInstanceOf(FinalSendError);
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(FinalSendError);
+    expect(String(failure)).not.toContain("10.0.3.7");
+    expect(String(failure)).toContain("mail server");
+  });
+
+  it("cuts a long title in the subject, and doesn't split a character made of two UTF-16 units", async () => {
+    const { sent, sender } = recording();
+
+    await sender.send(confirmed, { ...message, title: `${"x".repeat(198)}😀😀` });
+
+    expect(sent[0]?.subject).toBe(`[Watchdog] Act today · ${"x".repeat(198)}…`);
   });
 
   it("prints the alert to the log on a self-hosted install without SMTP", async () => {

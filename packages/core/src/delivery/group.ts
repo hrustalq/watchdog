@@ -24,7 +24,7 @@ export function groupedAlert(items: Omit<AlertItem, "summary">[], appUrl: string
 }
 
 /** A title's line breaks would look like another Item's line, so they go. */
-function oneLine(title: string) {
+export function oneLine(title: string) {
   const flat = title.replace(/\s+/g, " ");
   // A cut between the two halves of an emoji would leave text a receiver can refuse.
   return flat.length <= maxTitle ? flat : `${flat.slice(0, maxTitle - 1).replace(/[\uD800-\uDBFF]$/, "")}…`;
