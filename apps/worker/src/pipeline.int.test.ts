@@ -1,11 +1,15 @@
 import { pollSource } from "@watchdog/core";
 import { fakeLlm } from "@watchdog/core/testing";
 import {
+  action,
+  actionDestination,
   agentCall,
   classifier,
   closeDb,
   createDb,
   type Db,
+  delivery,
+  destination,
   eq,
   item,
   itemCategory,
@@ -149,6 +153,38 @@ describe("pipeline", () => {
     expect(queued).toHaveLength(1);
     expect(await jobsFor(queued)).toEqual([]);
     expect(await itemIdsOf(sourceId)).toEqual([]);
+  });
+
+  it("runs the Act stage in the job, for an Item that isn't from the Backfill", async () => {
+    const [mail] = await db
+      .insert(destination)
+      .values({ workspaceId, type: "email", name: "act-stage", confirmedAt: new Date() })
+      .returning();
+    const destinationId = present(mail).id;
+    const when = { field: "title", op: "contains", value: "act-stage" };
+    const definition = { action: "act-stage", when, kind: "alert", destinations: [destinationId] };
+    const [saved] = await db
+      .insert(action)
+      .values({ workspaceId, name: "act-stage", kind: "alert", definition })
+      .returning();
+    const actionId = present(saved).id;
+    await db.insert(actionDestination).values({ actionId, destinationId });
+    const sourceId = await newSource();
+    await pollSource(db, sourceId, answering(["old-act-stage"]));
+    await pollSource(db, sourceId, answering(["old-act-stage", "new-act-stage"]));
+    const fired = await db.query.item.findFirst({ where: eq(item.externalId, "new-act-stage") });
+    const itemId = present(fired).id;
+
+    const deliveries = await vi.waitFor(
+      async () => {
+        const rows = await db.select().from(delivery).where(eq(delivery.actionId, actionId));
+        expect(rows).toHaveLength(1);
+        return rows;
+      },
+      { timeout: 15_000 },
+    );
+
+    expect(deliveries).toMatchObject([{ itemId, destinationId, status: "queued" }]);
   });
 
   it("classifies a captured Item in its job", async () => {

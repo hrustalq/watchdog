@@ -1,11 +1,15 @@
 import { processItem } from "@watchdog/core";
 import { type FakeTurn, fakeLlm } from "@watchdog/core/testing";
 import {
+  action,
+  actionDestination,
   classifier,
   closeDb,
   correction,
   createDb,
   type Db,
+  delivery,
+  destination,
   eq,
   item,
   itemCategory,
@@ -107,12 +111,40 @@ describe("Corrections", () => {
   /** The fake model answering every call with these turns, as `processItem` takes it. */
   function answering(...turns: FakeTurn[]) {
     const fake = fakeLlm("openai-compatible", [...turns, { json: rated }]);
-    return { ...fake, deps: { agent: { fetch: fake.fetch, encryptionKey } } };
+    return { ...fake, deps: { enqueueDeliveries: () => Promise.resolve(), agent: { fetch: fake.fetch, encryptionKey } } };
   }
 
   /** Everything the last call to the model was sent. */
   const lastRequest = (fake: { requests: { body: unknown }[] }) =>
     JSON.stringify(present(fake.requests.at(-1)).body);
+
+  it("fires no Action, even one the corrected Item now meets", async () => {
+    const seeded = await seed();
+    const [target] = await db
+      .insert(destination)
+      .values({ workspaceId: seeded.workspaceId, type: "email", name: "me", confirmedAt: new Date() })
+      .returning();
+    const destinationId = present(target).id;
+    const conditions = {
+      severe: { field: "severity", op: "gte", value: 4 },
+      leads: { field: "category", op: "is", value: "lead" },
+    };
+    for (const [name, when] of Object.entries(conditions)) {
+      const definition = { action: name, when, kind: "alert", destinations: [destinationId] };
+      const [saved] = await db
+        .insert(action)
+        .values({ workspaceId: seeded.workspaceId, name, kind: "alert", definition })
+        .returning();
+      await db.insert(actionDestination).values({ actionId: present(saved).id, destinationId });
+    }
+    const itemId = await capture(seeded);
+    await processItem(db, itemId, answering().deps);
+
+    await correctRating(db, seeded.workspaceId, itemId, { severity: 5, importance: 5 });
+    await correctCategories(db, seeded.workspaceId, itemId, { add: "lead" });
+
+    expect(await db.select().from(delivery).where(eq(delivery.itemId, itemId))).toEqual([]);
+  });
 
   describe("of a Rating", () => {
     it("updates the Item, its copies and the Log in one step", async () => {
@@ -449,7 +481,7 @@ describe("Corrections", () => {
         return fake.fetch(input, init);
       };
 
-      await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+      await processItem(db, itemId, { enqueueDeliveries: () => Promise.resolve(), agent: { fetch: during, encryptionKey } });
 
       expect(await reload(itemId)).toMatchObject({ severity: 5, importance: 1, summary: rated.summary });
     });
@@ -471,7 +503,7 @@ describe("Corrections", () => {
         return fake.fetch(input, init);
       };
 
-      await processItem(db, itemId, { agent: { fetch: during, encryptionKey } });
+      await processItem(db, itemId, { enqueueDeliveries: () => Promise.resolve(), agent: { fetch: during, encryptionKey } });
 
       expect(await categoriesOf(itemId)).toEqual(["mine"]);
     });

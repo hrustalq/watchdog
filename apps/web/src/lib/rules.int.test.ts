@@ -33,6 +33,7 @@ const unique = () => crypto.randomUUID();
 const containing = (text: string): unknown => expect.stringContaining(text);
 /** These Workspaces have no model, so the pipeline makes no Agent call. */
 const pipelineDeps = {
+  enqueueDeliveries: () => Promise.resolve(),
   agent: { fetch: fakeLlm("openai-compatible", []).fetch, encryptionKey: Buffer.alloc(32, 7) },
 };
 
