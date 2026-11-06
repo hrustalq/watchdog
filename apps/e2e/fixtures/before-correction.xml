@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Source the Agent rates before the smoke test's Correction. Written for the test rather than
+     recorded, because its titles have to be similar to those in after-correction.xml. The dates work
+     as in feed.xml. -->
+<rss version="2.0">
+  <channel>
+    <title>Acme blog</title>
+    <link>https://acme.example/blog</link>
+    <description>News from Acme</description>
+    <language>en-us</language>
+    <item>
+      <title>Acme launches a hosted query planner</title>
+      <link>https://acme.example/blog/hosted-query-planner</link>
+      <description>Acme's query planner is now available as a hosted service.</description>
+      <pubDate>{{now | dateModify "-3h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://acme.example/blog/hosted-query-planner</guid>
+    </item>
+    <item>
+      <title>Acme summer meetup recap</title>
+      <link>https://acme.example/blog/summer-meetup</link>
+      <description>Photos and slides from this year's meetup.</description>
+      <pubDate>{{now | dateModify "-4h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://acme.example/blog/summer-meetup</guid>
+    </item>
+  </channel>
+</rss>

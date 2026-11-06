@@ -1,20 +1,37 @@
 # What `pnpm smoke` adds to compose.yaml. smoke.sh passes it after the other Compose files, and
 # Compose resolves its paths against the first one's directory, the repo root.
 services:
-  # Serves the recorded feed the test adds as an RSS Source, so the run makes no live HTTP request.
+  # Serves the feeds the test adds as RSS Sources, so the run makes no live HTTP request.
   fixtures:
     image: caddy:2.11.7-alpine
     volumes:
       - ./apps/e2e/fixtures/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./apps/e2e/fixtures/feed.xml:/srv/feed.xml:ro
+      - ./apps/e2e/fixtures/before-correction.xml:/srv/before-correction.xml:ro
+      - ./apps/e2e/fixtures/after-correction.xml:/srv/after-correction.xml:ro
 
-  # The fixture's address is private, so the egress guard lets it through only by name.
+  # The model the test adds, so the run makes no real model call and has no model bill.
+  fake-llm:
+    image: node:26-alpine
+    command: ["node", "/srv/fake-llm.mjs"]
+    # Node as PID 1 ignores SIGTERM, which would hold up each `down`.
+    init: true
+    volumes:
+      - ./apps/e2e/fixtures/fake-llm.mjs:/srv/fake-llm.mjs:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      start_interval: 1s
+
+  # The fixtures' addresses are private, so the egress guard lets them through only by name.
   web:
     environment:
-      EGRESS_ALLOWLIST: fixtures
+      EGRESS_ALLOWLIST: fixtures,fake-llm
   worker:
     environment:
-      EGRESS_ALLOWLIST: fixtures
+      EGRESS_ALLOWLIST: fixtures,fake-llm
 
   # Caddy is the one container on a network with a way out, because it publishes the port the
   # test opens. Every other container is on the internal network only, so nothing leaves.

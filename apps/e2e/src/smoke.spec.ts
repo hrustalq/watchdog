@@ -1,17 +1,69 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { magicLink, setupLink } from "./web-log.ts";
 
 // The first test claims the install, and a test running beside it would race it for the setup link.
 test.describe.configure({ mode: "serial" });
 
+const email = "smoke@example.com";
+
+// A new Source's Items wait for the worker's next tick, at most a minute, and the Feed's next refresh.
+const untilPolled = { timeout: 150_000 };
+
+// A page a client navigation left behind is still in the DOM, hidden, with the same ids. So one
+// input can hold both pages' labels, and getByRole would read its name as "Name Name".
+const visibleField = (page: Page, label: string) => page.getByLabel(label, { exact: true }).locator("visible=true");
+
+const feedRow = (page: Page, title: string) => page.getByRole("listitem").filter({ hasText: title });
+
+/** Signs in to the install the first test claimed, because each test starts with a new browser context. */
+async function signInAgain(page: Page) {
+  await page.goto(new URL("/sign-in", await setupLink()).href);
+  await page.getByLabel("Email").fill(email);
+  await page.getByRole("button", { name: "Email me a sign-in link" }).click();
+  await expect(page.getByRole("heading", { name: "Open the link from the server log" })).toBeVisible();
+  await page.goto(await magicLink(email));
+  await page.getByRole("button", { name: "Sign in to Watchdog" }).click();
+}
+
+/** From the Workspace, opens a new Classifier in the Form view. */
+async function openNewClassifier(page: Page, kind: "Deterministic" | "Agent-backed") {
+  await page.getByRole("link", { name: "Rules", exact: true }).click();
+  await page.getByRole("link", { name: `New ${kind} Classifier` }).click();
+  // A click does nothing until React has hydrated the page. From here on, navigation is client-side.
+  await expect(async () => {
+    await page.getByRole("button", { name: "YAML", exact: true }).click();
+    await expect(visibleField(page, "Rule as YAML")).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 30_000 });
+  await page.getByRole("button", { name: "Form", exact: true }).click();
+}
+
+async function saveRule(page: Page) {
+  await page.getByRole("button", { name: "Save rule" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Rule saved." })).toBeVisible();
+}
+
+/** On the Sources screen, adds a feed from the fixtures container (compose.smoke.yaml). */
+async function addRssSource(page: Page, path: string) {
+  // The page shows a copy of the form until the streamed one replaces it, and that drops what
+  // was typed into the copy, so the browser refuses the empty field. A repeat after a submit that
+  // went through says the feed is already watched, so a retry can't hide a failure.
+  await expect(async () => {
+    await visibleField(page, "RSS feed URL").fill(`http://fixtures/${path}`);
+    await page.getByRole("button", { name: "Add Source" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Source added." })).toBeVisible({
+      timeout: 10_000,
+    });
+  }).toPass({ timeout: 30_000 });
+}
+
 // A new self-hosted install with no mail server, end to end: claim it with the setup link, sign in
-// with the magic link, land on the empty Workspace, add an RSS Source and see the worker's poll of
-// it in the Feed. The feed is the recorded fixture the fixtures container serves
-// (compose.smoke.yaml), with dates relative to the run.
-test("a new install signs in, adds an RSS Source and sees its Items in the Feed", async ({ page }) => {
-  // The Items wait for the worker's next tick, at most a minute, and the Feed's next refresh.
+// with the magic link, land on the empty Workspace, save a Classifier, add an RSS Source and see the
+// worker's poll of it in the Feed, classified and unrated because there's no model. The feed is the
+// recorded fixture the fixtures container serves (compose.smoke.yaml), with dates relative to the run.
+test("a new install with no model classifies its first RSS Source's Items and leaves them unrated", async ({ page }) => {
   test.setTimeout(240_000);
-  const email = "smoke@example.com";
+  const other = "HypoPG 1.4.5 is out!";
+  const release = "Security release for psqlodbc";
 
   await test.step("claim the install with the setup link", async () => {
     await page.goto(await setupLink());
@@ -28,42 +80,50 @@ test("a new install signs in, adds an RSS Source and sees its Items in the Feed"
     await expect(page.getByText("Rated Items captured")).toHaveCount(0);
   });
 
-  await test.step("add the fixture feed as an RSS Source", async () => {
-    await page.getByRole("link", { name: "Add a Source" }).click();
-    // The page shows a copy of the form until the streamed one replaces it, and that drops what
-    // was typed into the copy, so the browser refuses the empty field. A repeat after a submit that
-    // went through says the feed is already watched, so a retry can't hide a failure.
-    await expect(async () => {
-      await page.getByLabel("RSS feed URL").fill("http://fixtures/feed.xml");
-      await page.getByRole("button", { name: "Add Source" }).click();
-      await expect(page.getByRole("status").filter({ hasText: "Source added." })).toBeVisible({
-        timeout: 10_000,
-      });
-    }).toPass({ timeout: 30_000 });
+  await test.step("save a Deterministic Classifier", async () => {
+    await openNewClassifier(page, "Deterministic");
+    await visibleField(page, "Name").fill("Release news");
+    await visibleField(page, "Value").fill("release");
+    await visibleField(page, "Categories to assign").fill("release");
+    await saveRule(page);
+    await page.getByRole("link", { name: "Workspace" }).click();
   });
 
-  const item = (title: string) => page.getByRole("listitem").filter({ hasText: title });
+  await test.step("add the fixture feed as an RSS Source", async () => {
+    await page.getByRole("link", { name: "Add a Source" }).click();
+    await addRssSource(page, "feed.xml");
+  });
+
   await test.step("see the feed's recent entries in the Feed as the Backfill", async () => {
     await page.getByRole("link", { name: "Workspace" }).click();
     // The Feed refreshes itself every 30 seconds, so no reload is needed.
-    for (const title of ["Security release for psqlodbc", "HypoPG 1.4.5 is out!"]) {
-      await expect(item(title), `"${title}" never reached the Feed`).toContainText("Backfill", {
-        timeout: 150_000,
-      });
+    for (const title of [release, other]) {
+      await expect(feedRow(page, title), `"${title}" never reached the Feed`).toContainText("Backfill", untilPolled);
     }
     // Captured in the same poll as the two above, so it would be on the page by now.
-    await expect(item("E-Maj 5.0.1"), "an entry older than 7 days was captured").toHaveCount(0);
+    await expect(feedRow(page, "E-Maj 5.0.1"), "an entry older than 7 days was captured").toHaveCount(0);
     // No model here, so Top shows Latest order and says why.
     await expect(page.getByText("this Workspace has no model")).toBeVisible();
     await expect(page.getByRole("link", { name: "Add a model to rate new Items" })).toHaveAttribute("href", "/model");
   });
 
-  await test.step("open an Item and see its capture Log row", async () => {
-    await page.getByRole("link", { name: "Security release for psqlodbc" }).click();
+  await test.step("the Classifier sorts the Items, and they stay unrated", async () => {
+    const categories = (title: string) => feedRow(page, title).getByRole("list", { name: "Categories" });
+    await expect(categories(release)).toHaveText("release", untilPolled);
+    // Its excerpt says "release", and the Classifier tests only the title.
+    await expect(categories(other)).toHaveCount(0);
+    await expect(feedRow(page, release)).toContainText("Unrated");
+    await expect(feedRow(page, other)).toContainText("Unrated");
+  });
+
+  await test.step("open an Item and see its Log", async () => {
+    await page.getByRole("link", { name: release }).click();
     const log = page.getByRole("region", { name: "Log" }).getByRole("listitem");
     await expect(log.filter({ hasText: "capture" })).toContainText(
       "Captured from PostgreSQL news as part of the Backfill",
     );
+    await expect(log.filter({ hasText: "classify" })).toContainText("Classifier Release news assigned release");
+    await expect(log.filter({ hasText: "Not rated" })).toContainText("this Workspace had no model to rate it with");
   });
 });
 
@@ -73,10 +133,7 @@ test("a new install signs in, adds an RSS Source and sees its Items in the Feed"
 test("the Rules editor keeps a draft only where it should, with and without JavaScript", async ({ page, browser }) => {
   // Two log reads and a wait for hydration leave too little of the default for the rest on a slow runner.
   test.setTimeout(120_000);
-  const email = "smoke@example.com";
-  // A page a client navigation left behind is still in the DOM, hidden, with the same ids. So one
-  // input can hold both pages' labels, and getByRole would read its name as "Name Name".
-  const field = (label: string) => page.getByLabel(label, { exact: true }).locator("visible=true");
+  const field = (label: string) => visibleField(page, label);
   const name = field("Name");
   const operator = field("Operator");
   const value = field("Value");
@@ -92,20 +149,8 @@ test("the Rules editor keeps a draft only where it should, with and without Java
   const reasonInList = page.getByRole("listitem").filter({ hasText: reason });
 
   await test.step("sign in again and open a new rule", async () => {
-    await page.goto(new URL("/sign-in", await setupLink()).href);
-    await page.getByLabel("Email").fill(email);
-    await page.getByRole("button", { name: "Email me a sign-in link" }).click();
-    await expect(page.getByRole("heading", { name: "Open the link from the server log" })).toBeVisible();
-    await page.goto(await magicLink(email));
-    await page.getByRole("button", { name: "Sign in to Watchdog" }).click();
-    await page.getByRole("link", { name: "Rules", exact: true }).click();
-    await newRule.click();
-    // A click does nothing until React has hydrated the page. From here on, navigation is client-side.
-    await expect(async () => {
-      await showYaml.click();
-      await expect(yaml).toBeVisible({ timeout: 1_000 });
-    }).toPass({ timeout: 30_000 });
-    await showForm.click();
+    await signInAgain(page);
+    await openNewClassifier(page, "Deterministic");
   });
 
   await test.step("New is blank after a rule is saved", async () => {
@@ -202,6 +247,97 @@ test("the Rules editor keeps a draft only where it should, with and without Java
 
     await page.goto(new URL("/rules", page.url()).href);
     await expect(page.getByRole("link", { name: "Written without JavaScript" })).toBeVisible();
+  });
+});
+
+// The M2 demo: Items get Categories and a Rating, and a Correction changes later Ratings. The model is
+// the fake-llm container (compose.smoke.yaml), which rates an Item Importance 2 unless the prompt holds
+// a Correction that raised a similar Item. It runs before the rate limit test below, which uses up the
+// sign-in bucket.
+test("a Correction changes the Rating the Agent gives a later, similar Item", async ({ page }) => {
+  // Two new Sources, each waiting for the worker's tick and the Feed's refresh.
+  test.setTimeout(480_000);
+  const corrected = "Acme launches a hosted query planner";
+  const meetup = "Acme summer meetup recap";
+  const similar = "Acme hosted query planner reaches general availability";
+  const unrelated = "Acme opens a Lisbon office";
+  const category = "competitor-launch";
+  const log = page.getByRole("region", { name: "Log" }).getByRole("listitem");
+
+  await test.step("add a model that points at fake-llm, and it answers a test", async () => {
+    await signInAgain(page);
+    await page.getByRole("link", { name: "Model", exact: true }).click();
+    await visibleField(page, "Base URL").fill("http://fake-llm:8080/v1");
+    await visibleField(page, "Model name").fill("fake-model");
+    await page.getByRole("button", { name: "Save model" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Model saved." })).toBeVisible();
+    await page.getByRole("button", { name: "Test connection" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Connected. fake-model answered." })).toBeVisible();
+    await page.getByRole("link", { name: "Workspace" }).click();
+  });
+
+  await test.step("save an Agent-backed Classifier", async () => {
+    await openNewClassifier(page, "Agent-backed");
+    await visibleField(page, "Name").fill("Launch watch");
+    await visibleField(page, "Prompt").fill("Does this Item announce a competitor's launch?");
+    await visibleField(page, "Categories the Agent may assign").fill(category);
+    await saveRule(page);
+    await page.getByRole("link", { name: "Workspace" }).click();
+  });
+
+  await test.step("a new Source's Backfill Items gain Categories and Importance 2", async () => {
+    await page.getByRole("link", { name: "Sources", exact: true }).click();
+    await addRssSource(page, "before-correction.xml");
+    await page.getByRole("link", { name: "Workspace" }).click();
+    for (const title of [corrected, meetup]) {
+      await expect(feedRow(page, title), `"${title}" was never rated 2`).toContainText("Importance 2 of 5", untilPolled);
+      await expect(feedRow(page, title)).toContainText("Backfill");
+      // Not the only one: the Rules test's Classifiers are still on.
+      await expect(feedRow(page, title).getByRole("list", { name: "Categories" })).toContainText(category);
+    }
+  });
+
+  await test.step("the Item shows its summary, and the Log has the reasoning", async () => {
+    await page.getByRole("link", { name: corrected }).click();
+    await expect(page.getByRole("region", { name: "Summary" })).toContainText(`The fake model's summary of "${corrected}"`);
+    await expect(log.filter({ hasText: "The Agent classified" })).toContainText(`Launch watch assigned ${category}`);
+    await expect(log.filter({ hasText: "The Agent rated" })).toContainText(
+      "The Agent rated this Item Severity 1, Importance 2: No Correction raised a similar Item.",
+    );
+  });
+
+  await test.step("correct the Item's Importance to 5", async () => {
+    await page.getByRole("button", { name: /^Set Importance to 5 of 5/ }).click();
+    await expect(log.filter({ hasText: "Corrected the Rating" })).toContainText(
+      "Corrected the Rating from Severity 1, Importance 2 to Severity 1, Importance 5",
+    );
+    await page.getByRole("link", { name: "Feed", exact: true }).click();
+  });
+
+  await test.step("a second Source's similar Item is rated Importance 5 and leads Top", async () => {
+    await page.getByRole("link", { name: "Sources", exact: true }).click();
+    await addRssSource(page, "after-correction.xml");
+    await page.getByRole("link", { name: "Workspace" }).click();
+    await expect(feedRow(page, similar), "the Correction didn't reach the similar Item").toContainText(
+      "Importance 5 of 5",
+      untilPolled,
+    );
+    await expect(feedRow(page, unrelated), "the Correction reached an unrelated Item").toContainText(
+      "Importance 2 of 5",
+      untilPolled,
+    );
+    // Level with the corrected Item, and captured after it.
+    await expect(page.getByRole("heading", { level: 2 }).first()).toHaveText(similar);
+  });
+
+  await test.step("Usage shows the calls", async () => {
+    await page.getByRole("link", { name: "Usage", exact: true }).click();
+    const purposes = page.getByRole("region", { name: "By purpose" });
+    // The fake model reports 10 input and 5 output tokens a call, and no call may fail or repeat.
+    await expect(purposes.getByRole("row", { name: "Test connection 1 0 10 5" })).toBeVisible();
+    await expect(purposes.getByRole("row", { name: "Classify 4 0 40 20" })).toBeVisible();
+    await expect(purposes.getByRole("row", { name: "Extract and rate 4 0 40 20" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "By model" })).toContainText("fake-model");
   });
 });
 

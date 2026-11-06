@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Source the Agent rates after the smoke test's Correction. One title is similar to the corrected
+     Item's in before-correction.xml, and one isn't, so a Correction has to reach only the similar Item.
+     The dates work as in feed.xml. -->
+<rss version="2.0">
+  <channel>
+    <title>Acme press</title>
+    <link>https://acme.example/press</link>
+    <description>Press releases from Acme</description>
+    <language>en-us</language>
+    <item>
+      <title>Acme hosted query planner reaches general availability</title>
+      <link>https://acme.example/press/planner-availability</link>
+      <description>The hosted query planner is out of preview.</description>
+      <pubDate>{{now | dateModify "-1h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://acme.example/press/planner-availability</guid>
+    </item>
+    <item>
+      <title>Acme opens a Lisbon office</title>
+      <link>https://acme.example/press/lisbon-office</link>
+      <description>A new office for the European team.</description>
+      <pubDate>{{now | dateModify "-2h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://acme.example/press/lisbon-office</guid>
+    </item>
+  </channel>
+</rss>
