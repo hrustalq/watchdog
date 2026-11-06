@@ -14,8 +14,7 @@ const section = (prompt, name) => JSON.parse(new RegExp(`<${name}>(.*)</${name}>
 function rate(prompt) {
   const { title } = section(prompt, "item");
   const raised = section(prompt, "corrections").find(
-    ({ kind, title: corrected, before, after }) =>
-      kind === "rating" && after.importance > before.importance && areSimilar(corrected, title),
+    ({ title: corrected, before, after }) => after.importance > before.importance && areSimilar(corrected, title),
   );
   return {
     summary: `The fake model's summary of "${title}".`,
