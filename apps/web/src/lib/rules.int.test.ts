@@ -2,10 +2,14 @@ import { processItem, ruleSchema } from "@watchdog/core";
 import { draftToYaml } from "@watchdog/core/rules/draft";
 import { fakeLlm } from "@watchdog/core/testing";
 import {
+  action,
+  actionDestination,
   classifier,
   closeDb,
   createDb,
   type Db,
+  delivery,
+  destination,
   eq,
   extractorRule,
   item,
@@ -18,8 +22,11 @@ import {
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
+import { removeDestination } from "./destinations.ts";
 import { blankRule, readDraft, setAt } from "./rule-draft.ts";
 import {
+  declaredFields,
+  destinationChoices,
   getRule,
   listRules,
   problemsInDraft,
@@ -103,13 +110,13 @@ describe("Rules", () => {
 
   /** Saves a rule that has to be valid, and returns where it went. */
   async function saved(workspaceId: string, yaml: string, target: RuleTarget | null = null) {
-    const result = await saveRule(db, workspaceId, target, yaml);
+    const result = await saveRule(db, workspaceId, target, yaml, "hosted");
     if ("problems" in result) throw new Error(`Not saved: ${JSON.stringify(result.problems)}`);
     return result.saved;
   }
 
   async function problems(yaml: string, target: RuleTarget | null = null, workspaceId = ours) {
-    const result = await saveRule(db, workspaceId, target, yaml);
+    const result = await saveRule(db, workspaceId, target, yaml, "hosted");
     if ("saved" in result) throw new Error("Expected the rule to be refused");
     return result.problems;
   }
@@ -256,7 +263,7 @@ describe("Rules", () => {
 
     it("stores text that only looks like an escape of those", async () => {
       const yaml = `classifier: ${unique()}\nwhen: { field: title, op: contains, value: '\\u0000 \\ud800' }\nassign: [x]\n`;
-      expect(await saveRule(db, ours, null, yaml)).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, yaml, "hosted")).toHaveProperty("saved");
     });
 
     it("refuses a second rule of the same type with the same name, beside the name", async () => {
@@ -270,8 +277,8 @@ describe("Rules", () => {
     it("lets a Classifier and an Extractor Rule share a name, and another Workspace use it", async () => {
       const name = unique();
       await saved(ours, classifierYaml(name));
-      expect(await saveRule(db, ours, null, extractorYaml(unique(), name))).toHaveProperty("saved");
-      expect(await saveRule(db, theirs, null, classifierYaml(name))).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, extractorYaml(unique(), name), "hosted")).toHaveProperty("saved");
+      expect(await saveRule(db, theirs, null, classifierYaml(name), "hosted")).toHaveProperty("saved");
     });
 
     it("refuses turning a saved Classifier into an Extractor Rule", async () => {
@@ -280,12 +287,283 @@ describe("Rules", () => {
         { path: "", message: containing("can't become") },
       ]);
     });
+  });
 
-    it("refuses an Action, which it has nowhere to store yet", async () => {
-      const yaml = "action: a\nwhen: { field: severity, op: gte, value: 4 }\nkind: alert\ndestinations: [me]\n";
-      expect(await problems(yaml)).toEqual([{ path: "", message: containing("can't save an Action") }]);
-      expect(await problemsInDraft(db, ours, null, yaml)).toEqual([
-        { path: "", message: containing("can't save an Action") },
+  describe("Actions", () => {
+    async function addDestination(
+      type: "telegram" | "email" | "webhook",
+      { workspaceId = ours, confirmed = true, name = unique() } = {},
+    ) {
+      const [row] = await db
+        .insert(destination)
+        .values({ workspaceId, type, name, confirmedAt: confirmed ? new Date() : null })
+        .returning({ id: destination.id, name: destination.name });
+      if (row === undefined) throw new Error("Not added");
+      return row;
+    }
+
+    const when = "when:\n  field: severity\n  op: gte\n  value: 4\n";
+    const listed = (names: string[]) => `destinations:\n${names.map((name) => `  - ${name}\n`).join("")}`;
+    const alertYaml = (names: string[], name = unique()) => `action: ${name}\n${when}kind: alert\n${listed(names)}`;
+    const webhookYaml = (names: string[], name = unique()) => `action: ${name}\n${when}kind: webhook\n${listed(names)}`;
+    const digestYaml = (names: string[], schedule: string, name = unique()) =>
+      `action: ${name}\n${when}kind: digest\n${schedule}${listed(names)}`;
+
+    it("shows an alert saved from the form identically in YAML, and an edit in YAML in what the form reads", async () => {
+      const mine = await addDestination("email");
+      const other = await addDestination("email");
+      const fromForm = setAt(
+        setAt(setAt(blankRule("action"), ["action"], unique()), ["when", "value"], "launch"),
+        ["destinations"],
+        [mine.name],
+      );
+      const yaml = draftToYaml(fromForm);
+
+      const { type, id } = await saved(ours, yaml);
+      expect(type).toBe("action");
+      expect((await getRule(db, ours, type, id))?.yaml).toBe(yaml);
+
+      await saved(ours, yaml.replace(mine.name, other.name), { type, id });
+      const read = readDraft((await getRule(db, ours, type, id))?.yaml ?? "");
+      expect("draft" in read && read.draft.destinations).toEqual([other.name]);
+    });
+
+    it("gives back a Digest's YAML in the model's order, though jsonb sorts its keys", async () => {
+      const mine = await addDestination("email");
+      const yaml = digestYaml([mine.name], 'schedule: "0 9 * * 1"\n');
+      const { type, id } = await saved(ours, yaml);
+      expect((await getRule(db, ours, type, id))?.yaml).toBe(yaml.replace('"0 9 * * 1"', "0 9 * * 1"));
+    });
+
+    it("stores its Destinations by id, so renaming one changes nothing, and keeps the foreign keys in step", async () => {
+      const first = await addDestination("email");
+      const second = await addDestination("email");
+      const { type, id } = await saved(ours, alertYaml([first.name, second.name]));
+
+      const [row] = await db.select({ definition: action.definition, kind: action.kind }).from(action).where(eq(action.id, id));
+      expect(row).toMatchObject({ kind: "alert", definition: { destinations: [first.id, second.id] } });
+      const pointedAt = async () => {
+        const rows = await db.select().from(actionDestination).where(eq(actionDestination.actionId, id));
+        return rows.map(({ destinationId }) => destinationId).sort();
+      };
+      expect(await pointedAt()).toEqual([first.id, second.id].sort());
+
+      const renamed = unique();
+      await db.update(destination).set({ name: renamed }).where(eq(destination.id, first.id));
+      expect((await getRule(db, ours, type, id))?.yaml).toContain(`- ${renamed}\n`);
+
+      await saved(ours, alertYaml([second.name]), { type, id });
+      expect(await pointedAt()).toEqual([second.id]);
+    });
+
+    it("saves a Condition on severity, importance and an extracted field", async () => {
+      const mine = await addDestination("email");
+      const yaml = `action: ${unique()}\nwhen:\n  all:\n    - { field: severity, op: gte, value: 4 }\n    - { field: importance, op: lte, value: 2 }\n    - { field: fields.cve, op: exists }\nkind: alert\n${listed([mine.name])}`;
+      expect(await saveRule(db, ours, null, yaml, "hosted")).toHaveProperty("saved");
+    });
+
+    it("refuses an email Destination on a webhook Action, naming it", async () => {
+      const mail = await addDestination("email");
+      const hook = await addDestination("webhook");
+      expect(await problems(webhookYaml([hook.name, mail.name]))).toEqual([
+        { path: "destinations.1", message: containing(mail.name) },
+      ]);
+    });
+
+    it("refuses a name that is no Destination here, which includes another Workspace's", async () => {
+      const elsewhere = await addDestination("email", { workspaceId: theirs });
+      expect(await problems(alertYaml([elsewhere.name]))).toEqual([
+        { path: "destinations.0", message: containing(elsewhere.name) },
+      ]);
+    });
+
+    it("refuses an empty list beside the field", async () => {
+      expect(await problems(`action: ${unique()}\n${when}kind: alert\ndestinations: []\n`)).toEqual([
+        { path: "destinations", message: "Add at least one." },
+      ]);
+    });
+
+    it.each([
+      ["no schedule", "", "This is required."],
+      ["a blank schedule", 'schedule: ""\n', "This can't be blank."],
+      ["a schedule that isn't cron", "schedule: often\n", '"often" isn\'t a cron expression.'],
+      ["a schedule under the mode's minimum", 'schedule: "*/5 * * * *"\n', "A schedule can't run more often than every 15 minutes on hosted."],
+    ])("refuses a Digest with %s beside the field", async (_, schedule, message) => {
+      const mine = await addDestination("email");
+      expect(await problems(digestYaml([mine.name], schedule))).toEqual([{ path: "schedule", message }]);
+    });
+
+    it("lets self-hosted use a schedule hosted refuses", async () => {
+      const mine = await addDestination("email");
+      const yaml = digestYaml([mine.name], 'schedule: "*/5 * * * *"\n');
+      expect(await saveRule(db, ours, null, yaml, "self-hosted")).toHaveProperty("saved");
+    });
+
+    it("finds what saving would refuse in a draft the page was sent back with", async () => {
+      const mail = await addDestination("email");
+      expect(await problemsInDraft(db, ours, null, webhookYaml([mail.name]), "hosted")).toEqual([
+        { path: "destinations.0", message: containing(mail.name) },
+      ]);
+    });
+
+    it("refuses a second Action with the same name, beside the name", async () => {
+      const mine = await addDestination("email");
+      const name = unique();
+      await saved(ours, alertYaml([mine.name], name));
+      expect(await problems(alertYaml([mine.name], name))).toEqual([
+        { path: "action", message: containing(`an Action named “${name}”`) },
+      ]);
+    });
+
+    it("refuses a saved rule changing type to or from an Action", async () => {
+      const mine = await addDestination("email");
+      const savedAction = await saved(ours, alertYaml([mine.name]));
+      expect(await problems(classifierYaml(), savedAction)).toEqual([
+        { path: "", message: "A saved Action can't become a Classifier. Create a new one instead." },
+      ]);
+      const classifierRule = await saved(ours, classifierYaml());
+      expect(await problems(alertYaml([mine.name]), classifierRule)).toEqual([
+        { path: "", message: "A saved Classifier can't become an Action. Create a new one instead." },
+      ]);
+    });
+
+    it("lets an Action's kind change when its Destinations fit the new one", async () => {
+      const mine = await addDestination("email");
+      const { type, id } = await saved(ours, alertYaml([mine.name]));
+      await saved(ours, digestYaml([mine.name], 'schedule: "0 9 * * 1"\n'), { type, id });
+      expect(await getRule(db, ours, type, id)).toMatchObject({ kind: "digest" });
+    });
+
+    it("saves an Action pointing at an unconfirmed Destination, and the list says which it won't reach", async () => {
+      const owner = unique();
+      await db.insert(user).values({ id: owner, name: "A", email: `${owner}@example.com` });
+      const [own] = await db.insert(workspace).values({ name: "Listed Actions", ownerUserId: owner }).returning();
+      const id = own?.id ?? "";
+      const waiting = await addDestination("email", { workspaceId: id, confirmed: false });
+      const chat = await addDestination("telegram", { workspaceId: id, confirmed: false });
+      const ready = await addDestination("email", { workspaceId: id });
+      const hook = await addDestination("webhook", { workspaceId: id, confirmed: false });
+      const name = unique();
+      await saved(id, alertYaml([ready.name, waiting.name, chat.name], name));
+      await saved(id, webhookYaml([hook.name]));
+
+      const { actions } = await listRules(db, id);
+      expect(actions[0]).toMatchObject({ name, kind: "alert", enabled: true, condition: "Severity is at least 4" });
+      expect(actions[0]?.destinations).toEqual(
+        expect.arrayContaining([
+          { name: ready.name, confirmed: true },
+          { name: waiting.name, confirmed: false },
+          { name: chat.name, confirmed: false },
+        ]),
+      );
+      // A webhook has no confirmation step, as in the Act stage.
+      expect(actions[1]?.destinations).toEqual([{ name: hook.name, confirmed: true }]);
+      expect(await destinationChoices(db, id)).toEqual(
+        expect.arrayContaining([
+          { name: waiting.name, type: "email", confirmed: false },
+          { name: hook.name, type: "webhook", confirmed: true },
+        ]),
+      );
+    });
+
+    it("says so in the list when a Condition no longer parses", async () => {
+      const owner = unique();
+      await db.insert(user).values({ id: owner, name: "B", email: `${owner}@example.com` });
+      const [own] = await db.insert(workspace).values({ name: "Broken", ownerUserId: owner }).returning();
+      const id = own?.id ?? "";
+      await db.insert(action).values({ workspaceId: id, name: "old", kind: "alert", definition: { action: "old", when: "x" } });
+      expect((await listRules(db, id)).actions).toMatchObject([{ name: "old", condition: null, destinations: [] }]);
+    });
+
+    it("shows a disabled Action left with no Destination in the model's order, for the user to add one", async () => {
+      const mine = await addDestination("email");
+      const { type, id } = await saved(ours, alertYaml([mine.name]));
+      await setRuleEnabled(db, ours, type, id, false);
+      expect(await removeDestination(db, ours, mine.id)).toEqual({ changed: [id] });
+
+      const yaml = (await getRule(db, ours, type, id))?.yaml ?? "";
+      expect(yaml).toMatch(/^action: .*\nwhen:[\s\S]*\nkind: alert\ndestinations: \[\]\n$/);
+      const another = await addDestination("email");
+      await saved(ours, yaml.replace("destinations: []", listed([another.name]).trimEnd()), { type, id });
+    });
+
+    it("doesn't fire on the next captured Item while disabled, until it's enabled again", async () => {
+      const [feed] = await db
+        .insert(source)
+        .values({ workspaceId: ours, type: "rss", name: "Blog", config: { url: `https://example.com/${unique()}` }, schedule: "*/15 * * * *" })
+        .returning({ id: source.id });
+      const hook = await addDestination("webhook");
+      const word = unique();
+      const yaml = `action: ${unique()}\nwhen: { field: title, op: contains, value: ${word} }\nkind: webhook\n${listed([hook.name])}`;
+      const { id } = await saved(ours, yaml);
+
+      async function deliveriesAfterCapture() {
+        const [row] = await db
+          .insert(item)
+          .values({ workspaceId: ours, sourceId: feed?.id ?? "", externalId: unique(), title: word, body: "", raw: {} })
+          .returning({ id: item.id });
+        await processItem(db, row?.id ?? "", pipelineDeps);
+        return db.$count(delivery, eq(delivery.itemId, row?.id ?? ""));
+      }
+
+      expect(await deliveriesAfterCapture()).toBe(1);
+      expect(await setRuleEnabled(db, ours, "action", id, false)).toBe(true);
+      expect(await deliveriesAfterCapture()).toBe(0);
+      expect(await setRuleEnabled(db, ours, "action", id, true)).toBe(true);
+      expect(await deliveriesAfterCapture()).toBe(1);
+    });
+
+    it("lets only one of a save and a remove of its Destination win, leaving no dangling reference", async () => {
+      const mine = await addDestination("email");
+      const other = await addDestination("email");
+      const { type, id } = await saved(ours, alertYaml([other.name]));
+      // Either the save finds the Destination gone, or it goes first and the remove takes it out again.
+      await Promise.all([
+        saveRule(db, ours, { type, id }, alertYaml([mine.name, other.name]), "hosted"),
+        removeDestination(db, ours, mine.id),
+      ]);
+
+      const [row] = await db.select({ definition: action.definition }).from(action).where(eq(action.id, id));
+      const pointedAt = await db.select().from(actionDestination).where(eq(actionDestination.actionId, id));
+      const stored = (row?.definition as { destinations: string[] }).destinations;
+      expect(stored).not.toContain(mine.id);
+      expect(pointedAt.map(({ destinationId }) => destinationId)).toEqual([other.id]);
+    });
+
+    it("is missing to every query from another Workspace", async () => {
+      const theirsToo = await addDestination("email", { workspaceId: theirs });
+      const { type, id } = await saved(theirs, alertYaml([theirsToo.name]));
+
+      expect(await getRule(db, ours, type, id)).toBeUndefined();
+      expect(await setRuleEnabled(db, ours, type, id, false)).toBe(false);
+      expect(await removeRule(db, ours, type, id)).toBe(false);
+      const mine = await addDestination("email");
+      expect(await problems(alertYaml([mine.name]), { type, id })).toEqual([
+        { path: "", message: containing("doesn't exist") },
+      ]);
+      expect(await getRule(db, theirs, type, id)).toMatchObject({ enabled: true });
+    });
+
+    it("goes when deleted, along with its Destination references", async () => {
+      const mine = await addDestination("email");
+      const { type, id } = await saved(ours, alertYaml([mine.name]));
+      expect(await removeRule(db, ours, type, id)).toBe(true);
+      expect(await db.select().from(actionDestination).where(eq(actionDestination.actionId, id))).toEqual([]);
+    });
+  });
+
+  describe("the fields the Workspace's Extractor Rules declare", () => {
+    it("lists each with its type, leaving out a rule that no longer parses", async () => {
+      const owner = unique();
+      await db.insert(user).values({ id: owner, name: "F", email: `${owner}@example.com` });
+      const [own] = await db.insert(workspace).values({ name: "Fielded", ownerUserId: owner }).returning();
+      const id = own?.id ?? "";
+      await saved(id, `extractor: a\nwhen: { field: title, op: exists }\nprompt: P\nfields:\n  - { name: price, type: integer }\n  - { name: plan, type: string }\n`);
+      await db.insert(extractorRule).values({ workspaceId: id, name: "old", kind: "deterministic", definition: { extractor: "old", fields: "x" } });
+
+      expect(await declaredFields(db, id)).toEqual([
+        { name: "plan", type: "string" },
+        { name: "price", type: "integer" },
       ]);
     });
   });
@@ -316,27 +594,27 @@ describe("Rules", () => {
     it("lets a rule keep its own field names through an edit", async () => {
       const field = unique();
       const target = await saved(ours, extractorYaml(field));
-      expect(await saveRule(db, ours, target, extractorYaml(field))).toHaveProperty("saved");
+      expect(await saveRule(db, ours, target, extractorYaml(field), "hosted")).toHaveProperty("saved");
     });
 
     it("frees a field name when the rule declaring it is deleted", async () => {
       const field = unique();
       const { id } = await saved(ours, extractorYaml(field));
       await removeRule(db, ours, "extractor", id);
-      expect(await saveRule(db, ours, null, extractorYaml(field))).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, extractorYaml(field), "hosted")).toHaveProperty("saved");
     });
 
     it("doesn't count another Workspace's rules", async () => {
       const field = unique();
       await saved(theirs, extractorYaml(field));
-      expect(await saveRule(db, ours, null, extractorYaml(field))).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, extractorYaml(field), "hosted")).toHaveProperty("saved");
     });
 
     it("lets only one of two concurrent saves declare a field", async () => {
       const field = unique();
       const results = await Promise.all([
-        saveRule(db, ours, null, extractorYaml(field)),
-        saveRule(db, ours, null, extractorYaml(field)),
+        saveRule(db, ours, null, extractorYaml(field), "hosted"),
+        saveRule(db, ours, null, extractorYaml(field), "hosted"),
       ]);
       expect(results.filter((result) => "saved" in result)).toHaveLength(1);
     });
@@ -348,7 +626,7 @@ describe("Rules", () => {
         kind: "deterministic",
         definition: { extractor: "old", fields: "not a list" },
       });
-      expect(await saveRule(db, ours, null, extractorYaml(unique()))).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, extractorYaml(unique()), "hosted")).toHaveProperty("saved");
     });
   });
 
@@ -357,20 +635,20 @@ describe("Rules", () => {
       const field = unique();
       await saved(ours, extractorYaml(field));
       const name = unique();
-      expect(await problemsInDraft(db, ours, null, extractorYaml(field, name))).toEqual([
+      expect(await problemsInDraft(db, ours, null, extractorYaml(field, name), "hosted")).toEqual([
         { path: "fields.0.name", message: containing(field) },
       ]);
       expect((await listRules(db, ours)).extractorRules.map((rule) => rule.name)).not.toContain(name);
     });
 
     it("finds nothing in a draft that would save", async () => {
-      expect(await problemsInDraft(db, ours, null, classifierYaml())).toEqual([]);
+      expect(await problemsInDraft(db, ours, null, classifierYaml(), "hosted")).toEqual([]);
     });
 
     it("doesn't count an edited rule as its own conflict", async () => {
       const field = unique();
       const target = await saved(ours, extractorYaml(field));
-      expect(await problemsInDraft(db, ours, target, extractorYaml(field))).toEqual([]);
+      expect(await problemsInDraft(db, ours, target, extractorYaml(field), "hosted")).toEqual([]);
     });
   });
 

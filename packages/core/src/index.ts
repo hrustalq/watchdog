@@ -30,7 +30,7 @@ export {
   NotAFeedError,
 } from "./sources/rss/fetch-feed.ts";
 export { createMailer, type MailMessage, type Mailer } from "./mail/mailer.ts";
-export { defaultSchedule, nextPollAt, scheduleError } from "./schedule.ts";
+export { defaultSchedule, minimumMinutes, nextPollAt, scheduleError } from "./schedule.ts";
 export { decryptSecret, encryptSecret } from "./secrets/secrets.ts";
 export {
   type ConditionItem,

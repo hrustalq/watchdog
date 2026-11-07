@@ -1,11 +1,23 @@
-// A Workspace's Classifiers and Extractor Rules, as the Rules screen reads and changes them. Every
-// query is scoped to the Workspace, so another Workspace's rule id behaves like a missing one.
-import { extractorRuleSchema, type Rule, ruleSchema } from "@watchdog/core";
+// A Workspace's Classifiers, Extractor Rules and Actions, as the Rules screen reads and changes them.
+// Every query is scoped to the Workspace, so another Workspace's rule id behaves like a missing one.
+import {
+  type Action,
+  conditionSchema,
+  conditionToWords,
+  type Config,
+  extractorRuleSchema,
+  type Rule,
+  ruleSchema,
+} from "@watchdog/core";
 import { draftFromYaml, draftToYaml } from "@watchdog/core/rules/draft";
 import {
+  action,
+  actionDestination,
   and,
   classifier,
   type Db,
+  desc,
+  destination,
   eq,
   extractorRule,
   isNull,
@@ -13,11 +25,14 @@ import {
   type Tx,
   workspace,
 } from "@watchdog/db";
-import type { RuleKind, RuleProblem, RuleType } from "./rule-draft.ts";
-import { ruleNoun, unreadable } from "./rule-draft.ts";
+import { actionProblems } from "./actions.ts";
+import type { ActionKind, DeclaredField, DestinationChoice, RuleKind, RuleProblem, RuleType } from "./rule-draft.ts";
+import { aRule, inActionOrder, isMap, ruleNoun, unreadable } from "./rule-draft.ts";
 import { isUuid } from "./uuid.ts";
 
-const tables = { classifier, extractor: extractorRule };
+type Mode = Config["mode"];
+
+const tables = { classifier, extractor: extractorRule, action };
 
 /** A saved rule. A rule that isn't saved yet has no target. */
 export interface RuleTarget {
@@ -26,7 +41,7 @@ export interface RuleTarget {
 }
 
 export const isRuleType = (value: unknown): value is RuleType =>
-  value === "classifier" || value === "extractor";
+  value === "classifier" || value === "extractor" || value === "action";
 
 /** The Workspace's rules by type, oldest first, which is the order they run in. */
 export async function listRules(db: Db, workspaceId: string) {
@@ -36,12 +51,70 @@ export async function listRules(db: Db, workspaceId: string) {
       .from(table)
       .where(eq(table.workspaceId, workspaceId))
       .orderBy(table.createdAt, table.id);
-  const [classifiers, extractorRules, hasModel] = await Promise.all([
+  const [classifiers, extractorRules, actions, hasModel] = await Promise.all([
     rulesIn(classifier),
     rulesIn(extractorRule),
+    listActions(db, workspaceId),
     hasActiveModel(db, workspaceId),
   ]);
-  return { classifiers, extractorRules, hasModel };
+  return { classifiers, extractorRules, actions, hasModel };
+}
+
+// A webhook has no confirmation step, so only its type says this and not `confirmed_at`, as in the Act stage.
+const isConfirmed = ({ type, confirmedAt }: { type: DestinationChoice["type"]; confirmedAt: Date | null }) =>
+  type === "webhook" || confirmedAt !== null;
+
+/** The Workspace's Actions, oldest first, with what each does in words. `condition` is null when it no longer parses. */
+async function listActions(db: Db, workspaceId: string) {
+  const rows = await db.query.action.findMany({
+    where: eq(action.workspaceId, workspaceId),
+    columns: { id: true, name: true, kind: true, enabled: true, definition: true },
+    with: { actionDestinations: { with: { destination: { columns: { name: true, type: true, confirmedAt: true } } } } },
+    orderBy: [action.createdAt, action.id],
+  });
+  return rows.map(({ definition, actionDestinations, ...row }) => {
+    // Only the Condition, because a disabled Action left with no Destination still has one to show.
+    const when = conditionSchema.safeParse(isMap(definition) ? definition.when : undefined);
+    return {
+      ...row,
+      condition: when.success ? conditionToWords(when.data) : null,
+      destinations: actionDestinations.map((row) => ({ name: row.destination.name, confirmed: isConfirmed(row.destination) })),
+    };
+  });
+}
+
+/**
+ * The Workspace's Destinations. Saving holds them until it commits, as a send does, so one can't be
+ * removed between the check and the foreign key. Before the Action's row, in the order
+ * `removeDestination` takes them, so the two can't deadlock.
+ */
+function destinationsIn(reader: Pick<Tx, "select">, workspaceId: string) {
+  return reader
+    .select({ id: destination.id, name: destination.name, type: destination.type, confirmedAt: destination.confirmedAt })
+    .from(destination)
+    .where(eq(destination.workspaceId, workspaceId))
+    .orderBy(desc(destination.createdAt), desc(destination.id))
+    .for("key share");
+}
+
+/** What the Action editor offers, newest first as on the Destinations screen. */
+export async function destinationChoices(db: Db, workspaceId: string): Promise<DestinationChoice[]> {
+  const rows = await destinationsIn(db, workspaceId);
+  return rows.map((row) => ({ name: row.name, type: row.type, confirmed: isConfirmed(row) }));
+}
+
+/** The fields the Workspace's Extractor Rules declare, by name. A rule that no longer parses declares nothing. */
+export async function declaredFields(db: Db, workspaceId: string): Promise<DeclaredField[]> {
+  const rows = await db
+    .select({ definition: extractorRule.definition })
+    .from(extractorRule)
+    .where(eq(extractorRule.workspaceId, workspaceId));
+  return rows
+    .flatMap(({ definition }) => {
+      const parsed = extractorRuleSchema.safeParse(definition);
+      return parsed.success ? parsed.data.fields.map(({ name, type }) => ({ name, type })) : [];
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Whether the Workspace has a model. Without one, Agent-backed rules can't run. */
@@ -64,9 +137,18 @@ export async function getRule(db: Db, workspaceId: string, type: RuleType, id: s
   if (row === undefined) return undefined;
   // jsonb sorts its keys, and parsing puts them back in the model's order. A definition that no
   // longer parses is shown as it is, for the user to fix.
-  const parsed = ruleSchema.safeParse(row.definition);
   const { definition, ...rule } = row;
-  return { ...rule, yaml: draftToYaml(parsed.success ? parsed.data : definition) };
+  const shown = type === "action" ? await withDestinationNames(db, workspaceId, definition) : definition;
+  const parsed = ruleSchema.safeParse(shown);
+  if (parsed.success) return { ...rule, yaml: draftToYaml(parsed.data) };
+  return { ...rule, yaml: draftToYaml(type === "action" && isMap(shown) ? inActionOrder(shown) : shown) };
+}
+
+/** A stored Action as the YAML shows it: Destinations by name, and an id with no Destination left as it is. */
+async function withDestinationNames(db: Db, workspaceId: string, definition: unknown) {
+  if (!isMap(definition) || !Array.isArray(definition.destinations)) return definition;
+  const names = new Map((await destinationsIn(db, workspaceId)).map(({ id, name }) => [id as unknown, name]));
+  return { ...definition, destinations: definition.destinations.map((id: unknown) => names.get(id) ?? id) };
 }
 
 type RuleIssue = NonNullable<ReturnType<typeof ruleSchema.safeParse>["error"]>["issues"][number];
@@ -119,8 +201,13 @@ interface ParsedRule {
   rule: Rule;
   type: RuleType;
   name: string;
-  kind: RuleKind;
+  kind: RuleKind | ActionKind;
 }
+
+const typeAndName = (rule: Rule): [RuleType, string] => {
+  if ("classifier" in rule) return ["classifier", rule.classifier];
+  return "extractor" in rule ? ["extractor", rule.extractor] : ["action", rule.action];
+};
 
 function parseRule(text: string, target: RuleTarget | null): ParsedRule | { problems: RuleProblem[] } {
   let value: unknown;
@@ -139,14 +226,9 @@ function parseRule(text: string, target: RuleTarget | null): ParsedRule | { prob
     };
   }
   const rule = parsed.data;
-  // An Action has its own table and Destination checks, which arrive with GitHub issue #200.
-  if ("action" in rule) {
-    return { problems: [{ path: "", message: "The Rules screen can't save an Action yet." }] };
-  }
-  const [type, name]: [RuleType, string] =
-    "classifier" in rule ? ["classifier", rule.classifier] : ["extractor", rule.extractor];
+  const [type, name] = typeAndName(rule);
   if (target !== null && target.type !== type) {
-    const message = `A saved ${ruleNoun[target.type]} can't become ${type === "extractor" ? "an" : "a"} ${ruleNoun[type]}. Create a new one instead.`;
+    const message = `A saved ${ruleNoun[target.type]} can't become ${aRule(type)}. Create a new one instead.`;
     return { problems: [{ path: "", message }] };
   }
   if (name.length > maxNameLength) {
@@ -155,11 +237,21 @@ function parseRule(text: string, target: RuleTarget | null): ParsedRule | { prob
   if (hasUnstorableText(rule)) {
     return { problems: [{ path: "", message: "Watchdog can't store a NUL character or half a surrogate pair. Remove it." }] };
   }
+  if ("action" in rule) return { rule, type, name, kind: rule.kind };
   return { rule, type, name, kind: "prompt" in rule ? "agent" : "deterministic" };
 }
 
-/** What the Workspace's other rules refuse about this one: its name, and its field names. */
-async function conflicts(db: Pick<Tx, "select">, workspaceId: string, parsed: ParsedRule, ownId: string | undefined) {
+/**
+ * What the Workspace refuses about this rule: its name, an Extractor Rule's field names, and an
+ * Action's Destinations and the mode's minimum for its schedule.
+ */
+async function conflicts(
+  db: Pick<Tx, "select">,
+  workspaceId: string,
+  parsed: ParsedRule,
+  ownId: string | undefined,
+  mode: Mode,
+) {
   const { rule, type, name } = parsed;
   const table = tables[type];
   const rows = await db
@@ -170,7 +262,10 @@ async function conflicts(db: Pick<Tx, "select">, workspaceId: string, parsed: Pa
 
   const problems: RuleProblem[] = [];
   if (others.some((other) => other.name === name)) {
-    problems.push({ path: type, message: `This Workspace already has a ${ruleNoun[type]} named “${name}”.` });
+    problems.push({ path: type, message: `This Workspace already has ${aRule(type)} named “${name}”.` });
+  }
+  if ("action" in rule) {
+    return [...problems, ...actionProblems(rule, await destinationsIn(db, workspaceId), mode)];
   }
   if (!("extractor" in rule)) return problems;
 
@@ -192,13 +287,61 @@ async function conflicts(db: Pick<Tx, "select">, workspaceId: string, parsed: Pa
 }
 
 /** Why this draft wouldn't save, without saving it. Empty when it would. */
-export async function problemsInDraft(db: Db, workspaceId: string, target: RuleTarget | null, text: string) {
+export async function problemsInDraft(
+  db: Db,
+  workspaceId: string,
+  target: RuleTarget | null,
+  text: string,
+  mode: Mode,
+) {
   const parsed = parseRule(text, target);
   if ("problems" in parsed) return parsed.problems;
-  return conflicts(db, workspaceId, parsed, target?.id);
+  return conflicts(db, workspaceId, parsed, target?.id, mode);
 }
 
 const missing = { problems: [{ path: "", message: "This rule doesn't exist any more." }] };
+
+/**
+ * Stores an Action with its Destinations by id (the YAML shows their names, and renaming one changes
+ * nothing here), and points the foreign keys at the same set. The checks have passed and hold the
+ * Destinations, so every name has an id.
+ */
+async function storeAction(tx: Tx, workspaceId: string, target: RuleTarget | null, rule: Action) {
+  const ids = new Map((await destinationsIn(tx, workspaceId)).map(({ id, name }) => [name, id]));
+  const destinationIds = rule.destinations.flatMap((name) => ids.get(name) ?? []);
+  const values = { name: rule.action, kind: rule.kind, definition: { ...rule, destinations: destinationIds } };
+  const [row] =
+    target === null
+      ? await tx.insert(action).values({ workspaceId, ...values }).returning({ id: action.id })
+      : await tx
+          .update(action)
+          .set(values)
+          .where(and(eq(action.workspaceId, workspaceId), eq(action.id, target.id)))
+          .returning({ id: action.id });
+  if (row === undefined) return undefined;
+  await tx.delete(actionDestination).where(eq(actionDestination.actionId, row.id));
+  await tx.insert(actionDestination).values(destinationIds.map((destinationId) => ({ actionId: row.id, destinationId })));
+  return row;
+}
+
+/** Stores a Classifier or an Extractor Rule. */
+async function storeRule(
+  tx: Tx,
+  workspaceId: string,
+  target: RuleTarget | null,
+  { rule, name, kind }: { rule: Rule; name: string; kind: RuleKind },
+  table: typeof classifier | typeof extractorRule,
+) {
+  const [row] =
+    target === null
+      ? await tx.insert(table).values({ workspaceId, name, kind, definition: rule }).returning({ id: table.id })
+      : await tx
+          .update(table)
+          .set({ name, kind, definition: rule })
+          .where(and(eq(table.workspaceId, workspaceId), eq(table.id, target.id)))
+          .returning({ id: table.id });
+  return row;
+}
 
 /**
  * Validates the YAML with the rule model and the Workspace's other rules, and creates the rule or
@@ -210,29 +353,31 @@ export async function saveRule(
   workspaceId: string,
   target: RuleTarget | null,
   text: string,
+  mode: Mode,
 ): Promise<{ saved: RuleTarget } | { problems: RuleProblem[] }> {
   const parsed = parseRule(text, target);
   if ("problems" in parsed) return parsed;
   if (target !== null && !isUuid(target.id)) return missing;
   const { rule, type, name, kind } = parsed;
-  const table = tables[type];
 
   return db.transaction(async (tx) => {
     // Two saves take turns, or each could pass the checks before the other commits. Not a key lock,
     // so a capture inserting under this Workspace isn't held up.
     await tx.select({ id: workspace.id }).from(workspace).where(eq(workspace.id, workspaceId)).for("no key update");
 
-    const problems = await conflicts(tx, workspaceId, parsed, target?.id);
+    const problems = await conflicts(tx, workspaceId, parsed, target?.id, mode);
     if (problems.length > 0) return { problems };
 
-    const [row] =
-      target === null
-        ? await tx.insert(table).values({ workspaceId, name, kind, definition: rule }).returning({ id: table.id })
-        : await tx
-            .update(table)
-            .set({ name, kind, definition: rule })
-            .where(and(eq(table.workspaceId, workspaceId), eq(table.id, target.id)))
-            .returning({ id: table.id });
+    const row =
+      "action" in rule
+        ? await storeAction(tx, workspaceId, target, rule)
+        : await storeRule(
+            tx,
+            workspaceId,
+            target,
+            { rule, name, kind: kind === "agent" ? "agent" : "deterministic" },
+            type === "classifier" ? classifier : extractorRule,
+          );
     return row === undefined ? missing : { saved: { type, id: row.id } };
   });
 }

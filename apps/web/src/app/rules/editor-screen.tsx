@@ -1,4 +1,5 @@
-import { hasActiveModel, problemsInDraft, type RuleTarget } from "@/lib/rules";
+import { minimumMinutes } from "@watchdog/core";
+import { declaredFields, destinationChoices, hasActiveModel, problemsInDraft, type RuleTarget } from "@/lib/rules";
 import { server } from "@/lib/server";
 import { listSources } from "@/lib/sources";
 import { RuleEditor } from "./rule-editor";
@@ -24,12 +25,14 @@ export async function EditorScreen({
   yaml: string;
   query: Record<string, string | string[] | undefined>;
 }) {
-  const { db } = server();
+  const { db, mode } = server();
   const sentBack = typeof query.draft === "string" ? query.draft : undefined;
-  const [hasModel, sources, problems] = await Promise.all([
+  const [hasModel, sources, destinations, declared, problems] = await Promise.all([
     hasActiveModel(db, workspaceId),
     listSources(db, workspaceId),
-    sentBack === undefined ? [] : problemsInDraft(db, workspaceId, target, sentBack),
+    destinationChoices(db, workspaceId),
+    declaredFields(db, workspaceId),
+    sentBack === undefined ? [] : problemsInDraft(db, workspaceId, target, sentBack, mode),
   ]);
   const tooLong =
     query["draft-too-long"] === undefined
@@ -49,6 +52,9 @@ export async function EditorScreen({
           initialProblems={[...tooLong, ...problems]}
           hasModel={hasModel}
           sources={sources.map(({ id, name }) => ({ id, name }))}
+          destinations={destinations}
+          declared={declared}
+          scheduleHelp={`A cron expression in this Workspace's timezone, such as 0 9 * * 1 for Mondays at 09:00. It can't run more often than every ${String(minimumMinutes[mode])} minutes on ${mode}.`}
         />
       </main>
     </div>

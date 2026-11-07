@@ -408,6 +408,12 @@ describe("actionSchema", () => {
     expect(issue?.path).toEqual(["schedule"]);
   });
 
+  it.each(["", "   "])("refuses a blank schedule %j as blank, beside the field", (schedule) => {
+    const issue = issuesOf(actionSchema.safeParse({ ...digest, schedule }))[0];
+    expect(issue?.message).not.toContain("cron");
+    expect(issue?.path).toEqual(["schedule"]);
+  });
+
   it("leaves a schedule's minimum interval to the save, which knows the mode", () => {
     expect(actionSchema.safeParse({ ...digest, schedule: "* * * * *" }).success).toBe(true);
   });

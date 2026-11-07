@@ -3,8 +3,9 @@
 // draft for the YAML view. Runs in the browser, so it can't import @watchdog/core's main entry.
 import { draftFromYaml, draftToYaml } from "@watchdog/core/rules/draft";
 
-export type RuleType = "classifier" | "extractor";
+export type RuleType = "classifier" | "extractor" | "action";
 export type RuleKind = "deterministic" | "agent";
+export type ActionKind = "alert" | "webhook" | "digest";
 export type Draft = Record<string, unknown>;
 export type Path = readonly (string | number)[];
 
@@ -38,12 +39,29 @@ const onlyHas = (map: Record<string, unknown>, keys: string[]) =>
   Object.keys(map).every((key) => keys.includes(key));
 
 /** What the glossary calls each type of rule. */
-export const ruleNoun: Record<RuleType, string> = { classifier: "Classifier", extractor: "Extractor Rule" };
+export const ruleNoun: Record<RuleType, string> = { classifier: "Classifier", extractor: "Extractor Rule", action: "Action" };
+
+/** The same, with its article. */
+export const aRule = (type: RuleType) => `${type === "classifier" ? "a" : "an"} ${ruleNoun[type]}`;
+
+/** A Destination as the Action editor offers it. Webhooks have no confirmation step, so they're always confirmed. */
+export interface DestinationChoice {
+  name: string;
+  type: "telegram" | "email" | "webhook";
+  confirmed: boolean;
+}
+
+/** A field an Extractor Rule declares, which an Action's Condition can test. */
+export interface DeclaredField {
+  name: string;
+  type: string;
+}
 
 export const blankTest = { field: "title", op: "contains", value: "" };
 
 /** A new rule with the shape the form shows, ready to be filled in. */
-export function blankRule(type: RuleType, kind: RuleKind): Draft {
+export function blankRule(type: RuleType, kind: RuleKind = "deterministic"): Draft {
+  if (type === "action") return { action: "", when: blankTest, kind: "alert", destinations: [] };
   if (type === "classifier") {
     return kind === "agent"
       ? { classifier: "", prompt: "", categories: [] }
@@ -60,8 +78,31 @@ export const blankField = (kind: RuleKind) =>
     : { name: "", type: "string", from: "title", regex: "" };
 
 /** Which rule a draft is, read the way `ruleSchema` picks its branch. */
-export const ruleTypeOf = (draft: Draft): RuleType => ("classifier" in draft ? "classifier" : "extractor");
-export const kindOf = (draft: Draft): RuleKind => ("prompt" in draft ? "agent" : "deterministic");
+export function ruleTypeOf(draft: Draft): RuleType {
+  if ("classifier" in draft) return "classifier";
+  return "extractor" in draft ? "extractor" : "action";
+}
+/** An Action has no such kind, and no model to wait for, whatever its draft holds. */
+export const kindOf = (draft: Draft): RuleKind =>
+  "prompt" in draft && ruleTypeOf(draft) !== "action" ? "agent" : "deterministic";
+
+const actionKeys = ["action", "when", "kind", "schedule", "destinations"];
+
+/** An Action's keys in the order the rule model writes them, then whatever else it holds. */
+export const inActionOrder = (draft: Draft): Draft =>
+  Object.fromEntries([
+    ...actionKeys.filter((key) => key in draft).map((key) => [key, draft[key]]),
+    ...Object.entries(draft).filter(([key]) => !actionKeys.includes(key)),
+  ]);
+
+/** The Action under another kind. Only a Digest takes a schedule, and it starts blank for the user to fill in. */
+export function changeKind({ schedule, ...draft }: Draft, kind: string): Draft {
+  return inActionOrder(kind === "digest" ? { ...draft, kind, schedule: schedule ?? "" } : { ...draft, kind });
+}
+
+/** A webhook Action takes webhook Destinations only, and an alert or Digest takes the others. */
+export const destinationFits = (kind: unknown, type: DestinationChoice["type"]) =>
+  (type === "webhook") === (kind === "webhook");
 
 const removed = Symbol("removed");
 
@@ -115,8 +156,8 @@ export function readDraft(text: string): { draft: Draft } | { error: string } {
   } catch (error) {
     return { error: unreadable(error) };
   }
-  if (!isMap(value) || !("classifier" in value || "extractor" in value)) {
-    return { error: 'A rule starts with "classifier:" or "extractor:" and its name.' };
+  if (!isMap(value) || !("classifier" in value || "extractor" in value || "action" in value)) {
+    return { error: 'A rule starts with "classifier:", "extractor:" or "action:" and its name.' };
   }
   try {
     // An alias can make the value contain itself, and the form's walk would never end.
@@ -194,7 +235,7 @@ export function negate(node: unknown) {
 }
 
 /** The predicate under another operator, keeping its value where that operator can hold it. */
-export function changeOp(predicate: Record<string, unknown>, op: string) {
+export function changeOp(predicate: Record<string, unknown>, op: string): Record<string, unknown> {
   const { field, value } = predicate;
   if (op === "exists") return { field, op };
   if (op === "in") {
@@ -210,13 +251,36 @@ export function changeOp(predicate: Record<string, unknown>, op: string) {
 /**
  * What a predicate's text box holds as a value. `gte` and `lte` take numbers, and text the form
  * can't make one of stays as typed, for the server to refuse. `contains` and `matches` take only
- * text. `is` takes text, but a number from the YAML view stays a number. Only text that round-trips
- * counts, so typing "4.05" survives passing through "4.0".
+ * text. `is` takes text, but on a number field or for a number from the YAML view it takes a number,
+ * since "4" never equals 4. Only text that round-trips counts, so typing "4.05" survives passing
+ * through "4.0".
  */
-export function typedValue(op: string, previous: unknown, text: string): string | number {
+export function typedValue(op: string, previous: unknown, text: string, numeric = false): string | number {
   const wantsNumber =
-    op === "gte" || op === "lte" || (typeof previous === "number" && op !== "contains" && op !== "matches");
+    op === "gte" ||
+    op === "lte" ||
+    ((numeric || typeof previous === "number") && op !== "contains" && op !== "matches");
   return wantsNumber && /^-?\d/.test(text) && String(Number(text)) === text ? Number(text) : text;
+}
+
+/** Whether a field holds numbers: the Rating, or a field an Extractor Rule declares as whole numbers. */
+export function isNumericField(field: unknown, declared: readonly DeclaredField[]) {
+  if (field === "severity" || field === "importance") return true;
+  const type = declared.find(({ name }) => `fields.${name}` === field)?.type;
+  return type === "integer" || type === "integer-array";
+}
+
+/**
+ * The predicate on another field, with an operator and a value that can hold on it: `contains` never
+ * holds on a number, `gte` never holds on text, and "4" never equals 4.
+ */
+export function changeField(predicate: Record<string, unknown>, field: string, numeric: boolean) {
+  const op = textOf(predicate.op);
+  const misfit = numeric ? op === "contains" || op === "matches" : op === "gte" || op === "lte";
+  const { value, op: nextOp } = misfit ? changeOp(predicate, numeric ? "gte" : "contains") : predicate;
+  const retyped = (entry: unknown) => (numeric ? typedValue(textOf(nextOp), undefined, textOf(entry), true) : textOf(entry));
+  if (value === undefined) return { field, op: nextOp };
+  return { field, op: nextOp, value: isList(value) ? value.map(retyped) : retyped(value) };
 }
 
 /**
@@ -229,7 +293,7 @@ export function fromLines(text: string, { tidy = false } = {}) {
   return tidy ? lines.map((line) => line.trim()).filter((line) => line !== "") : lines;
 }
 
-const formKeys: Record<RuleType, Record<RuleKind, string[]>> = {
+const formKeys: Record<Exclude<RuleType, "action">, Record<RuleKind, string[]>> = {
   classifier: {
     deterministic: ["classifier", "when", "assign"],
     agent: ["classifier", "prompt", "categories"],
@@ -240,14 +304,20 @@ const formKeys: Record<RuleType, Record<RuleKind, string[]>> = {
   },
 };
 
+function keysInForm(draft: Draft) {
+  const type = ruleTypeOf(draft);
+  if (type !== "action") return formKeys[type][kindOf(draft)];
+  return ["action", "when", "kind", "destinations", ...(draft.kind === "digest" ? ["schedule"] : [])];
+}
+
 /** The rule's top-level keys the form has no control for. They stay in the draft. */
 export function formHides(draft: Draft) {
-  const shown = formKeys[ruleTypeOf(draft)][kindOf(draft)];
+  const shown = keysInForm(draft);
   return Object.entries(draft)
     .filter(([key, value]) => {
       if (!shown.includes(key)) return true;
       if (key === "when") return false;
-      if (key === "assign" || key === "categories") return !isScalarList(value);
+      if (key === "assign" || key === "categories" || key === "destinations") return !isScalarList(value);
       if (key === "fields") return !isList(value);
       return !isScalar(value);
     })
@@ -255,7 +325,7 @@ export function formHides(draft: Draft) {
 }
 
 const placedInForm = [
-  /^(?:classifier|extractor|prompt|(?:assign|categories)(?:\.\d+)?|fields(?:\.\d+(?:\.(?:name|type|from|regex|jsonpath))?)?)$/,
+  /^(?:classifier|extractor|action|kind|schedule|prompt|(?:assign|categories|destinations)(?:\.\d+)?|fields(?:\.\d+(?:\.(?:name|type|from|regex|jsonpath))?)?)$/,
   /^when(?:\.(?:all|any)\.\d+|\.not)*(?:\.(?:all|any|field|op|value(?:\.\d+)?))?$/,
 ];
 

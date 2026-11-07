@@ -1,6 +1,7 @@
 "use client";
 
 import { draftToYaml } from "@watchdog/core/rules/draft";
+import Link from "next/link";
 import { createContext, use, useEffect, useMemo, useRef } from "react";
 import { dataBox, field as fieldClass, fieldError, label, textBox } from "@/components/field-classes";
 import { Button } from "@/components/ui/button";
@@ -9,14 +10,20 @@ import {
   asList,
   blankField,
   blankTest,
+  changeField,
+  changeKind,
   changeOp,
   conditionPart,
+  type DeclaredField,
+  destinationFits,
+  type DestinationChoice,
   type Draft,
   fieldPart,
   fieldReading,
   formHides,
   fromLines,
   isMap,
+  isNumericField,
   isScalarList,
   kindOf,
   negate,
@@ -32,6 +39,7 @@ import {
   valueAt,
 } from "@/lib/rule-draft";
 import { cn } from "@/lib/utils";
+import { destinationsLink } from "./words";
 
 type Options = readonly (readonly [value: string, label: string])[];
 
@@ -45,6 +53,10 @@ const contentFields: Options = [
   ["source", "Source"],
 ];
 const categoryField: Options = [["category", "Category"]];
+const ratingFields: Options = [
+  ["severity", "Severity"],
+  ["importance", "Importance"],
+];
 const operators: Options = [
   ["contains", "contains"],
   ["is", "is"],
@@ -52,6 +64,23 @@ const operators: Options = [
   ["matches", "matches regex"],
   ["exists", "exists"],
 ];
+const numberOperators: Options = [
+  ["gte", "is at least"],
+  ["lte", "is at most"],
+  ["is", "is"],
+  ["in", "is one of"],
+  ["exists", "exists"],
+];
+const actionKinds: Options = [
+  ["alert", "Alert"],
+  ["webhook", "Webhook"],
+  ["digest", "Digest"],
+];
+const destinationTypes: Record<DestinationChoice["type"], string> = {
+  telegram: "Telegram",
+  email: "Email",
+  webhook: "Webhook",
+};
 const valueHints: Partial<Record<string, string>> = {
   contains: "Text to find",
   matches: "Regular expression, such as (?i)launch",
@@ -81,6 +110,8 @@ interface Editing {
   /** A change of shape: entries may have moved, so the problems no longer hold. */
   reshape: (path: Path, value: unknown) => void;
   remove: (path: Path) => void;
+  destinations: DestinationChoice[];
+  declared: DeclaredField[];
 }
 
 const EditingContext = createContext<Editing | null>(null);
@@ -125,12 +156,18 @@ function Problems({ at, exact = false }: { at: Path; exact?: boolean }) {
 export function RuleForm({
   draft,
   sources,
+  destinations,
+  declared,
+  scheduleHelp,
   problems,
   onEdit,
   onReshape,
 }: {
   draft: Draft;
   sources: { id: string; name: string }[];
+  destinations: DestinationChoice[];
+  declared: DeclaredField[];
+  scheduleHelp: string;
   problems: RuleProblem[];
   onEdit: (draft: Draft) => void;
   onReshape: (draft: Draft) => void;
@@ -155,8 +192,10 @@ export function RuleForm({
         changedAt.current = path;
         onReshape(removeAt(draft, path));
       },
+      destinations,
+      declared,
     }),
-    [draft, problems, onEdit, onReshape],
+    [draft, problems, onEdit, onReshape, destinations, declared],
   );
 
   // A change of shape can take away the button that was pressed, which drops focus out of the form.
@@ -175,15 +214,18 @@ export function RuleForm({
     }
   }, [draft]);
 
-  const conditionHelp =
-    type === "classifier"
-      ? "An Item that meets this gets this Classifier's Categories. It can test Source and content."
-      : "The rule runs on Items that meet this. It can test Categories, Source and content, not the Rating.";
+  const conditionHelp = {
+    classifier: "An Item that meets this gets this Classifier's Categories. It can test Source and content.",
+    extractor: "The rule runs on Items that meet this. It can test Categories, Source and content, not the Rating.",
+    action: "The Action fires on Items that meet this, rated or not. A test on Severity or Importance doesn't hold on an unrated Item.",
+  }[type];
 
   return (
     <EditingContext value={editing}>
       <div ref={root} className="flex flex-col gap-6">
         <TextField path={[type]} labelText="Name" hidden={hidden.includes(type)} />
+
+        {type === "action" ? <KindField hidden={hidden.includes("kind")} /> : null}
 
         {agent && type === "classifier" ? (
           <>
@@ -211,6 +253,22 @@ export function RuleForm({
           </>
         ) : null}
 
+        {type === "action" ? (
+          <>
+            {draft.kind === "digest" ? (
+              <TextField
+                path={["schedule"]}
+                labelText="Schedule"
+                hidden={hidden.includes("schedule")}
+                data
+                placeholder="0 9 * * 1"
+                help={scheduleHelp}
+              />
+            ) : null}
+            <DestinationList hidden={hidden.includes("destinations")} />
+          </>
+        ) : null}
+
         {hidden.length === 0 ? null : (
           <p className="rounded-lg bg-muted px-3 py-2 text-sm">
             Only the YAML view shows <span className="font-mono text-[0.8125rem]">{hidden.join(", ")}</span>. It
@@ -235,12 +293,17 @@ function TextField({
   labelText,
   hidden,
   multiline = false,
+  data = false,
+  placeholder,
   help,
 }: {
   path: Path;
   labelText: string;
   hidden: boolean;
   multiline?: boolean;
+  /** Text a person reads as data, such as a cron expression. */
+  data?: boolean;
+  placeholder?: string;
   help?: string;
 }) {
   const { draft, edit } = useEditing();
@@ -255,7 +318,16 @@ function TextField({
   const box = multiline ? (
     <textarea id={id} rows={5} value={text} onChange={onChange} className={cn(textBox, "py-2")} {...described} />
   ) : (
-    <input id={id} type="text" value={text} onChange={onChange} className={fieldClass} {...described} />
+    <input
+      id={id}
+      type="text"
+      value={text}
+      placeholder={placeholder}
+      spellCheck={data ? false : undefined}
+      onChange={onChange}
+      className={cn(fieldClass, data && dataBox)}
+      {...described}
+    />
   );
   return (
     <div className="flex flex-col gap-2">
@@ -307,6 +379,7 @@ function LinesBox({
   label: ariaLabel,
   problemsAt = path,
   helpId,
+  numeric = false,
 }: {
   id?: string;
   path: Path;
@@ -314,10 +387,13 @@ function LinesBox({
   label?: string;
   problemsAt?: Path;
   helpId?: string;
+  /** The entries are compared with numbers, and "4" never equals 4. */
+  numeric?: boolean;
 }) {
   const { edit } = useEditing();
   const invalid = useInvalid(path, problemsAt);
   const text = list.join("\n");
+  const typed = (lines: string[]) => (numeric ? lines.map((line) => typedValue("in", undefined, line, true)) : lines);
   return (
     <textarea
       id={id}
@@ -325,11 +401,11 @@ function LinesBox({
       rows={3}
       spellCheck={false}
       value={text}
-      onChange={(event) => { edit(path, fromLines(event.target.value)); }}
+      onChange={(event) => { edit(path, typed(fromLines(event.target.value))); }}
       onBlur={() => {
         // Only when there's something to tidy, because this turns numbers from the YAML into text.
         const tidied = fromLines(text, { tidy: true });
-        if (tidied.join("\n") !== text) edit(path, tidied);
+        if (tidied.join("\n") !== text) edit(path, typed(tidied));
       }}
       className={cn(textBox, dataBox, "py-1.5")}
       {...invalid}
@@ -365,6 +441,98 @@ function Choice({
         </option>
       ))}
     </select>
+  );
+}
+
+function KindField({ hidden }: { hidden: boolean }) {
+  const { draft, reshape } = useEditing();
+  const invalid = useInvalid(["kind"]);
+  return (
+    <div className="flex flex-col gap-2">
+      {hidden ? null : (
+        <FieldLabel text="Kind">
+          <Choice
+            labelText="Kind"
+            value={draft.kind}
+            options={actionKinds}
+            invalid={invalid}
+            className="sm:w-48"
+            onChange={(next) => { reshape([], changeKind(draft, next)); }}
+          />
+        </FieldLabel>
+      )}
+      <Problems at={["kind"]} />
+    </div>
+  );
+}
+
+/**
+ * The Destinations the Action's kind allows. A name from the YAML that isn't one of those stays in the
+ * draft until the user takes it out, because the save is what says why it's wrong.
+ */
+function DestinationList({ hidden }: { hidden: boolean }) {
+  const { draft, reshape, problems, destinations } = useEditing();
+  const path = ["destinations"];
+  const value = valueAt(draft, path);
+  const list = isScalarList(value) ? value : [];
+  const isWebhook = draft.kind === "webhook";
+  const offered = destinations.filter(({ type }) => destinationFits(draft.kind, type));
+  const others = list.filter((entry) => !offered.some(({ name }) => name === entry));
+  const allowed = isWebhook ? "webhook" : "Telegram or email";
+  const invalidAt = (index: number, position: number) => {
+    const invalid = problems.some(
+      (problem) => problem.path === `destinations.${String(index)}` || (position === 0 && problem.path === "destinations"),
+    );
+    return { "aria-invalid": invalid, "aria-describedby": invalid ? "problems-destinations" : undefined };
+  };
+  const rows = [
+    ...offered.map(({ name, type, confirmed }) => ({
+      entry: name as string | number,
+      note: confirmed ? destinationTypes[type] : `${destinationTypes[type]} · not confirmed yet`,
+    })),
+    ...others.map((entry) => ({
+      entry,
+      note: destinations.some(({ name }) => name === entry) ? "Doesn't fit this kind" : "Not in this Workspace",
+    })),
+  ];
+  return (
+    <fieldset data-path="destinations" className="flex min-w-0 flex-col gap-2">
+      <legend className={cn(label, "mb-2")}>Destinations</legend>
+      {hidden ? null : (
+        <>
+          {rows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">This Workspace has no {allowed} Destination yet.</p>
+          ) : (
+            <ul className="flex flex-col gap-1">
+              {rows.map(({ entry, note }, position) => (
+                <li key={entry}>
+                  <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={list.includes(entry)}
+                      onChange={(event) => {
+                        reshape(path, event.target.checked ? [...list, entry] : list.filter((other) => other !== entry));
+                      }}
+                      className="size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      {...invalidAt(list.indexOf(entry), position)}
+                    />
+                    <span className="min-w-0 break-words">{entry}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{note}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+          <p className="text-xs text-muted-foreground">
+            {isWebhook ? "A webhook Action calls webhook Destinations. " : "An alert or Digest goes to Telegram and email Destinations. "}
+            <Link href={destinationsLink} className="rounded-sm underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+              Add a Destination
+            </Link>
+          </p>
+        </>
+      )}
+      <Problems at={path} />
+    </fieldset>
   );
 }
 
@@ -409,10 +577,20 @@ function ConditionPart({ path, type, onRemove }: PartProps) {
 }
 
 function PredicatePart({ path, node, type, onRemove }: PartProps & { node: Record<string, unknown> }) {
-  const { edit, reshape } = useEditing();
+  const { edit, reshape, declared } = useEditing();
   const fieldInvalid = useInvalid([...path, "field"], path);
   const opInvalid = useInvalid([...path, "op"], path);
-  const fieldOptions = type === "extractor" ? [...contentFields, ...categoryField] : contentFields;
+  const numeric = type === "action" && isNumericField(node.field, declared);
+  const fieldOptions: Options = {
+    classifier: contentFields,
+    extractor: [...contentFields, ...categoryField],
+    action: [
+      ...contentFields,
+      ...categoryField,
+      ...ratingFields,
+      ...declared.map(({ name }) => [`fields.${name}`, `Field ${name}`] as const),
+    ],
+  }[type];
   return (
     <div data-path={pathKey(path)} className="flex flex-col gap-2">
       <div className="grid gap-2 sm:grid-cols-[9rem_11rem_minmax(0,1fr)] md:grid-cols-[9rem_11rem_minmax(0,1fr)_auto]">
@@ -422,19 +600,20 @@ function PredicatePart({ path, node, type, onRemove }: PartProps & { node: Recor
           options={fieldOptions}
           invalid={fieldInvalid}
           onChange={(next) => {
-            edit([...path, "field"], next);
+            if (type === "action") reshape(path, changeField(node, next, isNumericField(next, declared)));
+            else edit([...path, "field"], next);
           }}
         />
         <Choice
           labelText="Operator"
           value={node.op}
-          options={operators}
+          options={numeric ? numberOperators : operators}
           invalid={opInvalid}
           onChange={(next) => {
             reshape(path, changeOp(node, next));
           }}
         />
-        <PredicateValue path={path} node={node} />
+        <PredicateValue path={path} node={node} numeric={numeric} />
         <div className="sm:col-span-3 md:col-span-1">
           <PartActions path={path} node={node} onRemove={onRemove} />
         </div>
@@ -444,14 +623,14 @@ function PredicatePart({ path, node, type, onRemove }: PartProps & { node: Recor
   );
 }
 
-function PredicateValue({ path, node }: { path: Path; node: Record<string, unknown> }) {
+function PredicateValue({ path, node, numeric }: { path: Path; node: Record<string, unknown>; numeric: boolean }) {
   const { edit } = useEditing();
   const valuePath = [...path, "value"];
   const invalid = useInvalid(valuePath, path);
   const { value } = node;
   const op = textOf(node.op);
   if (isScalarList(value)) {
-    return <LinesBox path={valuePath} list={value} label="Values, one per line" problemsAt={path} />;
+    return <LinesBox path={valuePath} list={value} label="Values, one per line" problemsAt={path} numeric={numeric} />;
   }
   if (op === "exists" && value === undefined) return null;
   return (
@@ -459,11 +638,11 @@ function PredicateValue({ path, node }: { path: Path; node: Record<string, unkno
       type="text"
       aria-label="Value"
       spellCheck={false}
-      placeholder={valueHints[op]}
+      placeholder={numeric ? "A number" : valueHints[op]}
       list={node.field === "source" ? sourcesList : undefined}
       value={textOf(value)}
       onChange={(event) => {
-        edit(valuePath, typedValue(op, value, event.target.value));
+        edit(valuePath, typedValue(op, value, event.target.value, numeric));
       }}
       className={cn(fieldClass, dataBox)}
       {...invalid}

@@ -2,14 +2,22 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { buttonVariants } from "@/components/ui/button";
-import { type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
+import { type ActionKind, type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
 import { removeRuleAction, setRuleEnabledAction } from "./actions";
 import { RulesBreadcrumb } from "./rules-breadcrumb";
-import { appliesFromNow, kindLabel, kindsExplained, modelLink } from "./words";
+import {
+  actionApplies,
+  appliesFromNow,
+  destinationsLink,
+  kindLabel,
+  kindsExplained,
+  modelLink,
+  waitingForConfirmation,
+} from "./words";
 
 export const metadata: Metadata = { title: "Rules · Watchdog" };
 
@@ -31,11 +39,15 @@ export default function RulesPage({ searchParams }: PageProps<"/rules">) {
             Add a rule
           </h2>
           <p className="text-sm text-muted-foreground">{kindsExplained}</p>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <AddRule type="classifier" description="Sorts every Item into Categories." />
             <AddRule
               type="extractor"
               description="Pulls structured fields out of the Items that meet its Condition."
+            />
+            <AddRule
+              type="action"
+              description="Sends an alert, calls a webhook or collects a Digest when an Item meets its Condition."
             />
           </div>
         </section>
@@ -67,23 +79,31 @@ function AddRule({ type, description }: { type: RuleType; description: string })
       {kindLabel[kind]}
     </Link>
   );
+  const links =
+    type === "action" ? (
+      <Link href="/rules/new?type=action" className={buttonVariants({ variant: "outline" })}>
+        New Action
+      </Link>
+    ) : (
+      <>
+        {newRule("deterministic")}
+        {newRule("agent")}
+      </>
+    );
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-0.5">
         <h3 className="text-sm font-medium">{ruleNoun[type]}</h3>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
-      <div className="mt-auto flex flex-wrap gap-2">
-        {newRule("deterministic")}
-        {newRule("agent")}
-      </div>
+      <div className="mt-auto flex flex-wrap gap-2">{links}</div>
     </div>
   );
 }
 
 async function RuleLists() {
   const { workspace } = await requireWorkspace();
-  const { classifiers, extractorRules, hasModel } = await listRules(server().db, workspace.id);
+  const { classifiers, extractorRules, actions, hasModel } = await listRules(server().db, workspace.id);
   return (
     <>
       <RuleList
@@ -100,6 +120,15 @@ async function RuleLists() {
         rules={extractorRules}
         hasModel={hasModel}
       />
+      <RuleList
+        type="action"
+        heading="Actions"
+        note={actionApplies}
+        empty="None yet. Nothing leaves the Feed until you add one."
+        rules={actions}
+        hasModel={hasModel}
+        detail={(action) => <ActionDetail action={action} />}
+      />
     </>
   );
 }
@@ -107,34 +136,41 @@ async function RuleLists() {
 interface RuleRow {
   id: string;
   name: string;
-  kind: RuleKind;
+  kind: RuleKind | ActionKind;
   enabled: boolean;
 }
 
-function RuleList({
+function RuleList<Row extends RuleRow>({
   type,
   heading,
+  note,
   empty,
   rules,
   hasModel,
+  detail,
 }: {
   type: RuleType;
   heading: string;
+  note?: string;
   empty: string;
-  rules: RuleRow[];
+  rules: Row[];
   hasModel: boolean;
+  detail?: (rule: Row) => React.ReactNode;
 }) {
   return (
     <section aria-labelledby={`${type}-rules`} className="flex flex-col gap-3">
       <h2 id={`${type}-rules`} className="text-title">
         {heading} <span className="font-normal text-muted-foreground tabular-nums">{rules.length}</span>
       </h2>
+      {note === undefined ? null : <p className="text-sm text-muted-foreground">{note}</p>}
       {rules.length === 0 ? (
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
         <ul className="divide-y rounded-lg border">
           {rules.map((rule) => (
-            <RuleItem key={rule.id} type={type} rule={rule} needsModel={rule.kind === "agent" && !hasModel} />
+            <RuleItem key={rule.id} type={type} rule={rule} needsModel={rule.kind === "agent" && !hasModel}>
+              {detail?.(rule)}
+            </RuleItem>
           ))}
         </ul>
       )}
@@ -142,7 +178,17 @@ function RuleList({
   );
 }
 
-function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; needsModel: boolean }) {
+function RuleItem({
+  type,
+  rule,
+  needsModel,
+  children,
+}: {
+  type: RuleType;
+  rule: RuleRow;
+  needsModel: boolean;
+  children?: React.ReactNode;
+}) {
   return (
     <li className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 flex-col gap-1">
@@ -155,6 +201,7 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
           </Link>
         </h3>
         <p className="text-xs font-medium tracking-[0.01em] text-muted-foreground">{kindLabel[rule.kind]}</p>
+        {children}
         {needsModel ? (
           <p className="text-sm text-muted-foreground">
             Disabled until this Workspace has a model.{" "}
@@ -169,6 +216,35 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
         <DeleteRule type={type} rule={rule} />
       </div>
     </li>
+  );
+}
+
+/** What an Action does in words, where it goes, and where it can't deliver yet. */
+function ActionDetail({
+  action: { condition, destinations },
+}: {
+  action: { condition: string | null; destinations: { name: string; confirmed: boolean }[] };
+}) {
+  const waiting = destinations.filter(({ confirmed }) => !confirmed).map(({ name }) => name);
+  return (
+    <>
+      <p className="line-clamp-3 text-sm break-words">
+        {condition ?? "Its Condition no longer parses, so it doesn't fire. Open it to fix it."}
+      </p>
+      <p className="text-sm break-words text-muted-foreground">
+        {destinations.length === 0
+          ? "No Destination, so it doesn't fire. Open it to add one."
+          : `To ${destinations.map(({ name }) => name).join(", ")}`}
+      </p>
+      {waiting.length === 0 ? null : (
+        <p className="text-sm break-words text-muted-foreground">
+          {waitingForConfirmation(waiting)}{" "}
+          <Link href={destinationsLink} className="rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+            Go to Destinations
+          </Link>
+        </p>
+      )}
+    </>
   );
 }
 
@@ -196,7 +272,10 @@ function EnableSwitch({ type, rule, needsModel }: { type: RuleType; rule: RuleRo
 
 /** Delete, then a confirmation in the page. A disclosure works without JavaScript, unlike confirm(). */
 function DeleteRule({ type, rule }: { type: RuleType; rule: RuleRow }) {
-  const kept = type === "classifier" ? "Categories it already assigned" : "fields it already extracted";
+  const consequence =
+    type === "action"
+      ? "Deleting it stops it firing, and anything it hasn't sent yet never goes out. The Log keeps what it did."
+      : `Deleting ${rule.name} stops it running. The ${type === "classifier" ? "Categories it already assigned" : "fields it already extracted"} stay on their Items.`;
   return (
     <details className="group sm:max-w-64">
       <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
@@ -209,8 +288,7 @@ function DeleteRule({ type, rule }: { type: RuleType; rule: RuleRow }) {
       </summary>
       <div className="mt-2 flex flex-col gap-3 rounded-lg border p-3">
         <p className="text-sm">
-          Deleting {rule.name} stops it running. The {kept} stay on their Items. This can&apos;t be
-          undone.
+          {consequence} This can&apos;t be undone.
         </p>
         <form action={removeRuleAction.bind(null, type, rule.id)}>
           {/* A lighter tint than the button's own, which leaves its text at 3.3:1. */}

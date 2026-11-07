@@ -7,7 +7,7 @@ type Mode = Config["mode"];
 export const defaultSchedule = "*/15 * * * *";
 
 // Hosted shares one IP and one worker fleet across every Workspace, so it polls less often.
-const minimumMinutes: Record<Mode, number> = { hosted: 15, "self-hosted": 5 };
+export const minimumMinutes: Record<Mode, number> = { hosted: 15, "self-hosted": 5 };
 
 const minute = 60 * 1000;
 // Enough firings to pass every short gap a cron expression can have. The minute and hour fields

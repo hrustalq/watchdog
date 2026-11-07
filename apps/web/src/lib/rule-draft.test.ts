@@ -3,12 +3,17 @@ import { describe, expect, it } from "vitest";
 import {
   addPart,
   blankRule,
+  changeField,
+  changeKind,
   changeOp,
   conditionPart,
+  destinationFits,
   fieldPart,
   formHides,
   formShows,
   fromLines,
+  inActionOrder,
+  isNumericField,
   kindOf,
   negate,
   readDraft,
@@ -81,6 +86,131 @@ describe("kindOf", () => {
   it("reads the kind from the prompt, as the schemas do", () => {
     expect(kindOf({ classifier: "x", prompt: "" })).toBe("agent");
     expect(kindOf({ classifier: "x", when: {} })).toBe("deterministic");
+  });
+
+  it("doesn't call an Action Agent-backed for a prompt the schema will refuse", () => {
+    expect(kindOf({ action: "x", prompt: "" })).toBe("deterministic");
+  });
+});
+
+describe("an Action's draft", () => {
+  it("starts blank as an alert with what the form shows", () => {
+    const draft = blankRule("action");
+    expect(ruleTypeOf(draft)).toBe("action");
+    expect(draft).toMatchObject({ kind: "alert", destinations: [] });
+    expect(formHides(draft)).toEqual([]);
+  });
+
+  it("is read from YAML like the other rules", () => {
+    expect(ruleTypeOf(read("action: x\nkind: alert\n"))).toBe("action");
+    const result = readDraft("name: x\n");
+    expect("error" in result && result.error).toContain('"action:"');
+  });
+
+  it("gains a blank schedule in the model's order when it becomes a Digest", () => {
+    const digest = changeKind({ ...blankRule("action"), action: "x" }, "digest");
+    expect(Object.keys(digest)).toEqual(["action", "when", "kind", "schedule", "destinations"]);
+    expect(digest).toMatchObject({ kind: "digest", schedule: "" });
+    expect(formHides(digest)).toEqual([]);
+  });
+
+  it("keeps a schedule it has and every other value when its kind changes", () => {
+    const digest = { action: "x", kind: "alert", schedule: "0 9 * * 1", destinations: ["me"], note: "kept" };
+    expect(changeKind(digest, "digest")).toEqual({ ...digest, kind: "digest" });
+  });
+
+  it("loses its schedule when it stops being a Digest, which the schema would refuse", () => {
+    const digest = { action: "x", kind: "digest", schedule: "0 9 * * 1", destinations: ["me"] };
+    expect(changeKind(digest, "webhook")).toEqual({ action: "x", kind: "webhook", destinations: ["me"] });
+  });
+
+  it("names what the form has no control for", () => {
+    const base = { action: "x", when: {}, kind: "alert", destinations: [] };
+    expect(formHides({ ...base, note: "hi" })).toEqual(["note"]);
+    expect(formHides({ ...base, schedule: "0 9 * * 1" })).toEqual(["schedule"]);
+    expect(formHides({ ...base, destinations: "me" })).toEqual(["destinations"]);
+    expect(formHides({ ...base, kind: "digest", schedule: ["a"] })).toEqual(["schedule"]);
+  });
+
+  it("puts its keys in the model's order, and only the ones it has", () => {
+    const draft = { destinations: [], note: "hi", kind: "alert", action: "x" };
+    expect(Object.keys(inActionOrder(draft))).toEqual(["action", "kind", "destinations", "note"]);
+  });
+});
+
+describe("destinationFits", () => {
+  it.each([
+    ["webhook", "webhook", true],
+    ["webhook", "email", false],
+    ["webhook", "telegram", false],
+    ["alert", "webhook", false],
+    ["alert", "email", true],
+    ["alert", "telegram", true],
+    ["digest", "webhook", false],
+    ["digest", "email", true],
+  ] as const)("on a %s Action, a %s Destination: %s", (kind, type, fits) => {
+    expect(destinationFits(kind, type)).toBe(fits);
+  });
+});
+
+describe("isNumericField", () => {
+  const declared = [
+    { name: "price", type: "integer" },
+    { name: "ports", type: "integer-array" },
+    { name: "plan", type: "string" },
+  ];
+
+  it.each([
+    ["severity", true],
+    ["importance", true],
+    ["fields.price", true],
+    ["fields.ports", true],
+    ["fields.plan", false],
+    ["fields.unknown", false],
+    ["title", false],
+    [undefined, false],
+  ])("%s: %s", (field, numeric) => {
+    expect(isNumericField(field, declared)).toBe(numeric);
+  });
+});
+
+describe("changeField", () => {
+  it("moves a text test to a number test on a number field, keeping a value that is a number", () => {
+    expect(changeField({ field: "title", op: "contains", value: "4" }, "severity", true)).toEqual({
+      field: "severity",
+      op: "gte",
+      value: 4,
+    });
+  });
+
+  it("makes a number of what an is holds, because \"4\" never equals 4", () => {
+    expect(changeField({ field: "title", op: "is", value: "4" }, "importance", true)).toEqual({
+      field: "importance",
+      op: "is",
+      value: 4,
+    });
+    expect(changeField({ field: "title", op: "in", value: ["4", "x"] }, "severity", true)).toEqual({
+      field: "severity",
+      op: "in",
+      value: [4, "x"],
+    });
+  });
+
+  it("moves a number test to a text test on a text field, as text", () => {
+    expect(changeField({ field: "severity", op: "gte", value: 4 }, "title", false)).toEqual({
+      field: "title",
+      op: "contains",
+      value: "4",
+    });
+    expect(changeField({ field: "severity", op: "is", value: 4 }, "title", false)).toEqual({
+      field: "title",
+      op: "is",
+      value: "4",
+    });
+  });
+
+  it("adds no value to a test that takes none", () => {
+    expect(changeField({ field: "title", op: "exists" }, "severity", true)).toEqual({ field: "severity", op: "exists" });
   });
 });
 
@@ -221,6 +351,12 @@ describe("typedValue", () => {
     expect(typedValue("contains", 4, "2025")).toBe("2025");
     expect(typedValue("matches", "x", "2025")).toBe("2025");
   });
+
+  it("makes a number for is on a number field, because \"4\" never equals 4", () => {
+    expect(typedValue("is", "", "4", true)).toBe(4);
+    expect(typedValue("is", "", "four", true)).toBe("four");
+    expect(typedValue("contains", "", "4", true)).toBe("4");
+  });
 });
 
 describe("fromLines", () => {
@@ -258,6 +394,11 @@ describe("formShows", () => {
     "when.all",
     "when.all.1.value",
     "when.all.1.not.any.0.op",
+    "action",
+    "kind",
+    "schedule",
+    "destinations",
+    "destinations.1",
   ])("has a place for a problem at %s", (path) => {
     expect(formShows(path)).toBe(true);
   });

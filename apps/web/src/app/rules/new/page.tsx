@@ -24,7 +24,7 @@ export default async function NewRulePage({ searchParams }: PageProps<"/rules/ne
     <EditorScreen
       workspaceId={workspace.id}
       target={null}
-      heading={`New ${kindLabel[kindOf(shown)]} ${ruleNoun[ruleTypeOf(shown)]}`}
+      heading={ruleTypeOf(shown) === "action" ? "New Action" : `New ${kindLabel[kindOf(shown)]} ${ruleNoun[ruleTypeOf(shown)]}`}
       yaml={draftToYaml(blank)}
       query={query}
     />

@@ -273,7 +273,7 @@ const destinations = z
   });
 
 // This schema has no mode, so it asks only for a cron expression. A save applies the mode's minimum.
-const digestSchedule = z.string().trim().pipe(refusedBy(scheduleError));
+const digestSchedule = z.string().trim().min(1).pipe(refusedBy(scheduleError));
 
 // An Action runs after every other stage, so its Condition can test any field (docs: Rule model,
 // "What each rule can test"). The keys are in the order the Rule model page writes them.
