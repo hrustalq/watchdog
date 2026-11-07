@@ -78,6 +78,7 @@ async function listActions(db: Db, workspaceId: string) {
     return {
       ...row,
       condition: when.success ? conditionToWords(when.data) : null,
+      schedule: isMap(definition) && typeof definition.schedule === "string" ? definition.schedule : null,
       destinations: actionDestinations.map(({ destination: target }) => ({ name: target.name, confirmed: isConfirmed(target) })),
     };
   });

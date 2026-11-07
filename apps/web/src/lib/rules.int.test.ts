@@ -333,6 +333,8 @@ describe("Rules", () => {
       const yaml = digestYaml([mine.name], 'schedule: "0 9 * * 1"\n');
       const { type, id } = await saved(ours, yaml);
       expect((await getRule(db, ours, type, id))?.yaml).toBe(yaml.replace('"0 9 * * 1"', "0 9 * * 1"));
+      const { actions } = await listRules(db, ours);
+      expect(actions.find((row) => row.id === id)?.schedule).toBe("0 9 * * 1");
     });
 
     it("stores its Destinations by id, so renaming one changes nothing, and keeps the foreign keys in step", async () => {

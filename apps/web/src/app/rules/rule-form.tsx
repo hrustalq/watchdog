@@ -3,8 +3,8 @@
 import { draftToYaml } from "@watchdog/core/rules/draft";
 import Link from "next/link";
 import { createContext, use, useEffect, useMemo, useRef } from "react";
-import { dataBox, field as fieldClass, fieldError, label, textBox } from "@/components/field-classes";
-import { Button } from "@/components/ui/button";
+import { dataBox, field as fieldClass, fieldError, label, textBox, textLink } from "@/components/field-classes";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   addPart,
   asList,
@@ -39,7 +39,7 @@ import {
   valueAt,
 } from "@/lib/rule-draft";
 import { cn } from "@/lib/utils";
-import { destinationsLink } from "./words";
+import { destinationsLink, waitingForConfirmation } from "./words";
 
 type Options = readonly (readonly [value: string, label: string])[];
 
@@ -217,7 +217,7 @@ export function RuleForm({
   const conditionHelp = {
     classifier: "An Item that meets this gets this Classifier's Categories. It can test Source and content.",
     extractor: "The rule runs on Items that meet this. It can test Categories, Source and content, not the Rating.",
-    action: "The Action fires on Items that meet this, rated or not. A test on Severity or Importance doesn't hold on an unrated Item.",
+    action: "The Action fires on Items that meet this, rated or not. A test on Severity or Importance never passes on an unrated Item.",
   }[type];
 
   return (
@@ -261,7 +261,6 @@ export function RuleForm({
                 labelText="Schedule"
                 hidden={hidden.includes("schedule")}
                 data
-                placeholder="0 9 * * 1"
                 help={scheduleHelp}
               />
             ) : null}
@@ -294,7 +293,6 @@ function TextField({
   hidden,
   multiline = false,
   data = false,
-  placeholder,
   help,
 }: {
   path: Path;
@@ -303,7 +301,6 @@ function TextField({
   multiline?: boolean;
   /** Text a person reads as data, such as a cron expression. */
   data?: boolean;
-  placeholder?: string;
   help?: string;
 }) {
   const { draft, edit } = useEditing();
@@ -322,7 +319,6 @@ function TextField({
       id={id}
       type="text"
       value={text}
-      placeholder={placeholder}
       spellCheck={data ? false : undefined}
       onChange={onChange}
       className={cn(fieldClass, data && dataBox)}
@@ -479,6 +475,7 @@ function DestinationList({ hidden }: { hidden: boolean }) {
   const offered = destinations.filter(({ type }) => destinationFits(draft.kind, type));
   const others = list.filter((entry) => !offered.some(({ name }) => name === entry));
   const allowed = isWebhook ? "webhook" : "Telegram or email";
+  const describedAs = "destinations-help";
   const invalidAt = (index: number, position: number) => {
     const invalid = problems.some(
       (problem) => problem.path === `destinations.${String(index)}` || (position === 0 && problem.path === "destinations"),
@@ -496,17 +493,22 @@ function DestinationList({ hidden }: { hidden: boolean }) {
     })),
   ];
   return (
-    <fieldset data-path="destinations" className="flex min-w-0 flex-col gap-2">
+    <fieldset data-path="destinations" aria-describedby={hidden ? undefined : describedAs} className="flex min-w-0 flex-col gap-2">
       <legend className={cn(label, "mb-2")}>Destinations</legend>
       {hidden ? null : (
         <>
           {rows.length === 0 ? (
-            <p className="text-sm text-muted-foreground">This Workspace has no {allowed} Destination yet.</p>
+            <div className="flex flex-col items-start gap-2">
+              <p className="text-sm text-muted-foreground">This Workspace has no {allowed} Destination yet.</p>
+              <Link href={destinationsLink} className={buttonVariants({ variant: "outline" })}>
+                Add a Destination
+              </Link>
+            </div>
           ) : (
             <ul className="flex flex-col gap-1">
               {rows.map(({ entry, note }, position) => (
                 <li key={entry}>
-                  <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm">
+                  <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm sm:min-h-8">
                     <input
                       type="checkbox"
                       checked={list.includes(entry)}
@@ -516,23 +518,56 @@ function DestinationList({ hidden }: { hidden: boolean }) {
                       className="size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                       {...invalidAt(list.indexOf(entry), position)}
                     />
-                    <span className="min-w-0 break-words">{entry}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{note}</span>
+                    <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                      <span className="min-w-0 break-words">{entry}</span>
+                      <span className="text-xs text-muted-foreground">{note}</span>
+                    </span>
                   </label>
                 </li>
               ))}
             </ul>
           )}
-          <p className="text-xs text-muted-foreground">
-            {isWebhook ? "A webhook Action calls webhook Destinations. " : "An alert or Digest goes to Telegram and email Destinations. "}
-            <Link href={destinationsLink} className="rounded-sm underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
-              Add a Destination
-            </Link>
+          <p id={describedAs} className="text-xs text-muted-foreground">
+            {isWebhook ? "A webhook Action calls webhook Destinations." : "An alert or Digest goes to Telegram and email Destinations."}
+            {rows.length === 0 ? null : (
+              <>
+                {" "}
+                <Link href={destinationsLink} className={cn(textLink, "inline-flex min-h-6 items-center")}>
+                  Add a Destination
+                </Link>
+              </>
+            )}
           </p>
+          <WaitingNotice destinations={destinations} listed={value} />
         </>
       )}
       <Problems at={path} />
     </fieldset>
+  );
+}
+
+/**
+ * Says which listed Destinations can't receive this Action yet, beside them. The region is there before
+ * its words, because a screen reader only announces a change inside a status it already knows about.
+ */
+export function WaitingNotice({ destinations, listed }: { destinations: DestinationChoice[]; listed: unknown }) {
+  const waiting = destinations
+    .filter(({ name, confirmed }) => !confirmed && asList(listed).includes(name))
+    .map(({ name }) => name);
+  return (
+    <div role="status">
+      {waiting.length === 0 ? null : (
+        <p className="flex items-baseline gap-2 rounded-lg bg-muted px-3 py-2 text-sm">
+          <span aria-hidden="true" className="size-1.5 shrink-0 translate-y-[-1px] rounded-full bg-caution" />
+          <span className="min-w-0 break-words">
+            {waitingForConfirmation(waiting)} You can still save this Action.{" "}
+            <Link href={destinationsLink} className={textLink}>
+              Go to Destinations
+            </Link>
+          </span>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -585,9 +620,9 @@ function PredicatePart({ path, node, type, onRemove }: PartProps & { node: Recor
     classifier: contentFields,
     extractor: [...contentFields, ...categoryField],
     action: [
-      ...contentFields,
       ...categoryField,
       ...ratingFields,
+      ...contentFields,
       ...declared.map(({ name }) => [`fields.${name}`, `Field ${name}`] as const),
     ],
   }[type];
@@ -623,6 +658,12 @@ function PredicatePart({ path, node, type, onRemove }: PartProps & { node: Recor
   );
 }
 
+/** A Rating is on a scale of its own, and an Item is never rated outside it. */
+function numericHint(field: unknown, numeric: boolean) {
+  if (!numeric) return undefined;
+  return ratingFields.some(([rating]) => rating === field) ? "1 to 5" : "A number";
+}
+
 function PredicateValue({ path, node, numeric }: { path: Path; node: Record<string, unknown>; numeric: boolean }) {
   const { edit } = useEditing();
   const valuePath = [...path, "value"];
@@ -638,7 +679,7 @@ function PredicateValue({ path, node, numeric }: { path: Path; node: Record<stri
       type="text"
       aria-label="Value"
       spellCheck={false}
-      placeholder={numeric ? "A number" : valueHints[op]}
+      placeholder={numericHint(node.field, numeric) ?? valueHints[op]}
       list={node.field === "source" ? sourcesList : undefined}
       value={textOf(value)}
       onChange={(event) => {

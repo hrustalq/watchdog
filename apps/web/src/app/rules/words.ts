@@ -16,4 +16,4 @@ export const destinationsLink = "/destinations";
 export const waitingForConfirmation = (names: string[]) =>
   `Won't deliver to ${names.join(", ")} until ${names.length === 1 ? "it's" : "they're"} confirmed.`;
 export const kindsExplained =
-  "A deterministic rule runs tests you write. An Agent-backed rule follows a prompt, and needs a model.";
+  "A Classifier or Extractor Rule is deterministic, running tests you write, or Agent-backed, following a prompt and needing a model.";

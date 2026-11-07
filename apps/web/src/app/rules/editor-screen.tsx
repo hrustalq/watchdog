@@ -11,14 +11,14 @@ import { RulesBreadcrumb } from "./rules-breadcrumb";
  * work without JavaScript.
  */
 export async function EditorScreen({
-  workspaceId,
+  workspace,
   target,
   heading,
   detail,
   yaml,
   query,
 }: {
-  workspaceId: string;
+  workspace: { id: string; timezone: string };
   target: RuleTarget | null;
   heading: string;
   detail?: string;
@@ -26,6 +26,7 @@ export async function EditorScreen({
   query: Record<string, string | string[] | undefined>;
 }) {
   const { db, mode } = server();
+  const workspaceId = workspace.id;
   const sentBack = typeof query.draft === "string" ? query.draft : undefined;
   const [hasModel, sources, destinations, declared, problems] = await Promise.all([
     hasActiveModel(db, workspaceId),
@@ -54,7 +55,7 @@ export async function EditorScreen({
           sources={sources.map(({ id, name }) => ({ id, name }))}
           destinations={destinations}
           declared={declared}
-          scheduleHelp={`A cron expression in this Workspace's timezone, such as 0 9 * * 1 for Mondays at 09:00. It can't run more often than every ${String(minimumMinutes[mode])} minutes on ${mode}.`}
+          scheduleHelp={`A cron expression in this Workspace's timezone (${workspace.timezone}), such as 0 9 * * 1 for Mondays at 09:00. It can't run more often than every ${String(minimumMinutes[mode])} minutes on ${mode}.`}
         />
       </main>
     </div>

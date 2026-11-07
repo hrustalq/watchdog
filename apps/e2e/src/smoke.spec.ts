@@ -306,8 +306,8 @@ test("the Rules editor keeps a draft only where it should, with and without Java
     await expect(name).toHaveValue("Severe alerts");
     await expect(inbox).toBeChecked();
     await saveRule(page);
-    await expect(page.getByText("Severity is at least 4", { exact: true })).toBeVisible();
-    await expect(page.getByText("To Smoke inbox", { exact: true })).toBeVisible();
+    await expect(page.getByText("Severity is at least 4", { exact: true }).locator("visible=true")).toBeVisible();
+    await expect(page.getByText("To Smoke inbox", { exact: true }).locator("visible=true")).toBeVisible();
   });
 
   await test.step("New is blank after an Action is saved, and an opened one shows its saved values", async () => {
@@ -346,18 +346,19 @@ test("the Rules editor keeps a draft only where it should, with and without Java
 
   await test.step("a Digest with no schedule is refused beside the field, and an unconfirmed Destination gets a notice", async () => {
     const schedule = field("Schedule");
+    const waiting = page.getByText(/Won't deliver to Other inbox until it's confirmed\./).locator("visible=true");
     await newAction.click();
     await kind.selectOption("digest");
     await name.fill("Weekly");
     await value.fill("launch");
     await elsewhere.check();
-    await expect(page.getByText(/Won't deliver to Other inbox until it's confirmed\./)).toBeVisible();
+    await expect(waiting).toBeVisible();
     await save.click();
     await expect(schedule).toHaveAccessibleDescription(/can't be blank/);
     await expect(schedule).toBeFocused();
     await schedule.fill("0 9 * * 1");
     await saveRule(page);
-    await expect(page.getByText(/Won't deliver to Other inbox until it's confirmed\./)).toBeVisible();
+    await expect(waiting).toBeVisible();
   });
 
   await test.step("the switch disables an Action, so the later tests' Items fire nothing", async () => {

@@ -7,7 +7,6 @@ import { startTransition, useActionState, useEffect, useRef, useState } from "re
 import { dataBox, fieldError, label, textBox } from "@/components/field-classes";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
-  asList,
   type DeclaredField,
   type DestinationChoice,
   type Draft,
@@ -21,8 +20,8 @@ import {
 import type { RuleTarget } from "@/lib/rules";
 import { cn } from "@/lib/utils";
 import { saveRuleAction } from "./actions";
-import { RuleForm } from "./rule-form";
-import { actionApplies, appliesFromNow, destinationsLink, modelLink, waitingForConfirmation } from "./words";
+import { RuleForm, WaitingNotice } from "./rule-form";
+import { actionApplies, appliesFromNow, modelLink } from "./words";
 
 const yamlBox = cn(textBox, dataBox, "min-h-80 py-2 leading-[1.5]");
 
@@ -86,9 +85,6 @@ function Editor({
   const readYaml = view === "yaml" ? readDraft(yaml) : undefined;
   const current = readYaml !== undefined && "draft" in readYaml ? readYaml.draft : draft;
   const isAction = ruleTypeOf(current) === "action";
-  const waiting = isAction
-    ? destinations.filter(({ name, confirmed }) => !confirmed && asList(current.destinations).includes(name)).map(({ name }) => name)
-    : [];
 
   // A refusal moves focus to the first thing to fix, as on Sources.
   useEffect(() => {
@@ -170,15 +166,6 @@ function Editor({
           </p>
         ) : null}
 
-        {waiting.length === 0 ? null : (
-          <p className="rounded-lg bg-muted px-3 py-2 text-sm">
-            {waitingForConfirmation(waiting)} You can still save this Action.{" "}
-            <Link href={destinationsLink} className="rounded-sm underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
-              Go to Destinations
-            </Link>
-          </p>
-        )}
-
         {view === "form" ? (
           <RuleForm
             draft={draft}
@@ -217,6 +204,7 @@ function Editor({
               </div>
             )}
             <ProblemList id="rule-yaml-problems" problems={problems} />
+            {isAction ? <WaitingNotice destinations={destinations} listed={current.destinations} /> : null}
           </div>
         )}
 

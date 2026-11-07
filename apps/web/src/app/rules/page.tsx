@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
+import { textLink } from "@/components/field-classes";
 import { buttonVariants } from "@/components/ui/button";
 import { type ActionKind, type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
 import { listRules } from "@/lib/rules";
@@ -208,30 +209,47 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
 
 /** What an Action does in words, where it goes, and where it can't deliver yet. */
 function ActionDetail({
-  action: { condition, destinations },
+  action: { condition, schedule, destinations },
 }: {
-  action: { condition: string | null; destinations: { name: string; confirmed: boolean }[] };
+  action: { condition: string | null; schedule: string | null; destinations: { name: string; confirmed: boolean }[] };
 }) {
   const waiting = destinations.filter(({ confirmed }) => !confirmed).map(({ name }) => name);
   return (
     <>
-      <p className="line-clamp-3 text-sm break-words">
-        {condition ?? "Its Condition no longer parses, so it doesn't fire. Open it to fix it."}
-      </p>
-      <p className="text-sm break-words text-muted-foreground">
-        {destinations.length === 0
-          ? "No Destination, so it doesn't fire. Open it to add one."
-          : `To ${destinations.map(({ name }) => name).join(", ")}`}
-      </p>
-      {waiting.length === 0 ? null : (
-        <p className="text-sm break-words text-muted-foreground">
-          {waitingForConfirmation(waiting)}{" "}
-          <Link href={destinationsLink} className="rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
-            Go to Destinations
-          </Link>
+      {condition === null ? (
+        <Warning>Its Condition no longer parses, so it doesn&apos;t fire. Open it to fix it.</Warning>
+      ) : (
+        <p className="line-clamp-3 text-sm break-words">{condition}</p>
+      )}
+      {destinations.length === 0 ? (
+        <Warning>No Destination, so it doesn&apos;t fire. Open it to add one.</Warning>
+      ) : (
+        <p className="text-sm break-words text-muted-foreground">To {destinations.map(({ name }) => name).join(", ")}</p>
+      )}
+      {schedule === null ? null : (
+        <p className="text-sm text-muted-foreground">
+          Sent on <span className="font-mono text-[0.8125rem]">{schedule}</span>
         </p>
       )}
+      {waiting.length === 0 ? null : (
+        <Warning>
+          {waitingForConfirmation(waiting)}{" "}
+          <Link href={destinationsLink} className={textLink}>
+            Go to Destinations
+          </Link>
+        </Warning>
+      )}
     </>
+  );
+}
+
+/** Why an Action that looks enabled won't deliver: a lamp and full-strength text, unlike the row's other lines. */
+function Warning({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="flex items-baseline gap-2 text-sm">
+      <span aria-hidden="true" className="size-1.5 shrink-0 translate-y-[-1px] rounded-full bg-caution" />
+      <span className="min-w-0 break-words">{children}</span>
+    </p>
   );
 }
 

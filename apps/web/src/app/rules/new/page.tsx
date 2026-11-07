@@ -22,7 +22,7 @@ export default async function NewRulePage({ searchParams }: PageProps<"/rules/ne
   const shown = sentBack !== undefined && "draft" in sentBack ? sentBack.draft : blank;
   return (
     <EditorScreen
-      workspaceId={workspace.id}
+      workspace={workspace}
       target={null}
       heading={ruleTypeOf(shown) === "action" ? "New Action" : `New ${kindLabel[kindOf(shown)]} ${ruleNoun[ruleTypeOf(shown)]}`}
       yaml={draftToYaml(blank)}
