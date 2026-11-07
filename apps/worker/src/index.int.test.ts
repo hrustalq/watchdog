@@ -27,6 +27,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { deliverQueue, deliveryEnqueuer } from "./delivery.ts";
 import { itemEnqueuer, processItemQueue } from "./pipeline.ts";
 import { readyFile } from "./ready.ts";
+import { botQueue } from "./telegram.ts";
 
 // Each worker gets its own temp dir, so its ready file can't collide with a local dev worker's.
 const tmp = mkdtempSync(path.join(tmpdir(), "worker-test-"));
@@ -101,6 +102,17 @@ async function databaseState(url: string) {
   }
 }
 
+/** How many Telegram bot queues exist. A worker with no bot token has no runner, so it makes none. */
+async function telegramBotQueues(url: string) {
+  const db = createDb(url);
+  try {
+    const { rows } = await db.$client.query("select name from pgboss.queue where name = $1", [botQueue]);
+    return rows.length;
+  } finally {
+    await closeDb(db);
+  }
+}
+
 describe("worker", () => {
   let postgres: TestPostgres;
 
@@ -109,12 +121,13 @@ describe("worker", () => {
     return postgres.stop;
   }, 120_000);
 
-  it("migrates, starts pg-boss and reports ready, then stops pg-boss cleanly on SIGTERM", async () => {
+  it("migrates, starts pg-boss and reports ready without a bot runner, then stops pg-boss cleanly on SIGTERM", async () => {
     const worker = await startWorker(postgres.url);
     const state = await databaseState(postgres.url);
     expect(state.applied.length).toBeGreaterThan(0);
     expect(state.pgboss).toBe(true);
     expect(existsSync(ready)).toBe(true);
+    expect(await telegramBotQueues(postgres.url)).toBe(0);
 
     expect(await worker.stop()).toBe(0);
     expect(worker.output()).toContain("pg-boss stopped");

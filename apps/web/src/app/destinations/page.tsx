@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Link from "next/link";
-import { dataBox, field, label, textBox } from "@/components/field-classes";
+import { dataBox, field, label, textBox, textLink } from "@/components/field-classes";
 import { Timestamp } from "@/components/timestamp";
 import {
   actionNames,
@@ -11,13 +12,17 @@ import {
   problemField,
   problemMessage,
   revealWebhookSecret,
+  telegramLinkCookie,
+  telegramLinkInCookie,
 } from "@/lib/destinations";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
 import {
   addEmailAction,
+  addTelegramAction,
   addWebhookAction,
+  newTelegramLinkAction,
   removeDestinationAction,
   replaceSecretAction,
   sendAgainAction,
@@ -38,8 +43,17 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
     const value = params[name];
     return typeof value === "string" ? value : "";
   };
-  const { db, destinationDeps, mode, mailGoesToLog, telegramAvailable } = server();
+  const { db, destinationDeps, mode, mailGoesToLog, telegramAvailable, telegramBotName } = server();
   const destinations = await listDestinations(db, workspace.id, { telegramAvailable });
+  const problem = addProblems.find((known) => known === param("error"));
+  const error = problem === undefined ? undefined : {
+    field: problemField(problem),
+    message: problemMessage(problem, mode),
+  };
+  const telegram = await telegramLinkInCookie(db, destinations, (await cookies()).get(telegramLinkCookie)?.value);
+  // A notice takes focus when it arrives, and a field with an error or a secret shown once comes first.
+  const telegramNotice = error === undefined && param("secret") === "" ? telegram : undefined;
+  const bot = telegramNotice?.status === "pending" ? await telegramBotName() : undefined;
 
   // Only ids and codes travel in the URL, so what it says comes from the Workspace or from fixed text.
   const secretFor = destinations.find(({ id }) => id === param("secret"));
@@ -49,11 +63,6 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
   // Last, because a read that fails after this would lose a secret nobody saw.
   const secret = await revealWebhookSecret(db, destinationDeps.encryptionKey, workspace.id, param("secret"));
 
-  const problem = addProblems.find((known) => known === param("error"));
-  const error = problem === undefined ? undefined : {
-    field: problemField(problem),
-    message: problemMessage(problem, mode),
-  };
   const form = param("form");
 
   return (
@@ -80,6 +89,12 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
         {secret === undefined && secretFor?.type === "webhook" ? (
           <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
             The secret for {secretFor.name} was already shown. Replace it if you didn&apos;t keep a copy.
+          </Notice>
+        ) : null}
+        {telegramNotice?.status === "pending" ? <TelegramLinkPanel link={telegramNotice} bot={bot} /> : null}
+        {telegramNotice?.status === "linked" ? (
+          <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+            {telegramNotice.name} is linked.
           </Notice>
         ) : null}
         <Outcome
@@ -141,9 +156,22 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                 </SubmitButton>
               </form>
             </AddForm>
-            <AddForm title="Telegram chat" open={false}>
+            <AddForm title="Telegram chat" open={form === "telegram"}>
               {telegramAvailable ? (
-                <p className="text-sm text-muted-foreground">Linking a Telegram chat from here isn&apos;t ready yet.</p>
+                <form action={addTelegramAction} className="flex flex-col gap-4">
+                  <NameField
+                    id="telegram-name"
+                    value={form === "telegram" ? param("name") : ""}
+                    error={form === "telegram" ? error : undefined}
+                    placeholder="Ops alerts"
+                  />
+                  <p className="text-sm text-muted-foreground">
+                    Next, Watchdog gives you a link and a command to link a private chat or a group.
+                  </p>
+                  <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
+                    Add Telegram chat
+                  </SubmitButton>
+                </form>
               ) : (
                 <p className="text-sm text-muted-foreground">
                   Telegram isn&apos;t set up on this install. Whoever runs this Watchdog can set{" "}
@@ -174,13 +202,26 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                   <div className="flex min-w-0 flex-col gap-1">
                     <h3 className="text-title break-words">{row.name}</h3>
                     {row.pointsAt === null ? null : (
-                      <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{row.pointsAt}</p>
+                      <p
+                        className={
+                          row.type === "telegram"
+                            ? "text-sm text-muted-foreground"
+                            : "font-mono text-[0.8125rem] break-all text-muted-foreground"
+                        }
+                      >
+                        {row.pointsAt}
+                      </p>
                     )}
                     <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
                       <span>{typeNames[row.type]}</span>
                       <span aria-hidden="true">·</span>
                       <State state={row.state} failing={row.lastError !== null} />
                     </p>
+                    {row.state === "waiting-bot" && telegram?.id !== row.id ? (
+                      <p className="text-sm text-muted-foreground">
+                        No link is showing for it here. Get a new one to link a chat.
+                      </p>
+                    ) : null}
                     {row.lastError === null ? null : (
                       <p className="flex items-start gap-2 text-sm text-alarm">
                         <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
@@ -203,6 +244,14 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                         <SubmitButton variant="outline" pendingLabel="Sending…" className="w-auto">
                           Send the link again
                           <span className="sr-only"> to {row.name}</span>
+                        </SubmitButton>
+                      </form>
+                    ) : null}
+                    {row.state === "waiting-bot" ? (
+                      <form action={newTelegramLinkAction.bind(null, row.id)}>
+                        <SubmitButton variant="outline" pendingLabel="Getting…" className="w-auto">
+                          Get a new link
+                          <span className="sr-only"> for {row.name}</span>
                         </SubmitButton>
                       </form>
                     ) : null}
@@ -277,6 +326,71 @@ function SecretPanel({ secret, name }: { secret: string; name: string | undefine
         value={secret}
         className={`${textBox} ${dataBox} resize-none py-1.5`}
       />
+    </section>
+  );
+}
+
+/** How to send the bot a code. It works without JavaScript, and the text box copies from a keyboard. */
+function TelegramLinkPanel({
+  link: { name, code, expiresAt },
+  bot,
+}: {
+  link: { name: string; code: string; expiresAt: Date };
+  bot: string | undefined;
+}) {
+  return (
+    <section aria-labelledby="telegram-link" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
+      <h2 id="telegram-link" className="text-title">
+        Link {name} to a Telegram chat
+      </h2>
+      {bot === undefined ? (
+        <Notice role="alert" className="text-sm text-alarm">
+          Watchdog couldn&apos;t reach Telegram to get the bot&apos;s name, so the link isn&apos;t ready. Reload this page
+          in a moment.
+        </Notice>
+      ) : (
+        <>
+          {/* Keyed by the code, so a new link is announced even though the rest of the page stays. */}
+          <Notice key={code} role="status" className="text-sm">
+            The code in these links works once and expires at <Timestamp at={expiresAt} className="whitespace-nowrap" />.
+          </Notice>
+          <div className="flex flex-col gap-1 text-sm">
+            <p>For a private chat, open this link and press Start:</p>
+            <a
+              href={`https://t.me/${bot}?start=${code}`}
+              target="_blank"
+              rel="noreferrer"
+              className={`${textLink} self-start font-mono text-[0.8125rem] break-all`}
+            >
+              {`https://t.me/${bot}?start=${code}`}
+            </a>
+          </div>
+          <p className="text-sm">
+            For a group,{" "}
+            <a href={`https://t.me/${bot}?startgroup=${code}`} target="_blank" rel="noreferrer" className={textLink}>
+              choose it in Telegram
+            </a>
+            .
+          </p>
+          <div className="flex flex-col gap-1 text-sm">
+            <label htmlFor="telegram-command">Or add @{bot} to the group yourself and send this there:</label>
+            {/* @bot in the command, because a bot in a group is only sure to get commands addressed to it. */}
+            <textarea
+              id="telegram-command"
+              readOnly
+              rows={2}
+              value={`/start@${bot} ${code}`}
+              className={`${textBox} ${dataBox} resize-none py-1.5 field-sizing-content`}
+            />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            <Link href="/destinations" prefetch={false} className={textLink}>
+              Reload this page
+            </Link>{" "}
+            after the bot replies. No reply within a minute? Get a new link, which replaces this one, and try again.
+          </p>
+        </>
+      )}
     </section>
   );
 }
@@ -418,10 +532,12 @@ function NameField({
   id,
   value,
   error,
+  placeholder = "Team inbox",
 }: {
   id: string;
   value: string;
   error: { field: string; message: string } | undefined;
+  placeholder?: string;
 }) {
   return (
     <TextField
@@ -429,7 +545,7 @@ function NameField({
       name="name"
       label="Name"
       type="text"
-      placeholder="Team inbox"
+      placeholder={placeholder}
       value={value}
       error={error?.field === "name" ? error.message : undefined}
       help="Actions refer to it by this name."

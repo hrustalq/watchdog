@@ -15,6 +15,8 @@ export { deliver, type DeliverDeps, purgeSentMessages, releaseDueDeliveries, typ
 export { type EmailCap, sendEmailCapNotice } from "./delivery/email-cap.ts";
 export { createEmailSender, emailDestinationConfig } from "./delivery/email.ts";
 export { createTelegramSender } from "./delivery/telegram.ts";
+export { botUsername, runBot } from "./telegram/bot-runner.ts";
+export { issueLinkCode, linkChat, linkCodeMinutes, liveLinkCode } from "./telegram/link.ts";
 export { verifyWebhookSignature } from "./delivery/verify-signature.ts";
 export { createWebhookSender } from "./delivery/webhook.ts";
 export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/capture.ts";

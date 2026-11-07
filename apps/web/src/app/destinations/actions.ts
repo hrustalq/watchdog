@@ -1,14 +1,20 @@
 "use server";
 
+import { linkCodeMinutes } from "@watchdog/core";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import {
   addEmailDestination,
+  addTelegramDestination,
   addWebhookDestination,
   confirmDestination,
+  newTelegramLink,
   removeDestination,
   replaceWebhookSecret,
   sendConfirmationAgain,
+  telegramLinkCookie,
+  telegramLinkCookieValue,
 } from "@/lib/destinations";
 import { requireWorkspace, server } from "@/lib/server";
 
@@ -45,7 +51,39 @@ export async function addWebhookAction(formData: FormData) {
   back({ secret: result.destination.id });
 }
 
+/** Keeps the code for the page to show, however often it's reloaded. See telegramLinkInCookie. */
+async function showTelegramLink(destinationId: string, code: string) {
+  (await cookies()).set(telegramLinkCookie, telegramLinkCookieValue(destinationId, code), {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: server().baseURL.startsWith("https:"),
+    path: "/destinations",
+    maxAge: linkCodeMinutes * 60,
+  });
+}
+
+export async function addTelegramAction(formData: FormData) {
+  const { workspace } = await requireWorkspace();
+  const { db, telegramAvailable } = server();
+  // The form says Telegram isn't set up, and a post from before that isn't one to act on.
+  if (!telegramAvailable) back({ form: "telegram" });
+  const name = text(formData, "name");
+  const result = await addTelegramDestination(db, workspace.id, { name });
+  if ("problem" in result) back({ form: "telegram", error: result.problem, name });
+  await showTelegramLink(result.destination.id, result.code);
+  back({});
+}
+
 // Bound arguments come back from the client, so each id is checked against the Workspace.
+
+export async function newTelegramLinkAction(destinationId: unknown) {
+  const { workspace } = await requireWorkspace();
+  const id = typeof destinationId === "string" ? destinationId : "";
+  const code = await newTelegramLink(server().db, workspace.id, id);
+  if (code === undefined) back({ missing: "1" });
+  await showTelegramLink(id, code);
+  back({});
+}
 
 export async function sendAgainAction(destinationId: unknown) {
   const { workspace } = await requireWorkspace();
