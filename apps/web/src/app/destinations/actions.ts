@@ -77,10 +77,8 @@ export async function addTelegramAction(formData: FormData) {
 
 export async function newTelegramLinkAction(destinationId: unknown) {
   const { workspace } = await requireWorkspace();
-  const { db, telegramAvailable } = server();
-  if (!telegramAvailable) back({});
   const id = typeof destinationId === "string" ? destinationId : "";
-  const code = await newTelegramLink(db, workspace.id, id);
+  const code = await newTelegramLink(server().db, workspace.id, id);
   if (code === undefined) back({ missing: "1" });
   await showTelegramLink(id, code);
   back({});

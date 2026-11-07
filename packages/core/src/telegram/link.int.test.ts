@@ -95,7 +95,9 @@ describe("linking a Telegram chat", () => {
     const replies = await sendToBot(`/start ${code}`, { id: 42 });
 
     expect(replies).toEqual([expect.stringMatching(/unknown or has expired/)]);
-    expect((await read(id))?.confirmedAt).toBeNull();
+    const left = await read(id);
+    expect(left?.confirmedAt).toBeNull();
+    expect(left?.secretCiphertext).toBeNull();
   });
 
   it("issues a code a deep link can carry, stored only as a hash, for 15 minutes", async () => {
@@ -143,18 +145,6 @@ describe("linking a Telegram chat", () => {
 
   it("refuses an unknown code", async () => {
     expect(await linkChat(db, encryptionKey, "no-such-code", chat)).toBeUndefined();
-  });
-
-  it("refuses an expired code and leaves the Destination waiting", async () => {
-    const { id } = await waiting();
-    const code = await issueLinkCode(db, id);
-    await age(id);
-
-    expect(await linkChat(db, encryptionKey, code, chat)).toBeUndefined();
-
-    const left = await read(id);
-    expect(left?.confirmedAt).toBeNull();
-    expect(left?.secretCiphertext).toBeNull();
   });
 
   it("lets a new code replace the last one", async () => {
