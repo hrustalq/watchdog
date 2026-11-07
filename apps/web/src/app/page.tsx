@@ -1,3 +1,4 @@
+import { BellRing } from "lucide-react";
 import Link from "next/link";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { eq, source } from "@watchdog/db";
@@ -277,6 +278,12 @@ function FeedList({ items, edit }: { items: FeedItem[]; edit: boolean }) {
               >
                 Rate<span className="sr-only"> {row.title ?? "Untitled Item"}</span>
               </Link>
+            ) : null}
+            {/* What the user was already told about, in graphite: an alert that went is no alarm. */}
+            {row.alerted ? (
+              <span role="img" aria-label="Alerted" title="Alerted" className="inline-flex text-muted-foreground">
+                <BellRing aria-hidden="true" className="size-3.5" />
+              </span>
             ) : null}
             <CategoryList categories={row.categories} />
             <span className="min-w-0 break-words text-muted-foreground">{row.sourceName}</span>

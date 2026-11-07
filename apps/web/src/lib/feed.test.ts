@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { manualRunIn, parseCursor } from "./feed.ts";
+import { deliveryStatus, isActFailure, manualRunIn, parseCursor } from "./feed.ts";
 
 const id = "0b6f2a4e-8c1d-4f3a-9e2b-7d5c6a1f0e9d";
 
@@ -60,5 +60,50 @@ describe("parseCursor", () => {
     ["SQL", `2026-11-03T15:00:00.123456Z_'); drop table item; --_${id}`],
   ])("rejects %s", (_, value) => {
     expect(parseCursor(value)).toBeUndefined();
+  });
+});
+
+describe("deliveryStatus", () => {
+  const at = new Date("2026-11-07T13:30:00Z");
+  const base = { status: "queued" as const, attempts: 0, nextAttemptAt: null, lastError: null };
+
+  it("says a Delivery waiting for its first send is queued, and a sent one sent", () => {
+    expect(deliveryStatus(base, "UTC")).toEqual({ text: "Queued", failed: false });
+    expect(deliveryStatus({ ...base, status: "sent", attempts: 1 }, "UTC")).toEqual({ text: "Sent", failed: false });
+  });
+
+  it("gives held and grouped Deliveries their time in the Workspace timezone", () => {
+    expect(deliveryStatus({ ...base, status: "held", nextAttemptAt: at }, "Europe/Berlin")).toEqual({
+      text: "Held until 14:30",
+      failed: false,
+    });
+    expect(deliveryStatus({ ...base, status: "grouped", nextAttemptAt: at }, "UTC")).toEqual({
+      text: "Grouped, goes at 13:30",
+      failed: false,
+    });
+  });
+
+  it("names a failed attempt's reason and the next retry, and says when there are no more", () => {
+    const failing = { ...base, attempts: 2, nextAttemptAt: at, lastError: "the receiver answered 500" };
+    expect(deliveryStatus(failing, "UTC")).toEqual({
+      text: "Failed: the receiver answered 500. Next retry at 13:30",
+      failed: true,
+    });
+    expect(deliveryStatus({ ...failing, status: "failed", nextAttemptAt: null }, "UTC")).toEqual({
+      text: "Failed: the receiver answered 500. No more retries",
+      failed: true,
+    });
+  });
+});
+
+describe("isActFailure", () => {
+  it("is true for a failed send's Log row and false for every other row", () => {
+    const row = (stage: string, data: unknown) => ({ stage, data });
+    expect(isActFailure(row("act", { attempt: 1, retryAt: "2026-11-07T13:30:00.000Z" }))).toBe(true);
+    expect(isActFailure(row("act", { attempt: 9, final: true }))).toBe(true);
+    expect(isActFailure(row("act", { attempt: 1 }))).toBe(false);
+    expect(isActFailure(row("act", { heldUntil: "2026-11-07T13:30:00.000Z" }))).toBe(false);
+    expect(isActFailure(row("rate", { final: true }))).toBe(false);
+    expect(isActFailure(row("act", null))).toBe(false);
   });
 });

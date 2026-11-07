@@ -1,9 +1,14 @@
 import { createServer } from "node:http";
-import { createEgressFetch, loadConfig, pollSource } from "@watchdog/core";
+import { createEgressFetch, deliver, loadConfig, pollSource, processItem } from "@watchdog/core";
+import { fakeLlm } from "@watchdog/core/testing";
 import {
+  action,
+  actionDestination,
   closeDb,
   createDb,
   type Db,
+  delivery,
+  destination,
   eq,
   extractorRule,
   item,
@@ -18,7 +23,16 @@ import {
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { feedPage, feedPageSize, itemWithLog, parseCursor, parseTopCursor, topPage } from "./feed.ts";
+import {
+  deliveryStatus,
+  feedPage,
+  feedPageSize,
+  itemActions,
+  itemWithLog,
+  parseCursor,
+  parseTopCursor,
+  topPage,
+} from "./feed.ts";
 
 const now = new Date("2026-11-03T15:00:00Z");
 const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000);
@@ -603,5 +617,88 @@ describe("Feed", () => {
 
     expect(await itemWithLog(db, ours.workspaceId, present(other))).toBeUndefined();
     expect(await itemWithLog(db, ours.workspaceId, "not-a-uuid")).toBeUndefined();
+  });
+
+  describe("an Item's Actions", () => {
+    /** No model, so the pipeline makes no Agent call and goes straight to the Act stage. */
+    const pipelineDeps = {
+      enqueueDeliveries: () => Promise.resolve(),
+      agent: { fetch: fakeLlm("openai-compatible", []).fetch, encryptionKey: Buffer.alloc(32, 7) },
+    };
+    const accepting = { send: () => Promise.resolve() };
+    const deliverDeps = {
+      senders: { telegram: accepting, email: accepting, webhook: accepting },
+      appUrl: "http://localhost:3000",
+      retryDelivery: () => Promise.resolve(),
+    };
+
+    /** An Action on Items whose title contains "launch", pointing at one confirmed address. */
+    async function withAction(kind: "alert" | "digest" = "alert") {
+      const seeded = await seed();
+      const { workspaceId } = seeded;
+      const [inbox] = await db
+        .insert(destination)
+        .values({ workspaceId, type: "email", name: "Team inbox", config: { address: "team@example.com" }, confirmedAt: new Date() })
+        .returning();
+      const name = kind === "alert" ? "Launches" : "Weekly";
+      const definition = {
+        action: name,
+        when: { field: "title", op: "contains", value: "launch" },
+        kind,
+        destinations: [present(inbox).id],
+        ...(kind === "digest" && { schedule: "0 9 * * 1" }),
+      };
+      const [saved] = await db.insert(action).values({ workspaceId, name, kind, definition }).returning();
+      await db.insert(actionDestination).values({ actionId: present(saved).id, destinationId: present(inbox).id });
+      return { seeded, actionId: present(saved).id };
+    }
+
+    it("lists the Action, its Destination and sent after it fires and sends, with the Log in order", async () => {
+      const { seeded, actionId } = await withAction();
+      const [itemId = "", other = ""] = await insertItems(seeded, [{ title: "A launch" }, { title: "Quiet news" }]);
+      await processItem(db, itemId, pipelineDeps);
+      await processItem(db, other, pipelineDeps);
+      const alerted = async () =>
+        Object.fromEntries((await feedPage(db, seeded.workspaceId)).items.map((row) => [row.id, row.alerted]));
+      expect(await alerted()).toEqual({ [itemId]: false, [other]: false });
+
+      const [queued] = await db.select({ id: delivery.id }).from(delivery).where(eq(delivery.itemId, itemId));
+      await deliver(db, present(queued).id, deliverDeps);
+
+      expect(await itemActions(db, seeded.workspaceId, itemId)).toMatchObject([
+        { id: actionId, name: "Launches", deliveries: [{ destination: "Team inbox", status: "sent" }], digestTo: [] },
+      ]);
+      const acted = present(await itemWithLog(db, seeded.workspaceId, itemId)).log.filter(({ stage }) => stage === "act");
+      const [firedRow, sentRow, ...rest] = acted.map(({ message }) => message);
+      expect(firedRow).toMatch(/^Action Launches fired: .+\. Queued for Team inbox$/);
+      expect(sentRow).toBe("Sent to Team inbox");
+      expect(rest).toEqual([]);
+      expect(await itemActions(db, seeded.workspaceId, other)).toEqual([]);
+      expect(await alerted()).toEqual({ [itemId]: true, [other]: false });
+    });
+
+    it("reads a held Delivery's time from its row", async () => {
+      const { seeded } = await withAction();
+      const [itemId = ""] = await insertItems(seeded, [{ title: "A launch" }]);
+      await processItem(db, itemId, pipelineDeps);
+      const until = new Date("2099-01-01T13:30:00Z");
+      await db.update(delivery).set({ status: "held", nextAttemptAt: until }).where(eq(delivery.itemId, itemId));
+
+      const [fired] = await itemActions(db, seeded.workspaceId, itemId);
+      const [held] = present(fired).deliveries;
+      expect(deliveryStatus(present(held), "Europe/Berlin")).toEqual({ text: "Held until 14:30", failed: false });
+    });
+
+    it("shows a Digest's Destinations waiting for it, and nothing to another Workspace", async () => {
+      const { seeded } = await withAction("digest");
+      const [itemId = ""] = await insertItems(seeded, [{ title: "A launch" }]);
+      await processItem(db, itemId, pipelineDeps);
+
+      expect(await itemActions(db, seeded.workspaceId, itemId)).toMatchObject([
+        { name: "Weekly", deliveries: [], digestTo: ["Team inbox"] },
+      ]);
+      expect(await itemActions(db, (await seed()).workspaceId, itemId)).toEqual([]);
+      expect(await itemActions(db, seeded.workspaceId, "not-a-uuid")).toEqual([]);
+    });
   });
 });

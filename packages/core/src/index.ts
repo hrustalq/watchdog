@@ -14,6 +14,7 @@ export {
 export { deliver, type DeliverDeps, purgeSentMessages, releaseDueDeliveries, type Sender } from "./delivery/deliver.ts";
 export { type EmailCap, sendEmailCapNotice } from "./delivery/email-cap.ts";
 export { emailDestinationConfig } from "./delivery/email.ts";
+export { localTime } from "./delivery/schedule-delivery.ts";
 export { createSenders } from "./delivery/senders.ts";
 export { sendTestAlert, type TestAlertDeps, type TestAlertResult } from "./delivery/test-alert.ts";
 export { botUsername, runBot } from "./telegram/bot-runner.ts";
