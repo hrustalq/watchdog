@@ -10,7 +10,6 @@ export interface TestAlertDeps {
   appUrl: string;
   /** Hosted counts alert mail against its daily cap, and a test is one. */
   emailCapped: boolean;
-  now?: () => Date;
 }
 
 export type TestAlertResult = { status: "sent" } | { status: "failed"; reason: string } | { status: "capped" };
@@ -29,7 +28,7 @@ function exampleAlert(appUrl: string) {
   return { ...alertContent(example, "Watchdog", why, appUrl), link: new URL("/", appUrl).href };
 }
 
-function exampleWebhook(now: Date): WebhookMessage {
+function exampleWebhook(): WebhookMessage {
   return {
     action: "Send a test",
     item: {
@@ -41,7 +40,7 @@ function exampleWebhook(now: Date): WebhookMessage {
       author: null,
       body: example.summary,
       publishedAt: null,
-      capturedAt: now,
+      capturedAt: new Date(),
       language: "en",
       isBackfill: false,
       summary: example.summary,
@@ -56,24 +55,21 @@ function exampleWebhook(now: Date): WebhookMessage {
 async function attempt(
   target: Destination,
   deps: TestAlertDeps,
-  now: () => Date,
   recording: (write: (tx: Tx) => Promise<void>) => Promise<void>,
 ): Promise<TestAlertResult> {
   try {
     await (target.type === "webhook"
-      ? deps.senders.webhook.send(target, exampleWebhook(now()))
+      ? deps.senders.webhook.send(target, exampleWebhook())
       : deps.senders[target.type].send(target, exampleAlert(deps.appUrl)));
   } catch (error) {
     const reason = failureReason(error);
-    const failedAt = now();
     await recording(async (tx) => {
-      await tx.update(destination).set({ lastError: reason, lastErrorAt: failedAt }).where(eq(destination.id, target.id));
+      await tx.update(destination).set({ lastError: reason, lastErrorAt: new Date() }).where(eq(destination.id, target.id));
     });
     return { status: "failed", reason };
   }
-  const sentAt = now();
   await recording(async (tx) => {
-    await recordSentMessage(tx, target, sentAt);
+    await recordSentMessage(tx, target, new Date());
     await tx.update(destination).set({ lastError: null, lastErrorAt: null }).where(eq(destination.id, target.id));
   });
   return { status: "sent" };
@@ -86,14 +82,13 @@ async function attempt(
  * take the 50th place. Anything else holds no connection through the send.
  */
 export async function sendTestAlert(db: Db, target: Destination, deps: TestAlertDeps): Promise<TestAlertResult> {
-  const now = deps.now ?? (() => new Date());
   if (target.type !== "email" || !deps.emailCapped) {
-    return attempt(target, deps, now, (write) => db.transaction(write));
+    return attempt(target, deps, (write) => db.transaction(write));
   }
   return db.transaction(async (tx) => {
     await takeEmailCapTurn(tx, target.workspaceId);
     const [settings] = await tx.select().from(workspace).where(eq(workspace.id, target.workspaceId));
-    if (settings !== undefined && (await emailCapEnd(tx, settings, now())) !== undefined) return { status: "capped" };
-    return attempt(target, deps, now, (write) => write(tx));
+    if (settings !== undefined && (await emailCapEnd(tx, settings, new Date())) !== undefined) return { status: "capped" };
+    return attempt(target, deps, (write) => write(tx));
   });
 }
