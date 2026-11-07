@@ -23,7 +23,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createEgressFetch } from "../egress/egress.ts";
 import { encryptSecret } from "../secrets/secrets.ts";
-import { deliver, type Destination, FinalSendError, RetryAfterSendError, type Sender } from "./deliver.ts";
+import { deliver, type Destination, FinalSendError, purgeSentMessages, RetryAfterSendError, type Sender } from "./deliver.ts";
 import type { AlertMessage, WebhookMessage } from "./content.ts";
 import type { GroupedAlert } from "./group.ts";
 import { createTelegramSender } from "./telegram.ts";
@@ -962,19 +962,15 @@ describe("deliver", () => {
         expect(await countFor(seeded.destinationId)).toBe(0);
       });
 
-      it("keeps two days, far more than a local day or an hour needs", async () => {
+      it("is forgotten after two days, far more than a local day or an hour needs", async () => {
         const seeded = await seed();
-        await sentEarlier(seeded, new Date("2099-01-05T11:59:00Z"));
-        await sentEarlier(seeded, new Date("2099-01-05T12:01:00Z"));
-        const { deps } = recording();
+        const hoursAgo = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000);
+        await sentEarlier(seeded, hoursAgo(49));
+        await sentEarlier(seeded, hoursAgo(47));
 
-        await deliver(db, seeded.deliveryId, { ...deps, now: () => new Date("2099-01-07T12:00:00Z") });
+        await purgeSentMessages(db);
 
-        const rows = await db.select().from(sentMessage).where(eq(sentMessage.destinationId, seeded.destinationId));
-        expect(rows.map((row) => row.sentAt.toISOString()).sort()).toEqual([
-          "2099-01-05T12:01:00.000Z",
-          "2099-01-07T12:00:00.000Z",
-        ]);
+        expect(await countFor(seeded.destinationId)).toBe(1);
       });
     });
 

@@ -10,4 +10,5 @@ CREATE TABLE "sent_message" (
 ALTER TABLE "sent_message" ADD CONSTRAINT "sent_message_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "sent_message" ADD CONSTRAINT "sent_message_destination_id_destination_id_fk" FOREIGN KEY ("destination_id") REFERENCES "public"."destination"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "sent_message_workspace_id_sent_at_idx" ON "sent_message" USING btree ("workspace_id","sent_at");--> statement-breakpoint
-CREATE INDEX "sent_message_destination_id_sent_at_idx" ON "sent_message" USING btree ("destination_id","sent_at");
+CREATE INDEX "sent_message_destination_id_sent_at_idx" ON "sent_message" USING btree ("destination_id","sent_at");--> statement-breakpoint
+CREATE INDEX "sent_message_sent_at_idx" ON "sent_message" USING btree ("sent_at");

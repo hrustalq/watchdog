@@ -476,7 +476,16 @@ describe("Rules", () => {
       const [own] = await db.insert(workspace).values({ name: "Broken", ownerUserId: owner }).returning();
       const id = own?.id ?? "";
       await db.insert(action).values({ workspaceId: id, name: "old", kind: "alert", definition: { action: "old", when: "x" } });
-      expect((await listRules(db, id)).actions).toMatchObject([{ name: "old", condition: null, destinations: [] }]);
+      await db.insert(action).values({
+        workspaceId: id,
+        name: "older",
+        kind: "alert",
+        definition: { action: "older", when: { field: "severity", op: "gte", value: 6 }, kind: "alert", destinations: [] },
+      });
+      expect((await listRules(db, id)).actions).toMatchObject([
+        { name: "old", condition: null, destinations: [] },
+        { name: "older", condition: null },
+      ]);
     });
 
     it("shows a disabled Action left with no Destination in the model's order, for the user to add one", async () => {
@@ -570,6 +579,49 @@ describe("Rules", () => {
         expect(await logOf(held)).toEqual([`Not sent: the Action ${name} no longer goes to ${gone.name}`]);
         expect(await logOf(sent)).toEqual([]);
         expect(await logOf(stays)).toEqual([]);
+      });
+
+      it("waits for an Act stage in progress, so what it queues to a Destination taken off is dropped too", async () => {
+        const kept = await addDestination("email");
+        const gone = await addDestination("email");
+        const name = unique();
+        const { type, id } = await saved(ours, alertYaml([kept.name, gone.name], name));
+        const queued = await itemIn();
+        let save: Promise<unknown> = Promise.resolve();
+
+        await db.transaction(async (tx) => {
+          await tx.select({ id: action.id }).from(action).where(eq(action.id, id)).for("key share");
+          save = saveRule(db, ours, { type, id }, alertYaml([kept.name], name), "hosted");
+          // Long enough for a save that doesn't wait to have finished, and so to find nothing to drop.
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          await tx.insert(delivery).values({ actionId: id, itemId: queued, destinationId: gone.id });
+        });
+        await save;
+
+        expect(await statusesOf(id)).toEqual([]);
+        expect(await logOf(queued)).toEqual([`Not sent: the Action ${name} no longer goes to ${gone.name}`]);
+      });
+
+      it("waits for a send in progress, and doesn't log as unsent what it sent", async () => {
+        const mine = await addDestination("email");
+        const { type, id } = await saved(ours, alertYaml([mine.name]));
+        const sending = await itemIn();
+        const [row] = await db
+          .insert(delivery)
+          .values({ actionId: id, itemId: sending, destinationId: mine.id })
+          .returning({ id: delivery.id });
+        let removal: Promise<unknown> = Promise.resolve();
+
+        // As `deliver` holds it through a send.
+        await db.transaction(async (tx) => {
+          await tx.select({ id: destination.id }).from(destination).where(eq(destination.id, mine.id)).for("no key update");
+          removal = removeRule(db, ours, type, id);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+          await tx.update(delivery).set({ status: "sent", sentAt: new Date() }).where(eq(delivery.id, row?.id ?? ""));
+        });
+        await removal;
+
+        expect(await logOf(sending)).toEqual([]);
       });
 
       it("leaves unsent Deliveries alone when an edit keeps their Destination", async () => {

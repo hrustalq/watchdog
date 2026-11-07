@@ -223,7 +223,7 @@ function ActionDetail({
   return (
     <>
       {condition === null ? (
-        <Warning>Its Condition no longer parses, so it doesn&apos;t fire. Open it to fix it.</Warning>
+        <Warning>Its definition no longer parses, so it doesn&apos;t fire. Open it to fix it.</Warning>
       ) : (
         <p className="line-clamp-3 text-sm break-words">{condition}</p>
       )}

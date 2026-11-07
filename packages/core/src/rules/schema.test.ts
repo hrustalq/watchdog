@@ -413,6 +413,7 @@ describe("actionSchema", () => {
     ["a number as text", "is", "4"],
     ["a level above the scale", "gte", 9],
     ["a level below the scale", "lte", 0],
+    ["a fraction", "is", 2.5],
     ["a word in a list", "in", [4, "high"]],
     ["text to find", "contains", "4"],
     ["a pattern", "matches", "4"],

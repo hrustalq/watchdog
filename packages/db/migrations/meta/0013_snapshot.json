@@ -1,5 +1,5 @@
 {
-  "id": "17b9cb4e-c96f-4e48-a0c0-390ab2c6c17e",
+  "id": "01084d71-ff96-45ba-8e14-2e86634095c4",
   "prevId": "e30868e3-6271-40e9-906f-8e2c4af421ad",
   "version": "7",
   "dialect": "postgresql",
@@ -2174,6 +2174,21 @@
               "asc": true,
               "nulls": "last"
             },
+            {
+              "expression": "sent_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "sent_message_sent_at_idx": {
+          "name": "sent_message_sent_at_idx",
+          "columns": [
             {
               "expression": "sent_at",
               "isExpression": false,

@@ -2,7 +2,7 @@
 // Every query is scoped to the Workspace, so another Workspace's rule id behaves like a missing one.
 import {
   type Action,
-  conditionSchema,
+  actionSchema,
   conditionToWords,
   type Config,
   extractorRuleSchema,
@@ -69,7 +69,7 @@ export async function listRules(db: Db, workspaceId: string) {
 const isConfirmed = ({ type, confirmedAt }: { type: DestinationChoice["type"]; confirmedAt: Date | null }) =>
   type === "webhook" || confirmedAt !== null;
 
-/** The Workspace's Actions, oldest first, with what each does in words. `condition` is null when it no longer parses. */
+/** The Workspace's Actions, oldest first, with what each does in words. `condition` is null when it no longer parses, and the Act stage skips it. */
 async function listActions(db: Db, workspaceId: string) {
   const rows = await db.query.action.findMany({
     where: eq(action.workspaceId, workspaceId),
@@ -78,11 +78,11 @@ async function listActions(db: Db, workspaceId: string) {
     orderBy: [action.createdAt, action.id],
   });
   return rows.map(({ definition, actionDestinations, ...row }) => {
-    // Only the Condition, because a disabled Action left with no Destination still has one to show.
-    const when = conditionSchema.safeParse(isMap(definition) ? definition.when : undefined);
+    // Whatever its Destinations, because a disabled Action left with none still has a Condition to show.
+    const parsed = actionSchema.safeParse(isMap(definition) ? { ...definition, destinations: ["any"] } : definition);
     return {
       ...row,
-      condition: when.success ? conditionToWords(when.data) : null,
+      condition: parsed.success ? conditionToWords(parsed.data.when) : null,
       schedule: isMap(definition) && typeof definition.schedule === "string" ? definition.schedule : null,
       destinations: actionDestinations.map(({ destination: target }) => ({ name: target.name, confirmed: isConfirmed(target) })),
     };
@@ -301,15 +301,28 @@ export async function problemsInDraft(
 const missing = { problems: [{ path: "", message: "This rule doesn't exist any more." }] };
 
 /**
- * Takes out Deliveries that will now never be sent, and says so in their Items' Logs, so a Log doesn't
- * end on "Held until". The lock waits for a send in progress, whose row then no longer counts as unsent.
+ * end on "Held until". It takes their Destinations' rows first, as `removeDestination` does, because a
+ * send holds its Destination's row: that waits for an email or Telegram send in progress, whose Delivery
+ * then no longer counts as unsent. A webhook call holds no lock, so one in flight can still reach its
+ * receiver. Not the Deliveries' own rows, or deleting an Item would wait for a send to it.
  */
 async function dropUnsent(tx: Tx, which: SQL | undefined, message: string) {
-  const unsent = await tx
-    .select({ id: delivery.id, itemId: delivery.itemId, actionId: delivery.actionId, destinationId: delivery.destinationId })
-    .from(delivery)
-    .where(and(which, inArray(delivery.status, ["queued", "held", "grouped"])))
+  const unsentNow = () =>
+    tx
+      .select({ id: delivery.id, itemId: delivery.itemId, actionId: delivery.actionId, destinationId: delivery.destinationId })
+      .from(delivery)
+      .where(and(which, inArray(delivery.status, ["queued", "held", "grouped"])));
+  const waiting = await unsentNow();
+  if (waiting.length === 0) return;
+  // In id order, so two of these can't deadlock.
+  await tx
+    .select({ id: destination.id })
+    .from(destination)
+    .where(inArray(destination.id, waiting.map(({ destinationId }) => destinationId)))
+    .orderBy(destination.id)
     .for("update");
+
+  const unsent = await unsentNow();
   if (unsent.length === 0) return;
   await tx.insert(itemLog).values(
     unsent.map(({ itemId, actionId, destinationId }) => ({
@@ -347,6 +360,10 @@ async function storeAction(
 ) {
   const ids = new Map(held.map(({ id, name }) => [name, id]));
   const destinationIds = rule.destinations.flatMap((name) => ids.get(name) ?? []);
+  // Waits for an Act stage that read this Action as it was, so what it queues is here to be dropped below.
+  if (target !== null) {
+    await tx.select({ id: action.id }).from(action).where(eq(action.id, target.id)).for("update");
+  }
   const values = { name: rule.action, kind: rule.kind, definition: { ...rule, destinations: destinationIds } };
   const [row] =
     target === null

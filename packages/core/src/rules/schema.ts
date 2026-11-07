@@ -275,7 +275,8 @@ const destinations = z
 // This schema has no mode, so it asks only for a cron expression. A save applies the mode's minimum.
 const digestSchedule = z.string().trim().min(1).pipe(refusedBy(scheduleError));
 
-const isOnRatingScale = (value: unknown) => typeof value === "number" && value >= 1 && value <= 5;
+// A Rating is a whole number, so `is 2.5` could never hold.
+const isOnRatingScale = (value: unknown) => typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5;
 
 /** A Rating test that no Item could meet saves as if it worked and never fires, or under `not`, always. */
 const actionWhen = conditionSchema.superRefine((condition, ctx) => {
@@ -285,7 +286,7 @@ const actionWhen = conditionSchema.superRefine((condition, ctx) => {
       ctx.addIssue({
         code: "custom",
         path: [...path.slice(0, -1), "value"],
-        message: `"${field}" is rated 1 to 5, so a test on it takes those numbers.`,
+        message: `"${field}" is rated 1 to 5, so a test on it takes those whole numbers.`,
       });
     }
   }

@@ -73,7 +73,7 @@ export const delivery = pgTable(
     attempts: integer("attempts").notNull().default(0),
     /** When a held or grouped Delivery goes, or a failed attempt is retried. */
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-    /** The Grouped alert it waits for or went out in. The rows of one share it, and it counts as one message. */
+    /** The Grouped alert it waits for or went out in. The rows of one share it. */
     groupId: uuid("group_id"),
     /** When a hold ended, from which its 24 hours of retries run. Without a hold, they run from created_at. */
     retryFrom: timestamp("retry_from", { withTimezone: true }),
@@ -120,6 +120,8 @@ export const sentMessage = pgTable(
     check("sent_message_type_check", sql`${table.type} in ('telegram', 'email')`),
     index("sent_message_workspace_id_sent_at_idx").on(table.workspaceId, table.sentAt),
     index("sent_message_destination_id_sent_at_idx").on(table.destinationId, table.sentAt),
+    // The worker's sweep forgets old rows across every Workspace.
+    index("sent_message_sent_at_idx").on(table.sentAt),
   ],
 );
 

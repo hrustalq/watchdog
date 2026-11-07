@@ -84,7 +84,6 @@ export interface DeliverDeps {
 }
 
 const hourMs = 60 * 60 * 1000;
-const sentMessageRetentionMs = 48 * hourMs;
 const firstRetryDelayMs = 30_000;
 const retryWindowMs = 24 * hourMs;
 /** Short enough that the Log's sentence keeps what follows the reason. */
@@ -278,23 +277,21 @@ async function applySchedule(
   return [];
 }
 
-/**
- * Counts a message against the rate limit and the hosted email cap (ADR 0030), and forgets this Workspace's
- * rows too old for either: the cap reads back to the start of a local day, which is under 24 hours ago.
- */
+/** Counts a message against the rate limit and the hosted email cap (ADR 0030). A webhook isn't counted. */
 export async function recordSentMessage(tx: Tx, target: Destination, sentAt: Date) {
   if (target.type === "webhook") return;
   await tx
     .insert(sentMessage)
     .values({ workspaceId: target.workspaceId, destinationId: target.id, type: target.type, sentAt });
-  await tx
-    .delete(sentMessage)
-    .where(
-      and(
-        eq(sentMessage.workspaceId, target.workspaceId),
-        lt(sentMessage.sentAt, new Date(sentAt.getTime() - sentMessageRetentionMs)),
-      ),
-    );
+}
+
+/**
+ * Forgets messages too old for either limit: the cap reads back to the start of a local day, under 24
+ * hours ago. The worker's sweep runs this, outside any send, because a failure here mustn't undo the
+ * record of a message that has already gone, and a retry would send it twice.
+ */
+export async function purgeSentMessages(db: Db) {
+  await db.delete(sentMessage).where(lt(sentMessage.sentAt, sql`now() - interval '48 hours'`));
 }
 
 /**
