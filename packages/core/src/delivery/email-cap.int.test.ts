@@ -10,6 +10,7 @@ import {
   item,
   itemLog,
   migrate,
+  sentMessage,
   source,
   user,
   workspace,
@@ -66,7 +67,7 @@ describe("alert email", () => {
         schedule: "*/15 * * * *",
       })
       .returning();
-    const sourceId = present(src).id;
+    let sourceId = present(src).id;
 
     const addDestination = async (values: { type: Destination["type"]; name: string; confirmedAt?: Date | null }) => {
       const [row] = await db
@@ -95,7 +96,7 @@ describe("alert email", () => {
         },
       })
       .returning();
-    const actionId = present(saved).id;
+    let actionId = present(saved).id;
 
     let count = 0;
     /** A queued alert to this Destination, about a new Item. */
@@ -121,7 +122,21 @@ describe("alert email", () => {
       const [row] = await db.insert(delivery).values({ actionId, itemId, destinationId }).returning();
       return { itemId, deliveryId: present(row).id };
     };
-    return { workspaceId, ownerEmail, addDestination, alert };
+    /** Deletes the Action, whose Deliveries go with it, and starts another. */
+    const replaceAction = async () => {
+      const { id: _id, ...values } = present(saved);
+      await db.delete(action).where(eq(action.id, actionId));
+      const [next] = await db.insert(action).values(values).returning();
+      actionId = present(next).id;
+    };
+    /** Deletes the Source, whose Items and their Deliveries go with it, and starts another. */
+    const replaceSource = async () => {
+      const { id: _id, ...values } = present(src);
+      await db.delete(source).where(eq(source.id, sourceId));
+      const [next] = await db.insert(source).values(values).returning();
+      sourceId = present(next).id;
+    };
+    return { workspaceId, ownerEmail, addDestination, alert, replaceAction, replaceSource };
   }
 
   /** Deps that send mail to a list, on hosted unless the test turns the cap off. */
@@ -208,6 +223,43 @@ describe("alert email", () => {
         nextAttemptAt: at(8, "00:00:00"),
       });
       expect(await logOf(fiftyFirst.itemId)).toEqual(["Held until 00:00: the hosted limit of 50 mails a day"]);
+    });
+
+    it.each([
+      ["its Action", (seeded: Awaited<ReturnType<typeof seed>>) => seeded.replaceAction()],
+      ["its Source", (seeded: Awaited<ReturnType<typeof seed>>) => seeded.replaceSource()],
+    ])("doesn't forget the day's mail when %s is deleted and made again", async (_, replace) => {
+      const seeded = await seed();
+      const address = await seeded.addDestination({ type: "email", name: "me" });
+      const { mails, deps } = recording();
+      await send(seeded, address, deps, 50, at(7, "08:00:00"));
+
+      await replace(seeded);
+      const next = await seeded.alert(address);
+      await deliver(db, next.deliveryId, { ...deps, now: () => at(7, "12:00:00") });
+
+      expect(mails).toHaveLength(50);
+      expect(await rowOf(next.deliveryId)).toMatchObject({ status: "held", nextAttemptAt: at(8, "00:00:00") });
+    });
+
+    it("doesn't forget the day's mail when the Destination is deleted, and frees its rate limit row", async () => {
+      const seeded = await seed();
+      const address = await seeded.addDestination({ type: "email", name: "me" });
+      const { mails, deps } = recording();
+      await send(seeded, address, deps, 50, at(7, "08:00:00"));
+
+      await db.delete(delivery).where(eq(delivery.destinationId, address));
+      await db.delete(actionDestination).where(eq(actionDestination.destinationId, address));
+      await db.delete(destination).where(eq(destination.id, address));
+      const again = await seeded.addDestination({ type: "email", name: "me" });
+      const next = await seeded.alert(again);
+      await deliver(db, next.deliveryId, { ...deps, now: () => at(7, "12:00:00") });
+
+      expect(mails).toHaveLength(50);
+      expect(await rowOf(next.deliveryId)).toMatchObject({ status: "held" });
+      const rows = await db.select().from(sentMessage).where(eq(sentMessage.workspaceId, seeded.workspaceId));
+      expect(rows).toHaveLength(50);
+      expect(rows.every((row) => row.destinationId === null && row.type === "email")).toBe(true);
     });
 
     it("queues one notice that day, however many mails it holds", async () => {

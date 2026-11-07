@@ -13,8 +13,10 @@ import {
   isNull,
   item,
   itemLog,
+  lt,
   lte,
   or,
+  sentMessage,
   source,
   type SQL,
   sql,
@@ -82,6 +84,7 @@ export interface DeliverDeps {
 }
 
 const hourMs = 60 * 60 * 1000;
+const sentMessageRetentionMs = 48 * hourMs;
 const firstRetryDelayMs = 30_000;
 const retryWindowMs = 24 * hourMs;
 /** Short enough that the Log's sentence keeps what follows the reason. */
@@ -236,19 +239,11 @@ async function applySchedule(
       },
     );
 
-  // One time for each message, because the rows of a Grouped alert count as one.
   const sends = await tx
-    .select({ at: sql<Date>`max(${delivery.sentAt})`.mapWith(delivery.sentAt) })
-    .from(delivery)
-    .where(
-      and(
-        eq(delivery.destinationId, target.id),
-        eq(delivery.status, "sent"),
-        gt(delivery.sentAt, new Date(now.getTime() - hourMs)),
-      ),
-    )
-    .groupBy(sql`coalesce(${delivery.groupId}, ${delivery.id})`)
-    .orderBy(sql`max(${delivery.sentAt})`);
+    .select({ at: sentMessage.sentAt })
+    .from(sentMessage)
+    .where(and(eq(sentMessage.destinationId, target.id), gt(sentMessage.sentAt, new Date(now.getTime() - hourMs))))
+    .orderBy(sentMessage.sentAt);
   const recentSends = sends.map(({ at }) => at);
 
   let groupId: string | undefined;
@@ -281,6 +276,25 @@ async function applySchedule(
   for (const row of sending) await hold(row, capEnd, capReason, null);
   await queueCapNoticeOnce(tx, settings, capEnd, emailCap);
   return [];
+}
+
+/**
+ * Counts a message against the rate limit and the hosted email cap (ADR 0030), and forgets this Workspace's
+ * rows too old for either: the cap reads back to the start of a local day, which is under 24 hours ago.
+ */
+export async function recordSentMessage(tx: Tx, target: Destination, sentAt: Date) {
+  if (target.type === "webhook") return;
+  await tx
+    .insert(sentMessage)
+    .values({ workspaceId: target.workspaceId, destinationId: target.id, type: target.type, sentAt });
+  await tx
+    .delete(sentMessage)
+    .where(
+      and(
+        eq(sentMessage.workspaceId, target.workspaceId),
+        lt(sentMessage.sentAt, new Date(sentAt.getTime() - sentMessageRetentionMs)),
+      ),
+    );
 }
 
 /**
@@ -372,6 +386,7 @@ async function send(
   }
   // Not from `target`, which a webhook's unlocked send read before another send to it could fail.
   await recording(async (tx) => {
+    await recordSentMessage(tx, target, sentAt);
     await tx
       .update(destination)
       .set({ lastError: null, lastErrorAt: null })

@@ -13,6 +13,7 @@ import {
   itemField,
   itemLog,
   migrate,
+  sentMessage,
   source,
   user,
   workspace,
@@ -369,7 +370,7 @@ describe("deliver", () => {
 
   describe("through the Telegram sender, with a fake Telegram API", () => {
     const encryptionKey = Buffer.alloc(32, 7);
-    const sentMessage = z.object({ chat_id: z.string(), text: z.string() });
+    const telegramBody = z.object({ chat_id: z.string(), text: z.string() });
 
     /** A Delivery to a linked chat, and deps that send it through the real sender to a fake API. */
     async function linked(answer: () => Response) {
@@ -378,10 +379,10 @@ describe("deliver", () => {
         .update(destination)
         .set({ secretCiphertext: encryptSecret("-100200", encryptionKey) })
         .where(eq(destination.id, seeded.destinationId));
-      const received: z.output<typeof sentMessage>[] = [];
+      const received: z.output<typeof telegramBody>[] = [];
       const telegram = createTelegramSender("123456:token", {
         fetch: (_input, init) => {
-          received.push(sentMessage.parse(JSON.parse(typeof init?.body === "string" ? init.body : "")));
+          received.push(telegramBody.parse(JSON.parse(typeof init?.body === "string" ? init.body : "")));
           return Promise.resolve(answer());
         },
         encryptionKey,
@@ -787,13 +788,10 @@ describe("deliver", () => {
     }
 
     /** A message to the seeded Destination that went out at this time. */
-    async function sentEarlier(
-      seeded: Awaited<ReturnType<typeof seed>>,
-      sentAt: Date,
-      values: Partial<typeof delivery.$inferInsert> = {},
-    ) {
-      const { deliveryId } = await another(seeded);
-      await db.update(delivery).set({ status: "sent", sentAt, ...values }).where(eq(delivery.id, deliveryId));
+    async function sentEarlier(seeded: Awaited<ReturnType<typeof seed>>, sentAt: Date) {
+      await db
+        .insert(sentMessage)
+        .values({ workspaceId: seeded.workspaceId, destinationId: seeded.destinationId, type: "telegram", sentAt });
     }
 
     describe("quiet hours", () => {
@@ -928,17 +926,6 @@ describe("deliver", () => {
         expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent" });
       });
 
-      it("counts a Grouped alert as one", async () => {
-        const seeded = await seed();
-        const groupId = crypto.randomUUID();
-        for (let index = 0; index < 25; index++) await sentEarlier(seeded, at("11:30:00"), { groupId });
-        const { deps, sent } = recording();
-
-        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
-
-        expect(sent).toHaveLength(1);
-      });
-
       it("counts only what went to this Destination, in the last hour, and was sent", async () => {
         const seeded = await seed();
         for (let index = 0; index < 20; index++) await sentEarlier(seeded, at("10:30:00"));
@@ -951,6 +938,43 @@ describe("deliver", () => {
         await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
 
         expect(sent).toHaveLength(1);
+      });
+    });
+
+    describe("the record of what went out", () => {
+      const countFor = (destinationId: string) => db.$count(sentMessage, eq(sentMessage.destinationId, destinationId));
+
+      it("stays when the Action that sent it is deleted, so the rate limit still counts it", async () => {
+        const seeded = await seed();
+        const { deps } = recording();
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
+        expect(await countFor(seeded.destinationId)).toBe(1);
+
+        await db.delete(action).where(eq(action.id, seeded.actionId));
+
+        expect(await countFor(seeded.destinationId)).toBe(1);
+      });
+
+      it("writes nothing for a failed send", async () => {
+        const seeded = await seed();
+        const { deps } = recording(() => Promise.reject(new Error("refused")));
+        await deliver(db, seeded.deliveryId, deps);
+        expect(await countFor(seeded.destinationId)).toBe(0);
+      });
+
+      it("keeps two days, far more than a local day or an hour needs", async () => {
+        const seeded = await seed();
+        await sentEarlier(seeded, new Date("2099-01-05T11:59:00Z"));
+        await sentEarlier(seeded, new Date("2099-01-05T12:01:00Z"));
+        const { deps } = recording();
+
+        await deliver(db, seeded.deliveryId, { ...deps, now: () => new Date("2099-01-07T12:00:00Z") });
+
+        const rows = await db.select().from(sentMessage).where(eq(sentMessage.destinationId, seeded.destinationId));
+        expect(rows.map((row) => row.sentAt.toISOString()).sort()).toEqual([
+          "2099-01-05T12:01:00.000Z",
+          "2099-01-07T12:00:00.000Z",
+        ]);
       });
     });
 
@@ -970,6 +994,10 @@ describe("deliver", () => {
         const rows = await db.select().from(delivery).where(eq(delivery.destinationId, seeded.destinationId));
         expect(rows.map((row) => row.status)).toEqual(Array.from({ length: 25 }, () => "sent"));
         expect(new Set(rows.map((row) => row.groupId)).size).toBe(1);
+        // A Grouped alert counts as one against the rate limit.
+        expect(await db.select().from(sentMessage).where(eq(sentMessage.destinationId, seeded.destinationId))).toMatchObject([
+          { workspaceId: seeded.workspaceId, type: "telegram" },
+        ]);
         expect(present(rows[0]).groupId).not.toBeNull();
         for (const { itemId } of [seeded, ...others]) {
           expect(await actLog(itemId)).toMatchObject([{ message: "Sent to ops-chat in a group of 25" }]);

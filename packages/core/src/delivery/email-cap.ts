@@ -1,6 +1,6 @@
 // Hosted sends a Workspace at most 50 alert mails per local day (docs: Actions and delivery, "The hosted
 // email cap"; Business model and licensing). Self-hosted has no cap, so it passes none of this.
-import { and, type Db, delivery, destination, eq, sql, type Tx, user, workspace } from "@watchdog/db";
+import { and, type Db, eq, sentMessage, sql, type Tx, user, workspace } from "@watchdog/db";
 import type { Mailer } from "../mail/mailer.ts";
 
 const mailsPerDay = 50;
@@ -22,25 +22,23 @@ export async function takeEmailCapTurn(tx: Tx, workspaceId: string) {
 }
 
 /**
- * When a Workspace's next mail can go, if it has reached the cap. A Grouped alert is one mail. The local
- * day comes from Postgres, because a cron iterator throws on a day whose midnight doesn't exist.
+ * When a Workspace's next mail can go, if it has reached the cap. The local day comes from Postgres,
+ * because a cron iterator throws on a day whose midnight doesn't exist.
  */
 export async function emailCapEnd(tx: Tx, settings: typeof workspace.$inferSelect, now: Date) {
   const timezone = sql`${settings.timezone}::text`;
   const today = sql`(${now.toISOString()}::timestamptz at time zone ${timezone})::date`;
   const [sent] = await tx
     .select({
-      mails: sql<number>`count(distinct coalesce(${delivery.groupId}, ${delivery.id}))`.mapWith(Number),
-      dayEnd: sql<Date>`((${today} + 1)::timestamp at time zone ${timezone})`.mapWith(delivery.sentAt),
+      mails: sql<number>`count(*)`.mapWith(Number),
+      dayEnd: sql<Date>`((${today} + 1)::timestamp at time zone ${timezone})`.mapWith(sentMessage.sentAt),
     })
-    .from(delivery)
-    .innerJoin(destination, eq(delivery.destinationId, destination.id))
+    .from(sentMessage)
     .where(
       and(
-        eq(destination.workspaceId, settings.id),
-        eq(destination.type, "email"),
-        eq(delivery.status, "sent"),
-        sql`${delivery.sentAt} >= (${today}::timestamp at time zone ${timezone})`,
+        eq(sentMessage.workspaceId, settings.id),
+        eq(sentMessage.type, "email"),
+        sql`${sentMessage.sentAt} >= (${today}::timestamp at time zone ${timezone})`,
       ),
     );
   return sent === undefined || sent.mails < mailsPerDay ? undefined : sent.dayEnd;
