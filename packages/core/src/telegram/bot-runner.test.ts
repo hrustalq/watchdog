@@ -64,7 +64,7 @@ describe("the Telegram bot runner", () => {
 
     await run(telegram, linkChat);
 
-    expect(linkChat).toHaveBeenCalledExactlyOnceWith("abc", { id: "42", title: "private chat" });
+    expect(linkChat).toHaveBeenCalledExactlyOnceWith("abc", { id: "42", title: "Private chat" });
     expect(telegram.replies()).toMatchObject([{ chat_id: 42, text: "Linked to Ops alerts in Watchdog" }]);
   });
 

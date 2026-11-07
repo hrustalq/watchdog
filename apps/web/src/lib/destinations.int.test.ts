@@ -29,6 +29,7 @@ import {
   confirmationAddress,
   confirmDestination,
   type DestinationDeps,
+  justLinkedDestination,
   listDestinations,
   newTelegramLink,
   pendingTelegramLink,
@@ -142,6 +143,7 @@ describe("Destinations", () => {
         pointsAt: "Ops room",
       });
       expect(await pendingTelegramLink(db, await rowsOf(ours), `${added.id}.${code}`)).toBeUndefined();
+      expect(justLinkedDestination(await rowsOf(ours), `${added.id}.${code}`)?.id).toBe(added.id);
     });
 
     it("stays waiting on an expired code, shows no link for it, and offers a new code that works", async () => {
@@ -151,6 +153,7 @@ describe("Destinations", () => {
       expect(await linkChat(db, deps.encryptionKey, code, chat)).toBeUndefined();
       expect(await stateOf(added.id)).toBe("waiting-bot");
       expect(await pendingTelegramLink(db, await rowsOf(ours), `${added.id}.${code}`)).toBeUndefined();
+      expect(justLinkedDestination(await rowsOf(ours), `${added.id}.${code}`)).toBeUndefined();
 
       const fresh = await newTelegramLink(db, ours, added.id);
       await linkChat(db, deps.encryptionKey, fresh ?? "", chat);

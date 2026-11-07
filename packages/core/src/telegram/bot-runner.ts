@@ -56,7 +56,7 @@ export async function botUsername(botToken: string, fetch: BotFetch, signal?: Ab
   return me.username;
 }
 
-/** The chat a `/start <code>` came from. A private chat has no title, so it goes by "private chat". */
+/** The chat a `/start <code>` came from. A private chat has no title, so it goes by "Private chat". */
 export interface BotChat {
   id: string;
   title: string;
@@ -96,12 +96,12 @@ export async function runBot(
     const [, addressedTo, code] = startCommand.exec(message?.text ?? "") ?? [];
     if (message === undefined || code === undefined) return;
     if (addressedTo !== undefined && addressedTo.toLowerCase() !== bot.toLowerCase()) return;
-    const { id, title = "private chat" } = message.chat;
+    const { id, title = "Private chat" } = message.chat;
     const name = await linkChat(code, { id: String(id), title });
     await reply(
       id,
       name === undefined
-        ? "That code is unknown or has expired. Get a new one on the Destinations page in Watchdog."
+        ? "That code is unknown or has expired. Get a new link on the Destinations page in Watchdog."
         : `Linked to ${name} in Watchdog`,
     );
   };

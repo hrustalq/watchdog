@@ -8,6 +8,7 @@ import {
   actionsOnlyOn,
   addProblems,
   type DestinationState,
+  justLinkedDestination,
   listDestinations,
   pendingTelegramLink,
   problemField,
@@ -45,7 +46,9 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
   };
   const { db, destinationDeps, mode, mailGoesToLog, telegramAvailable, telegramBotName } = server();
   const destinations = await listDestinations(db, workspace.id, { telegramAvailable });
-  const telegramLink = await pendingTelegramLink(db, destinations, (await cookies()).get(telegramLinkCookie)?.value);
+  const linkCookie = (await cookies()).get(telegramLinkCookie)?.value;
+  const telegramLink = await pendingTelegramLink(db, destinations, linkCookie);
+  const justLinked = justLinkedDestination(destinations, linkCookie);
   const bot = telegramLink === undefined ? undefined : await telegramBotName();
 
   // Only ids and codes travel in the URL, so what it says comes from the Workspace or from fixed text.
@@ -62,6 +65,8 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
     message: problemMessage(problem, mode),
   };
   const form = param("form");
+  // A panel's notice would take focus from the field with the error, so it waits for the form to be put right.
+  const showTelegramLink = telegramLink !== undefined && error === undefined;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -89,7 +94,12 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
             The secret for {secretFor.name} was already shown. Replace it if you didn&apos;t keep a copy.
           </Notice>
         ) : null}
-        {telegramLink === undefined ? null : <TelegramLinkPanel link={telegramLink} bot={bot} />}
+        {showTelegramLink ? <TelegramLinkPanel link={telegramLink} bot={bot} /> : null}
+        {justLinked === undefined ? null : (
+          <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+            {justLinked.name} is linked.
+          </Notice>
+        )}
         <Outcome
           added={param("added")}
           resent={param("resent")}
@@ -156,7 +166,11 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                     id="telegram-name"
                     value={form === "telegram" ? param("name") : ""}
                     error={form === "telegram" ? error : undefined}
+                    placeholder="Ops alerts"
                   />
+                  <p className="text-sm text-muted-foreground">
+                    Next, Watchdog gives you a link and a command to link a private chat or a group.
+                  </p>
                   <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
                     Add Telegram chat
                   </SubmitButton>
@@ -206,6 +220,11 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                       <span aria-hidden="true">·</span>
                       <State state={row.state} failing={row.lastError !== null} />
                     </p>
+                    {row.state === "waiting-bot" && telegramLink?.id !== row.id ? (
+                      <p className="text-sm text-muted-foreground">
+                        No link is showing for it here. Get a new one to link a chat.
+                      </p>
+                    ) : null}
                     {row.lastError === null ? null : (
                       <p className="flex items-start gap-2 text-sm text-alarm">
                         <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
@@ -334,8 +353,9 @@ function TelegramLinkPanel({
         </Notice>
       ) : (
         <>
-          <Notice role="status" className="text-sm">
-            The code works once and expires at <Timestamp at={expiresAt} />. Reload this page after the bot replies.
+          {/* Keyed by the code, so a new link is announced even though the rest of the page stays. */}
+          <Notice key={code} role="status" className="text-sm">
+            The code in these links works once and expires at <Timestamp at={expiresAt} className="whitespace-nowrap" />.
           </Notice>
           <div className="flex flex-col gap-1 text-sm">
             <p>For a private chat, open this link and press Start:</p>
@@ -348,23 +368,30 @@ function TelegramLinkPanel({
               {`https://t.me/${bot}?start=${code}`}
             </a>
           </div>
-          <div className="flex flex-col gap-2 text-sm">
-            <label htmlFor="telegram-command">
-              For a group,{" "}
-              <a href={`https://t.me/${bot}?startgroup=${code}`} target="_blank" rel="noreferrer" className={textLink}>
-                pick it in Telegram
-              </a>
-              , or add @{bot} to it and send this there:
-            </label>
+          <p className="text-sm">
+            For a group,{" "}
+            <a href={`https://t.me/${bot}?startgroup=${code}`} target="_blank" rel="noreferrer" className={textLink}>
+              choose it in Telegram
+            </a>
+            .
+          </p>
+          <div className="flex flex-col gap-1 text-sm">
+            <label htmlFor="telegram-command">Or add @{bot} to the group yourself and send this there:</label>
             {/* @bot in the command, because a bot in a group is only sure to get commands addressed to it. */}
             <textarea
               id="telegram-command"
               readOnly
-              rows={1}
+              rows={2}
               value={`/start@${bot} ${code}`}
-              className={`${textBox} ${dataBox} resize-none py-1.5`}
+              className={`${textBox} ${dataBox} resize-none py-1.5 field-sizing-content`}
             />
           </div>
+          <p className="text-sm text-muted-foreground">
+            <Link href="/destinations" prefetch={false} className={textLink}>
+              Reload this page
+            </Link>{" "}
+            after the bot replies. No reply within a minute? Get a new link, which replaces this one, and try again.
+          </p>
         </>
       )}
     </section>
@@ -508,10 +535,12 @@ function NameField({
   id,
   value,
   error,
+  placeholder = "Team inbox",
 }: {
   id: string;
   value: string;
   error: { field: string; message: string } | undefined;
+  placeholder?: string;
 }) {
   return (
     <TextField
@@ -519,7 +548,7 @@ function NameField({
       name="name"
       label="Name"
       type="text"
-      placeholder="Team inbox"
+      placeholder={placeholder}
       value={value}
       error={error?.field === "name" ? error.message : undefined}
       help="Actions refer to it by this name."

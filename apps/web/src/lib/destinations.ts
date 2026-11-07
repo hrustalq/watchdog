@@ -436,7 +436,18 @@ export async function pendingTelegramLink(
   const waiting = destinations.find(({ id, state }) => id === destinationId && state === "waiting-bot");
   if (waiting === undefined || code === undefined) return undefined;
   const live = await liveLinkCode(db, code);
-  return live?.destinationId === waiting.id ? { name: waiting.name, code, expiresAt: live.expiresAt } : undefined;
+  return live?.destinationId === waiting.id
+    ? { id: waiting.id, name: waiting.name, code, expiresAt: live.expiresAt }
+    : undefined;
+}
+
+/** The Telegram Destination this browser's cookie asked to link, once it is. A render can't clear the cookie, so this lasts as long as the code would have. */
+export function justLinkedDestination<T extends { id: string; type: string; state: DestinationState }>(
+  destinations: T[],
+  cookie: string | undefined,
+) {
+  const [destinationId] = (cookie ?? "").split(".");
+  return destinations.find(({ id, type, state }) => id === destinationId && type === "telegram" && state === "confirmed");
 }
 
 export type DestinationState = "ready" | "confirmed" | "waiting-confirmation" | "waiting-bot" | "unavailable";
