@@ -137,6 +137,8 @@ describe("sendTestAlert", () => {
       rating: { severity: 3, importance: 3 },
       firedBecause: "Send a test was pressed on the Destinations screen",
     });
+    const ids = z.array(z.object({ item: z.object({ id: z.string() }) })).parse(bodies).map(({ item }) => item.id);
+    expect(new Set(ids).size).toBe(2);
   });
 
   it("sends no mail once a hosted Workspace has used the day's 50, and leaves the Destination's error alone", async () => {

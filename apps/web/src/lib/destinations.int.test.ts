@@ -458,10 +458,11 @@ describe("Destinations", () => {
 
     it("sends nothing to an unconfirmed address, another Workspace's Destination or a malformed id", async () => {
       const waiting = await addEmail();
+      const confirmed = await addEmail(owner.email);
       const before = tested.length;
 
       expect(await testDestination(db, testDeps, ours, waiting.destination.id)).toBeUndefined();
-      expect(await testDestination(db, testDeps, theirs, waiting.destination.id)).toBeUndefined();
+      expect(await testDestination(db, testDeps, theirs, confirmed.destination.id)).toBeUndefined();
       expect(await testDestination(db, testDeps, ours, "not-a-uuid")).toBeUndefined();
       expect(tested).toHaveLength(before);
     });

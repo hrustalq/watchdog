@@ -28,11 +28,12 @@ function exampleAlert(appUrl: string) {
   return { ...alertContent(example, "Watchdog", why, appUrl), link: new URL("/", appUrl).href };
 }
 
+/** A new Item id each time, so a receiver that drops repeated ids still takes every test. */
 function exampleWebhook(): WebhookMessage {
   return {
     action: "Send a test",
     item: {
-      id: example.id,
+      id: crypto.randomUUID(),
       sourceId: example.id,
       externalId: "test-alert",
       url: null,
