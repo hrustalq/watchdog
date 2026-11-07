@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { Button } from "@/components/ui/button";
-import { itemWithLog, manualRunIn } from "@/lib/feed";
+import { deliveryStatus, isActFailure, itemActions, itemWithLog, manualRunIn } from "@/lib/feed";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { RatingControls } from "../../correct-rating";
@@ -47,9 +47,10 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
   const [{ workspace }, { id }, { run: runId }] = await Promise.all([requireWorkspace(), params, searchParams]);
   const { db } = server();
   // Another Workspace's Item is missing too, so its id says nothing about whether it exists.
-  const [found = notFound(), { extractorRules, hasModel }] = await Promise.all([
+  const [found = notFound(), { extractorRules, hasModel }, fired] = await Promise.all([
     itemWithLog(db, workspace.id, id),
     listRules(db, workspace.id),
+    itemActions(db, workspace.id, id),
   ]);
   const run = manualRunIn(found.log, runId);
 
@@ -149,6 +150,13 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
           </dl>
         )}
       </section>
+      <ActionsSection
+        fired={fired}
+        processed={found.processedAt !== null}
+        isBackfill={found.isBackfill}
+        actedOn={found.log.some(({ stage, data }) => stage === "act" && aboutAnAction(data))}
+        timezone={workspace.timezone}
+      />
       <section aria-labelledby="run-rule" className="flex flex-col gap-3">
         <div className="flex flex-col gap-1">
           <h2 id="run-rule" className="text-title">
@@ -186,7 +194,17 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
               <Timestamp at={row.at} seconds className="shrink-0 text-muted-foreground" />
               <span className="shrink-0 sm:w-16">{row.stage}</span>
               {/* A model's validation failure runs over several lines. */}
-              <span className="min-w-0 break-words whitespace-pre-line">{row.message}</span>
+              {isActFailure(row) ? (
+                <span className="flex min-w-0 items-start gap-2 text-alarm">
+                  <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm ${filledLamp}`} />
+                  <span className="min-w-0 break-words whitespace-pre-line">
+                    <span className="sr-only">Failure: </span>
+                    {row.message}
+                  </span>
+                </span>
+              ) : (
+                <span className="min-w-0 break-words whitespace-pre-line">{row.message}</span>
+              )}
             </li>
           ))}
         </ol>
@@ -269,6 +287,108 @@ function RunRule({
         </form>
       )}
     </li>
+  );
+}
+
+// Forced colours drop backgrounds, which would hide a filled lamp.
+const filledLamp = "forced-color-adjust-none forced-colors:bg-[CanvasText]";
+
+/** Red for a failure and green for a send, filled. Anything still waiting gets a hollow lamp. */
+function lampFor(status: string, failed: boolean) {
+  if (failed) return `bg-alarm ${filledLamp}`;
+  return status === "sent" ? `bg-ok ${filledLamp}` : "border border-muted-foreground";
+}
+
+/** Whether an `act` Log row names an Action: one that fired, couldn't fire, was skipped, or sent. */
+const aboutAnAction = (data: unknown) => typeof data === "object" && data !== null && "actionId" in data;
+
+/**
+ * What each Action that fired on this Item did, from its Deliveries. Nothing in a row is a receiver's
+ * answer or a credential: a Delivery's error is Watchdog's own sentence about it.
+ */
+function ActionsSection({
+  fired,
+  processed,
+  isBackfill,
+  actedOn,
+  timezone,
+}: {
+  fired: Awaited<ReturnType<typeof itemActions>>;
+  processed: boolean;
+  isBackfill: boolean;
+  actedOn: boolean;
+  timezone: string;
+}) {
+  let empty = "No Action matched.";
+  if (!processed) empty = "Actions haven't been evaluated yet. They run once the pipeline finishes with this Item.";
+  else if (isBackfill) empty = "No Action fires on an Item from a Backfill.";
+  else if (actedOn) empty = "Nothing is waiting to go or was sent from this Item. The Log says why.";
+  return (
+    <section aria-labelledby="actions" className="flex flex-col gap-3">
+      <h2 id="actions" className="text-title">
+        Actions
+      </h2>
+      {fired.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{empty}</p>
+      ) : (
+        <ul className="divide-y rounded-lg border">
+          {fired.map((row) => (
+            <li key={row.id} className="flex flex-col gap-1 p-3">
+              <p className="text-sm font-medium break-words">
+                <Link
+                  href={`/rules/action/${row.id}`}
+                  className="rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+                >
+                  {row.name}
+                </Link>
+              </p>
+              <ul className="flex flex-col gap-1 text-sm">
+                {row.deliveries.map((sent) => {
+                  const { text, failed } = deliveryStatus(sent, timezone);
+                  return (
+                    <li key={sent.destination} className={`flex items-start gap-2 ${failed ? "text-alarm" : ""}`}>
+                      <span
+                        aria-hidden="true"
+                        className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor(sent.status, failed)}`}
+                      />
+                      <span className="min-w-0 break-words">
+                        {/* A failure links to where the Destination can be tested once it's fixed. */}
+                        {failed ? (
+                          <Link href="/destinations" className={inlineLink}>
+                            {sent.destination}
+                          </Link>
+                        ) : (
+                          <span className="text-foreground">{sent.destination}</span>
+                        )}
+                        <span className={failed ? "" : "text-muted-foreground"}>
+                          {" · "}
+                          {text}
+                          {sent.status === "sent" && sent.sentAt !== null ? (
+                            <>
+                              {" at "}
+                              <Timestamp at={sent.sentAt} />
+                            </>
+                          ) : null}
+                        </span>
+                      </span>
+                    </li>
+                  );
+                })}
+                {row.digestTo.map((name) => (
+                  <li key={name} className="flex items-start gap-2">
+                    <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor("queued", false)}`} />
+                    <span className="min-w-0 break-words">
+                      {name}
+                      <span className="text-muted-foreground"> · In the next Digest</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

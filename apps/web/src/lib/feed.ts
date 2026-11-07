@@ -1,7 +1,23 @@
 // The Feed as the Workspace screen reads it, in its Top and Latest views (docs: Processing pipeline,
 // "Feed"). Every query is scoped to the Workspace, so another Workspace's Item id behaves like a
 // missing one.
-import { and, type Db, desc, eq, isNotNull, item, itemCategory, source, type SQL, sql } from "@watchdog/db";
+import {
+  action,
+  actionDestination,
+  and,
+  type Db,
+  delivery,
+  desc,
+  destination,
+  digestItem,
+  eq,
+  isNotNull,
+  item,
+  itemCategory,
+  source,
+  type SQL,
+  sql,
+} from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 export const feedPageSize = 50;
@@ -77,6 +93,12 @@ async function readPage(db: Db, cursor: SQL<string>, where: SQL | undefined, ord
         where ${itemCategory.itemId} = ${item.id} order by ${itemCategory.category})`,
       // The summary once the Agent has written one. A row shows two lines at most, and either can be long.
       excerpt: sql<string>`left(coalesce(${item.summary}, ${item.body}), 300)`,
+      // Whether the user was already told about it, so Top can show what's old news.
+      // A webhook call tells a machine, not the user, so only a Telegram or email alert counts.
+      alerted: sql<boolean>`exists(
+        select 1 from ${delivery} join ${destination} on ${destination.id} = ${delivery.destinationId}
+        where ${delivery.itemId} = ${item.id} and ${delivery.status} = 'sent'
+          and ${destination.type} in ('telegram', 'email'))`,
       cursor,
     })
     .from(item)
@@ -152,6 +174,101 @@ export function manualRunIn(log: LogRow[], runId: unknown) {
   const newest = log.findLast(isManual);
   if (newest === undefined || String(newest.id) !== runId) return undefined;
   return { id: newest.id, message: newest.message, failed: "failed" in newest.data };
+}
+
+/** A failed send's Log row, which `deliver` marks with the next retry or as the last attempt. */
+export function isActFailure({ stage, data }: { stage: string; data: unknown }) {
+  if (stage !== "act" || typeof data !== "object" || data === null) return false;
+  return "retryAt" in data || ("final" in data && data.final === true);
+}
+
+type Delivery = Pick<typeof delivery.$inferSelect, "status" | "attempts" | "nextAttemptAt" | "lastError">;
+
+/**
+ * Where a Delivery stands, in words. Times are in the Workspace timezone, as the Log's "Held until"
+ * says them, with the date and the zone, because a hold can run past midnight and the rest of the page
+ * reads in UTC. `last_error` holds Watchdog's own sentence, never a receiver's answer or a credential.
+ */
+export function deliveryStatus({ status, attempts, nextAttemptAt, lastError }: Delivery, timezone: string) {
+  // Swedish writes a date and time as 2026-11-07 14:30, the shape Timestamp gives UTC.
+  const clock = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone, dateStyle: "short", timeStyle: "short" });
+  const at = (date: Date | null) => (date === null ? "a time not set" : `${clock.format(date)} ${timezone}`);
+  // A sender's reason may end in a full stop already.
+  const reason = (lastError ?? "no reason was recorded").replace(/\.$/, "");
+  switch (status) {
+    case "sent":
+      return { text: "Sent", failed: false };
+    case "held":
+      return { text: `Held until ${at(nextAttemptAt)}`, failed: false };
+    case "grouped":
+      return { text: `Grouped, goes at ${at(nextAttemptAt)}`, failed: false };
+    case "failed":
+      return { text: `Failed: ${reason}. No more retries`, failed: true };
+    case "queued":
+      // A failed attempt's retry waits for its time. Without one, it was released from a hold and goes now.
+      return attempts > 0 && nextAttemptAt !== null
+        ? { text: `Failed: ${reason}. Next retry at ${at(nextAttemptAt)}`, failed: true }
+        : { text: "Queued", failed: false };
+  }
+}
+
+/**
+ * Each Action that fired on an Item, oldest first, with its Destinations and how each Delivery stands,
+ * read from the `delivery` table. A Digest has no Delivery per Item, so its Destinations show the Item
+ * waiting in `digest_item`. Empty when nothing fired, or the Item isn't this Workspace's.
+ */
+export async function itemActions(db: Db, workspaceId: string, itemId: string) {
+  if (!isUuid(itemId)) return [];
+  const [deliveries, digests] = await Promise.all([
+    db
+      .select({
+        actionId: action.id,
+        actionName: action.name,
+        createdAt: action.createdAt,
+        destination: destination.name,
+        status: delivery.status,
+        attempts: delivery.attempts,
+        nextAttemptAt: delivery.nextAttemptAt,
+        lastError: delivery.lastError,
+        sentAt: delivery.sentAt,
+      })
+      .from(delivery)
+      .innerJoin(action, eq(action.id, delivery.actionId))
+      .innerJoin(destination, eq(destination.id, delivery.destinationId))
+      .where(and(eq(delivery.itemId, itemId), eq(action.workspaceId, workspaceId)))
+      .orderBy(action.createdAt, action.id, destination.name),
+    db
+      .select({
+        actionId: action.id,
+        actionName: action.name,
+        createdAt: action.createdAt,
+        destination: destination.name,
+      })
+      .from(digestItem)
+      .innerJoin(action, eq(action.id, digestItem.actionId))
+      .innerJoin(actionDestination, eq(actionDestination.actionId, action.id))
+      .innerJoin(destination, eq(destination.id, actionDestination.destinationId))
+      // A Digest only sends to confirmed Destinations, as the Act stage only collects for them.
+      .where(and(eq(digestItem.itemId, itemId), eq(action.workspaceId, workspaceId), isNotNull(destination.confirmedAt)))
+      .orderBy(action.createdAt, action.id, destination.name),
+  ]);
+
+  interface Fired {
+    id: string;
+    name: string;
+    createdAt: Date;
+    deliveries: typeof deliveries;
+    digestTo: string[];
+  }
+  const fired = new Map<string, Fired>();
+  const entry = ({ actionId: id, actionName: name, createdAt }: { actionId: string; actionName: string; createdAt: Date }) => {
+    const found = fired.get(id) ?? { id, name, createdAt, deliveries: [], digestTo: [] };
+    fired.set(id, found);
+    return found;
+  };
+  for (const row of deliveries) entry(row).deliveries.push(row);
+  for (const row of digests) entry(row).digestTo.push(row.destination);
+  return [...fired.values()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
 }
 
 /**
