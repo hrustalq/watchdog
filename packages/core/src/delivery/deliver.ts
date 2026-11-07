@@ -9,6 +9,7 @@ import {
   eq,
   gt,
   inArray,
+  isNotNull,
   isNull,
   item,
   itemLog,
@@ -23,19 +24,20 @@ import {
 import { storableMessage } from "../agent/call-agent.ts";
 import { actionSchema } from "../rules/schema.ts";
 import { conditionToWords } from "../rules/words.ts";
-import { alertContent, type AlertMessage } from "./content.ts";
+import { categoriesOf, fieldsOf } from "../pipeline/extract.ts";
+import { alertContent, type AlertMessage, type WebhookMessage } from "./content.ts";
 import { capReason, type EmailCap, emailCapEnd, queueCapNoticeOnce, takeEmailCapTurn } from "./email-cap.ts";
 import { type GroupedAlert, groupedAlert } from "./group.ts";
 import { localTime, scheduleDelivery } from "./schedule-delivery.ts";
 
 export type Destination = typeof destination.$inferSelect;
 
-export interface Sender {
+export interface Sender<Message = AlertMessage | GroupedAlert> {
   /**
    * Rejects when the message didn't go, with a reason the user can read in the Log. Any error is retried
    * with the backoff, unless it's a FinalSendError or a RetryAfterSendError.
    */
-  send: (destination: Destination, message: AlertMessage | GroupedAlert) => Promise<void>;
+  send: (destination: Destination, message: Message) => Promise<void>;
 }
 
 /** A refusal no later attempt can get past, so the Delivery fails at once. */
@@ -53,8 +55,19 @@ export class RetryAfterSendError extends Error {
   }
 }
 
+/**
+ * What a failed request's error should say in the Log. undici's own message is only "fetch failed", and a
+ * connection tried on several addresses has a cause with no message. Other errors, such as the egress
+ * guard's, say what happened already.
+ */
+export function unreachable(error: unknown, who: string) {
+  if (!(error instanceof TypeError && error.cause instanceof Error)) return error;
+  const why = error.cause.message === "" ? "" : `: ${error.cause.message}`;
+  return new Error(`${who} can't be reached${why}`);
+}
+
 export interface DeliverDeps {
-  senders: Record<Destination["type"], Sender>;
+  senders: { telegram: Sender; email: Sender; webhook: Sender<WebhookMessage> };
   /** Where Watchdog is served, for the link to the Item. */
   appUrl: string;
   /**
@@ -134,6 +147,44 @@ export async function releaseDueDeliveries(tx: Tx, which?: SQL) {
 function whyItFired({ name, definition }: { name: string; definition: unknown }) {
   const parsed = actionSchema.safeParse(definition);
   return parsed.success ? conditionToWords(parsed.data.when) : `Action ${name} fired`;
+}
+
+function alertMessage(rows: DueDelivery[], appUrl: string) {
+  const [first] = rows;
+  return first !== undefined && rows.length === 1
+    ? alertContent(first.item, first.sourceName, whyItFired(first.action), appUrl)
+    : groupedAlert(rows.map((row) => row.item), appUrl);
+}
+
+/** A webhook's body, as the Item stands now. Undefined when the Item has gone since `loadDue`. */
+async function webhookMessage(db: Db, row: DueDelivery): Promise<WebhookMessage | undefined> {
+  const [envelope] = await db
+    .select({
+      id: item.id,
+      sourceId: item.sourceId,
+      externalId: item.externalId,
+      url: item.url,
+      title: item.title,
+      author: item.author,
+      body: item.body,
+      publishedAt: item.publishedAt,
+      capturedAt: item.capturedAt,
+      language: item.language,
+      isBackfill: item.isBackfill,
+      summary: item.summary,
+    })
+    .from(item)
+    .where(eq(item.id, row.item.id));
+  if (envelope === undefined) return undefined;
+  const { severity, importance } = row.item;
+  return {
+    action: row.action.name,
+    item: envelope,
+    rating: severity === null || importance === null ? null : { severity, importance },
+    categories: await categoriesOf(db, row.item.id),
+    fields: await fieldsOf(db, row.item.id),
+    firedBecause: whyItFired(row.action),
+  };
 }
 
 /** Records an outcome, unless the Delivery was deleted during the send or another job recorded first. */
@@ -233,8 +284,8 @@ async function applySchedule(
 }
 
 /**
- * Sends the Deliveries as one message and records how it went on each. `recording` runs each outcome in
- * the transaction that's holding the Destination, or in one of its own when nothing is.
+ * Sends the Deliveries as one message through `transmit` and records how it went on each. `recording` runs
+ * each outcome in the transaction that's holding the Destination, or in one of its own when nothing is.
  */
 async function send(
   rows: DueDelivery[],
@@ -242,16 +293,12 @@ async function send(
   deps: DeliverDeps,
   now: () => Date,
   recording: (write: (tx: Tx) => Promise<void>) => Promise<void>,
+  transmit: () => Promise<void>,
 ) {
-  const [first] = rows;
-  if (first === undefined) return;
-  const message =
-    rows.length === 1
-      ? alertContent(first.item, first.sourceName, whyItFired(first.action), deps.appUrl)
-      : groupedAlert(rows.map((row) => row.item), deps.appUrl);
+  if (rows.length === 0) return;
 
   try {
-    await deps.senders[target.type].send(target, message);
+    await transmit();
   } catch (error) {
     const failed = now();
     const reason = storableMessage(error instanceof Error ? error.message : String(error)).slice(0, reasonLength);
@@ -323,11 +370,13 @@ async function send(
       ),
     );
   }
-  if (target.lastError !== null) {
-    await recording(async (tx) => {
-      await tx.update(destination).set({ lastError: null, lastErrorAt: null }).where(eq(destination.id, target.id));
-    });
-  }
+  // Not from `target`, which a webhook's unlocked send read before another send to it could fail.
+  await recording(async (tx) => {
+    await tx
+      .update(destination)
+      .set({ lastError: null, lastErrorAt: null })
+      .where(and(eq(destination.id, target.id), isNotNull(destination.lastError)));
+  });
 }
 
 /**
@@ -352,10 +401,21 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
   if (found === undefined) return;
   if (found.destination.type === "webhook") {
     const due = await loadDue(db, eq(delivery.id, deliveryId));
-    await send(due, found.destination, deps, now, (write) => db.transaction(write));
+    const [row] = due;
+    const message = row && (await webhookMessage(db, row));
+    if (message === undefined) return;
+    await send(
+      due,
+      found.destination,
+      deps,
+      now,
+      (write) => db.transaction(write),
+      () => deps.senders.webhook.send(found.destination, message),
+    );
     return;
   }
 
+  const sender = deps.senders[found.destination.type];
   await db.transaction(async (tx) => {
     const [target] = await tx
       .select()
@@ -370,6 +430,13 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
     const due = await loadDue(tx, eq(delivery.destinationId, target.id));
     if (due.length === 0) return;
     const sending = await applySchedule(tx, due, target, now(), deps.emailCap);
-    await send(sending, target, deps, now, (write) => write(tx));
+    await send(
+      sending,
+      target,
+      deps,
+      now,
+      (write) => write(tx),
+      () => sender.send(target, alertMessage(sending, deps.appUrl)),
+    );
   });
 }

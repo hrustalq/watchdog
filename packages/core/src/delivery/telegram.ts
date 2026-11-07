@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { createEgressFetch } from "../egress/egress.ts";
 import { decryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
-import { FinalSendError, RetryAfterSendError, type Sender } from "./deliver.ts";
+import { FinalSendError, RetryAfterSendError, type Sender, unreachable } from "./deliver.ts";
 import { groupedAlertText } from "./group.ts";
 
 const maxLength = 4096;
@@ -91,11 +91,7 @@ export function createTelegramSender(
           }),
         })
         .catch((error: unknown) => {
-          // undici's own message is only "fetch failed", and a connection tried on several addresses has
-          // a cause with no message. The guard's errors say what happened already.
-          if (!(error instanceof TypeError && error.cause instanceof Error)) throw error;
-          const why = error.cause.message === "" ? "" : `: ${error.cause.message}`;
-          throw new Error(`Telegram can't be reached${why}`);
+          throw unreachable(error, "Telegram");
         });
       if (response.ok) {
         // The message went, whatever happens to the rest of the answer. Reading it keeps the connection open.

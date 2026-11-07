@@ -1,5 +1,5 @@
 // The deterministic Extractor Rule stage (docs: Processing pipeline, "Stages"; Rule model).
-import { and, type Db, eq, extractorRule, inArray, itemCategory, itemField, type Tx } from "@watchdog/db";
+import { and, type Db, eq, extractorRule, inArray, itemCategory, itemField, sql, type Tx } from "@watchdog/db";
 import type { z } from "zod";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
 import { jsonPathValues, maxFieldValues } from "../rules/jsonpath.ts";
@@ -106,6 +106,17 @@ export async function categoriesOf(db: Pick<Db | Tx, "select">, itemId: string) 
     .from(itemCategory)
     .where(eq(itemCategory.itemId, itemId));
   return assigned.map((row) => row.category);
+}
+
+/** The Item's extracted fields, by name. */
+export async function fieldsOf(db: Pick<Db | Tx, "select">, itemId: string) {
+  const fields = await db
+    // Not the column itself: Drizzle parses a jsonb string again on read, which turns the string "2" into
+    // the number 2, and a Condition compares types.
+    .select({ name: itemField.name, value: sql<unknown>`${itemField.value}` })
+    .from(itemField)
+    .where(eq(itemField.itemId, itemId));
+  return Object.fromEntries(fields.map(({ name, value }) => [name, value]));
 }
 
 export const logSkippedRule = (

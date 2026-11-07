@@ -134,7 +134,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                   placeholder="https://example.com/watchdog"
                   value=""
                   error={form === "webhook" && error?.field === "url" ? error.message : undefined}
-                  help="Watchdog generates a signing secret and shows it once."
+                  help="Watchdog generates a signing secret and shows it once. The URL should answer directly, because a redirect can drop the request's body and signature."
                 />
                 <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
                   Add webhook

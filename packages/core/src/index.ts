@@ -15,6 +15,8 @@ export { deliver, type DeliverDeps, releaseDueDeliveries, type Sender } from "./
 export { type EmailCap, sendEmailCapNotice } from "./delivery/email-cap.ts";
 export { createEmailSender, emailDestinationConfig } from "./delivery/email.ts";
 export { createTelegramSender } from "./delivery/telegram.ts";
+export { verifyWebhookSignature } from "./delivery/verify-signature.ts";
+export { createWebhookSender } from "./delivery/webhook.ts";
 export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/capture.ts";
 export { runExtractorRuleByHand } from "./pipeline/manual-run.ts";
 export { processItem, type ProcessItemDeps } from "./pipeline/process-item.ts";

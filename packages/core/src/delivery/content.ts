@@ -14,6 +14,33 @@ export interface AlertMessage {
   why: string;
 }
 
+/**
+ * What a webhook's body says, apart from its version. The Item envelope leaves out `raw`, which can be large
+ * and is the Source's data.
+ */
+export interface WebhookMessage {
+  action: string;
+  item: {
+    id: string;
+    sourceId: string;
+    externalId: string;
+    url: string | null;
+    title: string | null;
+    author: string | null;
+    body: string;
+    publishedAt: Date | null;
+    capturedAt: Date;
+    language: string | null;
+    isBackfill: boolean;
+    summary: string | null;
+  };
+  rating: { severity: number; importance: number } | null;
+  categories: string[];
+  fields: Record<string, unknown>;
+  /** The Condition the Item met, in words. */
+  firedBecause: string;
+}
+
 export interface AlertItem {
   id: string;
   title: string | null;

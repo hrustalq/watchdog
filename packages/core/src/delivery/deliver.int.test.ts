@@ -1,3 +1,4 @@
+import { createServer, type IncomingHttpHeaders } from "node:http";
 import {
   action,
   actionDestination,
@@ -8,6 +9,8 @@ import {
   destination,
   eq,
   item,
+  itemCategory,
+  itemField,
   itemLog,
   migrate,
   source,
@@ -17,11 +20,14 @@ import {
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
+import { createEgressFetch } from "../egress/egress.ts";
 import { encryptSecret } from "../secrets/secrets.ts";
 import { deliver, type Destination, FinalSendError, RetryAfterSendError, type Sender } from "./deliver.ts";
-import type { AlertMessage } from "./content.ts";
+import type { AlertMessage, WebhookMessage } from "./content.ts";
 import type { GroupedAlert } from "./group.ts";
 import { createTelegramSender } from "./telegram.ts";
+import { verifyWebhookSignature } from "./verify-signature.ts";
+import { createWebhookSender } from "./webhook.ts";
 
 /** The value, which the test expects to be there. */
 function present<T>(value: T | undefined): T {
@@ -30,6 +36,8 @@ function present<T>(value: T | undefined): T {
 }
 
 const hour = 60 * 60 * 1000;
+
+type AnyMessage = AlertMessage | GroupedAlert | WebhookMessage;
 
 describe("deliver", () => {
   let postgres: TestPostgres;
@@ -108,10 +116,10 @@ describe("deliver", () => {
   }
 
   /** The deps, recording what the sender got and which retries were queued. */
-  function recording(send: Sender["send"] = () => Promise.resolve()) {
-    const sent: { destination: Destination; message: AlertMessage | GroupedAlert }[] = [];
+  function recording(send: Sender<AnyMessage>["send"] = () => Promise.resolve()) {
+    const sent: { destination: Destination; message: AnyMessage }[] = [];
     const retries: { deliveryId: string; at: Date }[] = [];
-    const sender: Sender = {
+    const sender: Sender<AnyMessage> = {
       send: async (target, message) => {
         sent.push({ destination: target, message });
         await send(target, message);
@@ -440,6 +448,200 @@ describe("deliver", () => {
     });
   });
 
+  describe("through the webhook sender and the egress guard, with a local receiver", () => {
+    const encryptionKey = Buffer.alloc(32, 7);
+    const secret = "a-webhook-secret";
+    const answer = { status: 204, text: "" };
+    const received: { headers: IncomingHttpHeaders; method: string | undefined; body: string }[] = [];
+    let port: number;
+
+    beforeAll(async () => {
+      // On 127.0.0.1, which only `receiver.test` is allowlisted to reach, as in the egress guard's own tests.
+      const receiver = createServer((request, response) => {
+        const chunks: Buffer[] = [];
+        request.on("data", (chunk: Buffer) => chunks.push(chunk));
+        request.on("end", () => {
+          received.push({
+            headers: request.headers,
+            method: request.method,
+            body: Buffer.concat(chunks).toString(),
+          });
+          response.statusCode = answer.status;
+          response.end(answer.text);
+        });
+      });
+      await new Promise<void>((listening) => receiver.listen(0, "127.0.0.1", listening));
+      port = z.object({ port: z.number() }).parse(receiver.address()).port;
+      return () => void receiver.close();
+    });
+
+    const webhook = createWebhookSender({
+      encryptionKey,
+      mode: "hosted",
+      fetch: createEgressFetch(
+        { mode: "self-hosted", egressAllowlist: [{ type: "host", host: "receiver.test" }] },
+        {
+          lookup: (host) =>
+            Promise.resolve([{ address: host === "receiver.test" ? "127.0.0.1" : "10.0.0.5", family: 4 }]),
+        },
+      ),
+    });
+
+    /** A Delivery to a webhook Destination, and deps that send it through the real sender. */
+    async function hook(itemValues: Partial<typeof item.$inferInsert> = {}, host = "receiver.test") {
+      received.length = 0;
+      Object.assign(answer, { status: 204, text: "" });
+      const seeded = await seed(itemValues);
+      await db
+        .update(destination)
+        .set({
+          type: "webhook",
+          config: { url: `http://${host}:${String(port)}/hook` },
+          secretCiphertext: encryptSecret(secret, encryptionKey),
+        })
+        .where(eq(destination.id, seeded.destinationId));
+      const { deps, retries } = recording();
+      return { seeded, retries, deps: { ...deps, senders: { ...deps.senders, webhook } } };
+    }
+
+    it("sends a delivery a receiver can verify, and whose changed body it rejects", async () => {
+      const { seeded, deps } = await hook();
+
+      await deliver(db, seeded.deliveryId, deps);
+
+      expect(received).toHaveLength(1);
+      const [request] = received;
+      const timestamp = z.string().parse(request?.headers["x-watchdog-timestamp"]);
+      const signature = z.string().parse(request?.headers["x-watchdog-signature"]);
+      const body = request?.body ?? "";
+      expect(request?.method).toBe("POST");
+      expect(request?.headers["content-type"]).toBe("application/json");
+      expect(request?.headers["user-agent"]).toBe("Watchdog");
+      expect(signature).toMatch(/^sha256=[0-9a-f]{64}$/);
+      expect(verifyWebhookSignature({ secret, timestamp, body, signature })).toBe(true);
+      expect(verifyWebhookSignature({ secret, timestamp, body: body.replace("Patch", "Ignore"), signature })).toBe(false);
+      expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent", attempts: 1 });
+      expect(await actLog(seeded.itemId)).toMatchObject([{ message: "Sent to ops-chat" }]);
+    });
+
+    it("sends the body the docs describe, with the Item's Categories and fields and without raw", async () => {
+      const { seeded, deps } = await hook({
+        raw: { private: "the Source's own payload" },
+        publishedAt: new Date("2026-11-07T10:00:00.000Z"),
+        capturedAt: new Date("2026-11-07T10:05:00.000Z"),
+      });
+      await db.insert(itemCategory).values({ itemId: seeded.itemId, category: "security-advisory" });
+      // A jsonb string that reads as a number has to stay a string.
+      await db.insert(itemField).values([
+        { itemId: seeded.itemId, name: "cve", value: "CVE-2026-1" },
+        { itemId: seeded.itemId, name: "version", value: "2" },
+        { itemId: seeded.itemId, name: "count", value: 3 },
+      ]);
+
+      await deliver(db, seeded.deliveryId, deps);
+
+      const body = received[0]?.body ?? "";
+      expect(body).not.toContain("the Source's own payload");
+      expect(JSON.parse(body)).toEqual({
+        version: 1,
+        action: "critical",
+        item: {
+          id: seeded.itemId,
+          sourceId: seeded.sourceId,
+          externalId: "one",
+          url: "https://news.test/one",
+          title: "A security advisory",
+          author: null,
+          body: "An entry.",
+          publishedAt: "2026-11-07T10:00:00.000Z",
+          capturedAt: "2026-11-07T10:05:00.000Z",
+          language: null,
+          isBackfill: false,
+          summary: "Patch now.",
+        },
+        rating: { severity: 5, importance: 3 },
+        categories: ["security-advisory"],
+        fields: { cve: "CVE-2026-1", version: "2", count: 3 },
+        firedBecause: "Severity is at least 4",
+      });
+    });
+
+    it("sends a null rating for an unrated Item", async () => {
+      const { seeded, deps } = await hook({ severity: null, importance: null });
+
+      await deliver(db, seeded.deliveryId, deps);
+
+      expect(JSON.parse(received[0]?.body ?? "")).toMatchObject({ rating: null });
+      expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent" });
+    });
+
+    it("retries a 500, and sends again with a new signature when the receiver recovers", async () => {
+      const { seeded, retries, deps } = await hook();
+      answer.status = 500;
+      const failedAt = new Date();
+
+      await deliver(db, seeded.deliveryId, { ...deps, now: () => failedAt });
+
+      const retryAt = new Date(failedAt.getTime() + 30_000);
+      expect(retries).toEqual([{ deliveryId: seeded.deliveryId, at: retryAt }]);
+      expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "queued", attempts: 1, nextAttemptAt: retryAt });
+      expect(await actLog(seeded.itemId)).toMatchObject([
+        { message: `Sending to ops-chat failed: the receiver answered 500, retrying at ${retryAt.toISOString()}` },
+      ]);
+
+      answer.status = 200;
+      await db.update(delivery).set({ nextAttemptAt: new Date(0) }).where(eq(delivery.id, seeded.deliveryId));
+      await deliver(db, seeded.deliveryId, deps);
+
+      expect(received).toHaveLength(2);
+      const [, second] = received;
+      expect(
+        verifyWebhookSignature({
+          secret,
+          timestamp: z.string().parse(second?.headers["x-watchdog-timestamp"]),
+          body: second?.body ?? "",
+          signature: z.string().parse(second?.headers["x-watchdog-signature"]),
+        }),
+      ).toBe(true);
+      expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent", attempts: 2 });
+    });
+
+    it("fails a 404 at once with the status in the Log and on the Destination, and keeps none of its answer", async () => {
+      const { seeded, retries, deps } = await hook();
+      Object.assign(answer, { status: 404, text: "the receiver's private data" });
+
+      await deliver(db, seeded.deliveryId, deps);
+
+      expect(retries).toEqual([]);
+      const row = await rowOf(seeded.deliveryId);
+      expect(row).toMatchObject({ status: "failed", attempts: 1, nextAttemptAt: null });
+      const log = await actLog(seeded.itemId);
+      expect(log).toMatchObject([
+        { message: "Sending to ops-chat failed: the receiver answered 404. It won't be retried" },
+      ]);
+      const target = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
+      expect(target?.lastError).toBe("the receiver answered 404");
+      expect(JSON.stringify([row, log, target])).not.toContain("private data");
+    });
+
+    it("fails a URL that resolves to a private address at once, without reaching the receiver", async () => {
+      const { seeded, retries, deps } = await hook({}, "internal.test");
+
+      await deliver(db, seeded.deliveryId, deps);
+
+      expect(received).toEqual([]);
+      expect(retries).toEqual([]);
+      expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "failed", attempts: 1 });
+      const reason =
+        "the URL, or a redirect from it, goes to a private, local or non-web address, which Watchdog doesn't call";
+      expect(await actLog(seeded.itemId)).toMatchObject([
+        { message: `Sending to ops-chat failed: ${reason}. It won't be retried` },
+      ]);
+      const target = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
+      expect(target?.lastError).toBe(reason);
+    });
+  });
+
   it("clears the Destination's error when a later send works", async () => {
     const seeded = await seed();
     await db
@@ -447,6 +649,22 @@ describe("deliver", () => {
       .set({ lastError: "Chat unreachable", lastErrorAt: new Date() })
       .where(eq(destination.id, seeded.destinationId));
     const { deps } = recording();
+
+    await deliver(db, seeded.deliveryId, deps);
+
+    const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
+    expect(shown).toMatchObject({ lastError: null, lastErrorAt: null });
+  });
+
+  it("clears an error that another send to the Destination recorded while this one was on its way", async () => {
+    const seeded = await seed();
+    await db.update(destination).set({ type: "webhook" }).where(eq(destination.id, seeded.destinationId));
+    const { deps } = recording(async () => {
+      await db
+        .update(destination)
+        .set({ lastError: "The receiver answered 404", lastErrorAt: new Date() })
+        .where(eq(destination.id, seeded.destinationId));
+    });
 
     await deliver(db, seeded.deliveryId, deps);
 
@@ -901,7 +1119,7 @@ describe("deliver", () => {
         await deliver(db, other.deliveryId, deps);
 
         expect(sent).toHaveLength(2);
-        expect(present(sent[0]).message).toHaveProperty("why");
+        expect(present(sent[0]).message).toHaveProperty("firedBecause", "Severity is at least 4");
       });
 
       it("retries a failed group's rows together, and sends them as one message", async () => {

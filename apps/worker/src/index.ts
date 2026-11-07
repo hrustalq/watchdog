@@ -5,6 +5,7 @@ import {
   createEmailSender,
   createMailer,
   createTelegramSender,
+  createWebhookSender,
   loadConfig,
   sendEmailCapNotice,
 } from "@watchdog/core";
@@ -46,8 +47,6 @@ const deliveryDb = createDb(config.databaseUrl);
 const egressFetch = createEgressFetch(config);
 const mailer = createMailer(config);
 const alertFrom = config.smtp?.alertFrom;
-// #194 replaces this. Until then an attempt fails, and the Item's Log says why.
-const noSender = { send: () => Promise.reject(new Error("this type of Destination can't send yet")) };
 await startDelivery(deliveryDb, boss, {
   senders: {
     telegram: createTelegramSender(config.telegram.botToken, {
@@ -55,7 +54,7 @@ await startDelivery(deliveryDb, boss, {
       encryptionKey: config.encryptionKey,
     }),
     email: createEmailSender(mailer, alertFrom),
-    webhook: noSender,
+    webhook: createWebhookSender({ fetch: egressFetch, encryptionKey: config.encryptionKey, mode: config.mode }),
   },
   appUrl: config.auth.url,
   ...(config.mode === "hosted" && {
