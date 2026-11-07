@@ -13,12 +13,12 @@ export {
 } from "./egress/egress.ts";
 export { deliver, type DeliverDeps, purgeSentMessages, releaseDueDeliveries, type Sender } from "./delivery/deliver.ts";
 export { type EmailCap, sendEmailCapNotice } from "./delivery/email-cap.ts";
-export { createEmailSender, emailDestinationConfig } from "./delivery/email.ts";
-export { createTelegramSender } from "./delivery/telegram.ts";
+export { emailDestinationConfig } from "./delivery/email.ts";
+export { createSenders } from "./delivery/senders.ts";
+export { sendTestAlert, type TestAlertDeps, type TestAlertResult } from "./delivery/test-alert.ts";
 export { botUsername, runBot } from "./telegram/bot-runner.ts";
 export { issueLinkCode, linkChat, linkCodeMinutes, liveLinkCode } from "./telegram/link.ts";
 export { verifyWebhookSignature } from "./delivery/verify-signature.ts";
-export { createWebhookSender } from "./delivery/webhook.ts";
 export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/capture.ts";
 export { runExtractorRuleByHand } from "./pipeline/manual-run.ts";
 export { processItem, type ProcessItemDeps } from "./pipeline/process-item.ts";

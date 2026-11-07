@@ -26,6 +26,7 @@ import {
   removeDestinationAction,
   replaceSecretAction,
   sendAgainAction,
+  testDestinationAction,
 } from "./actions";
 import { FieldError } from "./field-error";
 
@@ -60,6 +61,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
   const refused = await actionsOnlyOn(db, workspace.id, param("refused"));
   const refusedName = destinations.find(({ id }) => id === param("refused"))?.name;
   const left = await actionNames(db, workspace.id, param("left").split(","));
+  const tested = destinations.find(({ id }) => id === param("test"));
   // Last, because a read that fails after this would lose a secret nobody saw.
   const secret = await revealWebhookSecret(db, destinationDeps.encryptionKey, workspace.id, param("secret"));
 
@@ -107,6 +109,15 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
           refusedName={refusedName}
           mailGoesToLog={mailGoesToLog}
         />
+        {tested === undefined ? null : (
+          <TestOutcome
+            key={`${tested.id}:${tested.lastErrorAt?.toISOString() ?? "sent"}`}
+            tested={tested}
+            capped={param("capped") !== ""}
+            timezone={workspace.timezone}
+            mailGoesToLog={mailGoesToLog}
+          />
+        )}
 
         <section aria-labelledby="add-destination" className="flex flex-col gap-3">
           <h2 id="add-destination" className="text-title">
@@ -226,7 +237,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                       <p className="flex items-start gap-2 text-sm text-alarm">
                         <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
                         <span className="min-w-0 break-words">
-                          Last delivery failed
+                          Last send failed
                           {row.lastErrorAt === null ? null : (
                             <>
                               {" "}
@@ -239,6 +250,14 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                     )}
                   </div>
                   <div className="flex shrink-0 flex-col gap-2 sm:max-w-64 sm:items-end">
+                    {row.state === "confirmed" || row.state === "ready" ? (
+                      <form action={testDestinationAction.bind(null, row.id)}>
+                        <SubmitButton variant="outline" pendingLabel="Sending…" className="w-auto">
+                          Send a test
+                          <span className="sr-only"> to {row.name}</span>
+                        </SubmitButton>
+                      </form>
+                    ) : null}
                     {row.state === "waiting-confirmation" ? (
                       <form action={sendAgainAction.bind(null, row.id)}>
                         <SubmitButton variant="outline" pendingLabel="Sending…" className="w-auto">
@@ -477,6 +496,45 @@ function Outcome({
     );
   }
   return null;
+}
+
+/**
+ * How the last test went, read from the row: its error is the sender's, written by the test. Keyed by
+ * the outcome, so a test that ends differently from the last is announced again.
+ */
+function TestOutcome({
+  tested: { name, type, lastError },
+  capped,
+  timezone,
+  mailGoesToLog,
+}: {
+  tested: { name: string; type: string; lastError: string | null };
+  capped: boolean;
+  timezone: string;
+  mailGoesToLog: boolean;
+}) {
+  if (capped) {
+    return (
+      <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+        The test to {name} wasn&apos;t sent: this Workspace has sent the hosted limit of 50 alert mails for today. Alert
+        mail goes out again after midnight, {timezone} time.
+      </Notice>
+    );
+  }
+  if (lastError !== null) {
+    return (
+      <Notice role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-alarm">
+        The test to {name} failed: {lastError}. Alerts to it fail the same way until that&apos;s fixed, so fix it and send
+        another test.
+      </Notice>
+    );
+  }
+  return (
+    <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+      Test sent to {name}.
+      {type === "email" && mailGoesToLog ? " This install has no mail server, so the mail is in the web container's log." : ""}
+    </Notice>
+  );
 }
 
 /** A control whose result can't be undone, opened first. A disclosure works without JavaScript. */

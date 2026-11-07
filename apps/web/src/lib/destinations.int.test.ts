@@ -18,7 +18,7 @@ import {
   workspace,
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
-import { decryptSecret, egressPolicy, linkChat } from "@watchdog/core";
+import { decryptSecret, egressPolicy, linkChat, type TestAlertDeps } from "@watchdog/core";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   actionNames,
@@ -37,6 +37,7 @@ import {
   sendConfirmationAgain,
   telegramLinkCookieValue,
   telegramLinkInCookie,
+  testDestination,
 } from "./destinations.ts";
 
 const sent: { to: string; subject: string; text: string; from?: string | undefined }[] = [];
@@ -431,6 +432,39 @@ describe("Destinations", () => {
     it("treats a malformed id as a missing Destination", async () => {
       expect(await revealWebhookSecret(db, deps.encryptionKey, ours, "not-a-uuid")).toBeUndefined();
       expect(await replaceWebhookSecret(db, deps.encryptionKey, ours, "not-a-uuid")).toBe(false);
+    });
+  });
+
+  describe("sending a test", () => {
+    const tested: string[] = [];
+    const recording = { send: (target: { name: string }) => Promise.resolve(void tested.push(target.name)) };
+    const testDeps: TestAlertDeps = {
+      senders: { telegram: recording, email: recording, webhook: recording },
+      appUrl: "http://localhost:3000",
+      emailCapped: false,
+    };
+    const nameOf = async (id: string) =>
+      (await db.select({ name: destination.name }).from(destination).where(eq(destination.id, id)))[0]?.name;
+
+    it("sends to a confirmed address and a webhook", async () => {
+      const email = await addEmail(owner.email);
+      const hook = await addWebhookDestination(db, deps, ours, { name: newName(), url: "https://hooks.example.com/t" });
+      if (!("destination" in hook)) throw new Error("Not added");
+
+      expect(await testDestination(db, testDeps, ours, email.destination.id)).toEqual({ status: "sent" });
+      expect(await testDestination(db, testDeps, ours, hook.destination.id)).toEqual({ status: "sent" });
+      expect(tested.slice(-2)).toEqual([await nameOf(email.destination.id), await nameOf(hook.destination.id)]);
+    });
+
+    it("sends nothing to an unconfirmed address, another Workspace's Destination or a malformed id", async () => {
+      const waiting = await addEmail();
+      const confirmed = await addEmail(owner.email);
+      const before = tested.length;
+
+      expect(await testDestination(db, testDeps, ours, waiting.destination.id)).toBeUndefined();
+      expect(await testDestination(db, testDeps, theirs, confirmed.destination.id)).toBeUndefined();
+      expect(await testDestination(db, testDeps, ours, "not-a-uuid")).toBeUndefined();
+      expect(tested).toHaveLength(before);
     });
   });
 

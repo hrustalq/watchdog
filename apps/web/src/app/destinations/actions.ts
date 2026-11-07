@@ -15,6 +15,7 @@ import {
   sendConfirmationAgain,
   telegramLinkCookie,
   telegramLinkCookieValue,
+  testDestination,
 } from "@/lib/destinations";
 import { requireWorkspace, server } from "@/lib/server";
 
@@ -98,6 +99,19 @@ export async function replaceSecretAction(destinationId: unknown) {
   const id = typeof destinationId === "string" ? destinationId : "";
   const replaced = await replaceWebhookSecret(db, destinationDeps.encryptionKey, workspace.id, id);
   back(replaced ? { secret: id } : { missing: "1" });
+}
+
+/**
+ * Sends now, inside the action, so a failure isn't retried and the user can press again. The page reads
+ * how it went from the row's `last_error`, so no sender's words travel in the URL.
+ */
+export async function testDestinationAction(destinationId: unknown) {
+  const { workspace } = await requireWorkspace();
+  const { db, testAlertDeps } = server();
+  const id = typeof destinationId === "string" ? destinationId : "";
+  const result = await testDestination(db, testAlertDeps, workspace.id, id);
+  if (result === undefined) back({ missing: "1" });
+  back(result.status === "capped" ? { test: id, capped: "1" } : { test: id });
 }
 
 export async function removeDestinationAction(destinationId: unknown) {

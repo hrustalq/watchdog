@@ -38,7 +38,11 @@ function alertText({ title, source, rating, summary, link, why }: AlertMessage) 
   return `${body.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/, "")}…${ending}`;
 }
 
-/** Waits for a chat's turn. One worker sends, so these limits can be kept in memory. */
+/**
+ * Waits for a chat's turn. One worker sends alerts, so these limits can be kept in memory. The web app's
+ * test alerts have a limiter of their own, so a test within a second of an alert to the same chat can get
+ * a 429, which only that test or one attempt of the alert pays for.
+ */
 function floodLimiter() {
   let botFreeAt = 0;
   const chatFreeAt = new Map<string, number>();

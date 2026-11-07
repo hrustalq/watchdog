@@ -8,6 +8,8 @@ import {
   issueLinkCode,
   liveLinkCode,
   type Mailer,
+  sendTestAlert,
+  type TestAlertDeps,
   urlIpLiteral,
 } from "@watchdog/core";
 import {
@@ -21,6 +23,7 @@ import {
   eq,
   gt,
   inArray,
+  isNotNull,
   isNull,
   itemLog,
   lte,
@@ -284,6 +287,25 @@ export async function replaceWebhookSecret(db: Db, encryptionKey: Buffer, worksp
     .where(isWebhook(workspaceId, destinationId))
     .returning({ id: destination.id });
   return replaced.length > 0;
+}
+
+/**
+ * Sends a test alert to a confirmed Destination, or to a webhook, which needs no confirmation. Undefined
+ * for anything else in the Workspace, as an unconfirmed address receives nothing.
+ */
+export async function testDestination(db: Db, deps: TestAlertDeps, workspaceId: string, destinationId: string) {
+  if (!isUuid(destinationId)) return undefined;
+  const [target] = await db
+    .select()
+    .from(destination)
+    .where(
+      and(
+        eq(destination.workspaceId, workspaceId),
+        eq(destination.id, destinationId),
+        or(eq(destination.type, "webhook"), isNotNull(destination.confirmedAt)),
+      ),
+    );
+  return target && sendTestAlert(db, target, deps);
 }
 
 /** The enabled Actions that would have nowhere to deliver without this Destination. */
