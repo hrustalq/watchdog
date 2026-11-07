@@ -126,7 +126,11 @@ async function RuleLists() {
         heading="Actions"
         note={actionApplies}
         empty="None yet. Nothing leaves the Feed until you add one."
-        rules={actions.map((action) => ({ ...action, detail: <ActionDetail action={action} /> }))}
+        rules={actions.map((action) => ({
+          ...action,
+          detail: <ActionDetail action={action} />,
+          noDestination: action.destinations.length === 0,
+        }))}
         hasModel={hasModel}
       />
     </>
@@ -140,6 +144,8 @@ interface RuleRow {
   enabled: boolean;
   /** What the row says beyond its name and kind. */
   detail?: React.ReactNode;
+  /** An Action left with none can't be enabled until it has one. */
+  noDestination?: boolean;
 }
 
 function RuleList({
@@ -200,7 +206,7 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
         ) : null}
       </div>
       <div className="flex shrink-0 items-start gap-2">
-        <EnableSwitch type={type} rule={rule} needsModel={needsModel} />
+        <EnableSwitch type={type} rule={rule} locked={needsModel || rule.noDestination === true} />
         <DeleteRule type={type} rule={rule} />
       </div>
     </li>
@@ -228,7 +234,7 @@ function ActionDetail({
       )}
       {schedule === null ? null : (
         <p className="text-sm text-muted-foreground">
-          Sent on <span className="font-mono text-[0.8125rem]">{schedule}</span>
+          Schedule <span className="font-mono text-[0.8125rem]">{schedule}</span>
         </p>
       )}
       {waiting.length === 0 ? null : (
@@ -254,15 +260,15 @@ function Warning({ children }: { children: React.ReactNode }) {
 }
 
 /** A form with one button, so it works without JavaScript. The word says what color alone wouldn't. */
-function EnableSwitch({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; needsModel: boolean }) {
-  const on = rule.enabled && !needsModel;
+function EnableSwitch({ type, rule, locked }: { type: RuleType; rule: RuleRow; locked: boolean }) {
+  const on = rule.enabled && !locked;
   return (
     <form action={setRuleEnabledAction.bind(null, type, rule.id, !rule.enabled)}>
       <button
         type="submit"
         role="switch"
         aria-checked={on}
-        disabled={needsModel}
+        disabled={locked}
         className="group flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-muted/50"
       >
         <span className="sr-only">{rule.name}: </span>

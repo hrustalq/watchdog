@@ -17,11 +17,16 @@ import {
   classifier,
   type Db,
   desc,
+  delivery,
   destination,
+  digestItem,
   eq,
   extractorRule,
+  inArray,
   isNull,
+  itemLog,
   modelConfig,
+  type SQL,
   type Tx,
   workspace,
 } from "@watchdog/db";
@@ -84,21 +89,16 @@ async function listActions(db: Db, workspaceId: string) {
   });
 }
 
-/**
- * The Workspace's Destinations. Saving holds them until it commits, as a send does, so one can't be
- * removed between the check and the foreign key. Before the Action's row, in the order
- * `removeDestination` takes them, so the two can't deadlock.
- */
+/** The Workspace's Destinations, newest first as on the Destinations screen. */
 function destinationsIn(reader: Pick<Tx, "select">, workspaceId: string) {
   return reader
     .select({ id: destination.id, name: destination.name, type: destination.type, confirmedAt: destination.confirmedAt })
     .from(destination)
     .where(eq(destination.workspaceId, workspaceId))
-    .orderBy(desc(destination.createdAt), desc(destination.id))
-    .for("key share");
+    .orderBy(desc(destination.createdAt), desc(destination.id));
 }
 
-/** What the Action editor offers, newest first as on the Destinations screen. */
+/** What the Action editor offers. */
 export async function destinationChoices(db: Db, workspaceId: string): Promise<DestinationChoice[]> {
   const rows = await destinationsIn(db, workspaceId);
   return rows.map((row) => ({ name: row.name, type: row.type, confirmed: isConfirmed(row) }));
@@ -243,15 +243,14 @@ function parseRule(text: string, target: RuleTarget | null): ParsedRule | { prob
 }
 
 /**
- * What the Workspace refuses about this rule: its name, an Extractor Rule's field names, and an
- * Action's Destinations and the mode's minimum for its schedule.
+ * What the Workspace's other rules refuse about this one: its name, and an Extractor Rule's field
+ * names.
  */
 async function conflicts(
   db: Pick<Tx, "select">,
   workspaceId: string,
   parsed: ParsedRule,
   ownId: string | undefined,
-  mode: Mode,
 ) {
   const { rule, type, name } = parsed;
   const table = tables[type];
@@ -264,9 +263,6 @@ async function conflicts(
   const problems: RuleProblem[] = [];
   if (others.some((other) => other.name === name)) {
     problems.push({ path: type, message: `This Workspace already has ${aRule(type)} named “${name}”.` });
-  }
-  if ("action" in rule) {
-    return [...problems, ...actionProblems(rule, await destinationsIn(db, workspaceId), mode)];
   }
   if (!("extractor" in rule)) return problems;
 
@@ -297,18 +293,59 @@ export async function problemsInDraft(
 ) {
   const parsed = parseRule(text, target);
   if ("problems" in parsed) return parsed.problems;
-  return conflicts(db, workspaceId, parsed, target?.id, mode);
+  const problems = await conflicts(db, workspaceId, parsed, target?.id);
+  if (!("action" in parsed.rule)) return problems;
+  return [...problems, ...actionProblems(parsed.rule, await destinationsIn(db, workspaceId), mode)];
 }
 
 const missing = { problems: [{ path: "", message: "This rule doesn't exist any more." }] };
 
 /**
- * Stores an Action with its Destinations by id (the YAML shows their names, and renaming one changes
- * nothing here), and points the foreign keys at the same set. The checks have passed and hold the
- * Destinations, so every name has an id.
+ * Takes out Deliveries that will now never be sent, and says so in their Items' Logs, so a Log doesn't
+ * end on "Held until". The lock waits for a send in progress, whose row then no longer counts as unsent.
  */
-async function storeAction(tx: Tx, workspaceId: string, target: RuleTarget | null, rule: Action) {
-  const ids = new Map((await destinationsIn(tx, workspaceId)).map(({ id, name }) => [name, id]));
+async function dropUnsent(tx: Tx, which: SQL | undefined, message: string) {
+  const unsent = await tx
+    .select({ id: delivery.id, itemId: delivery.itemId, actionId: delivery.actionId, destinationId: delivery.destinationId })
+    .from(delivery)
+    .where(and(which, inArray(delivery.status, ["queued", "held", "grouped"])))
+    .for("update");
+  if (unsent.length === 0) return;
+  await tx.insert(itemLog).values(
+    unsent.map(({ itemId, actionId, destinationId }) => ({
+      itemId,
+      stage: "act" as const,
+      message,
+      data: { actionId, destinationId },
+    })),
+  );
+  await tx.delete(delivery).where(inArray(delivery.id, unsent.map(({ id }) => id)));
+}
+
+/** As `dropUnsent`, for the Items a Digest has collected and not sent. */
+async function dropCollected(tx: Tx, actionId: string, message: string) {
+  const collected = await tx.delete(digestItem).where(eq(digestItem.actionId, actionId)).returning({ itemId: digestItem.itemId });
+  if (collected.length === 0) return;
+  await tx.insert(itemLog).values(
+    collected.map(({ itemId }) => ({ itemId, stage: "act" as const, message, data: { actionId } })),
+  );
+}
+
+type HeldDestination = Awaited<ReturnType<typeof destinationsIn>>[number];
+
+/**
+ * Stores an Action with its Destinations by id (the YAML shows their names, and renaming one changes
+ * nothing here), and points the foreign keys at the same set. The checks have passed on `held`, so
+ * every name has an id. What it was still waiting to send where it no longer goes never goes out.
+ */
+async function storeAction(
+  tx: Tx,
+  workspaceId: string,
+  target: RuleTarget | null,
+  rule: Action,
+  held: HeldDestination[],
+) {
+  const ids = new Map(held.map(({ id, name }) => [name, id]));
   const destinationIds = rule.destinations.flatMap((name) => ids.get(name) ?? []);
   const values = { name: rule.action, kind: rule.kind, definition: { ...rule, destinations: destinationIds } };
   const [row] =
@@ -320,8 +357,21 @@ async function storeAction(tx: Tx, workspaceId: string, target: RuleTarget | nul
           .where(and(eq(action.workspaceId, workspaceId), eq(action.id, target.id)))
           .returning({ id: action.id });
   if (row === undefined) return undefined;
-  await tx.delete(actionDestination).where(eq(actionDestination.actionId, row.id));
+
+  const dropped = await tx.delete(actionDestination).where(eq(actionDestination.actionId, row.id)).returning();
   await tx.insert(actionDestination).values(destinationIds.map((destinationId) => ({ actionId: row.id, destinationId })));
+  for (const { destinationId } of dropped) {
+    if (destinationIds.includes(destinationId)) continue;
+    const name = held.find(({ id }) => id === destinationId)?.name ?? destinationId;
+    await dropUnsent(
+      tx,
+      and(eq(delivery.actionId, row.id), eq(delivery.destinationId, destinationId)),
+      `Not sent: the Action ${rule.action} no longer goes to ${name}`,
+    );
+  }
+  if (rule.kind !== "digest") {
+    await dropCollected(tx, row.id, `Not sent: the Action ${rule.action} isn't a Digest any more`);
+  }
   return row;
 }
 
@@ -366,12 +416,17 @@ export async function saveRule(
     // so a capture inserting under this Workspace isn't held up.
     await tx.select({ id: workspace.id }).from(workspace).where(eq(workspace.id, workspaceId)).for("no key update");
 
-    const problems = await conflicts(tx, workspaceId, parsed, target?.id, mode);
+    const others = await conflicts(tx, workspaceId, parsed, target?.id);
+    // Held until this commits, as a send holds them, so one can't be removed between the check and the
+    // foreign key. Before the Action's row, in the order `removeDestination` takes them, so the two
+    // can't deadlock.
+    const held = "action" in rule ? await destinationsIn(tx, workspaceId).for("key share") : [];
+    const problems = "action" in rule ? [...others, ...actionProblems(rule, held, mode)] : others;
     if (problems.length > 0) return { problems };
 
     const row =
       "action" in rule
-        ? await storeAction(tx, workspaceId, target, rule)
+        ? await storeAction(tx, workspaceId, target, rule, held)
         : await storeRule(
             tx,
             workspaceId,
@@ -383,10 +438,34 @@ export async function saveRule(
   });
 }
 
-/** Returns false when the Workspace has no such rule, which includes another Workspace's. */
+/**
+ * Whether an Action has a Destination to enable it with (docs: Actions and delivery, "Deleting a
+ * Destination"). Holds the Action, because `removeDestination` counts enabled Actions while it holds
+ * them, so one can't be enabled just as it loses its last Destination.
+ */
+async function canEnableAction(tx: Tx, workspaceId: string, id: string) {
+  const [row] = await tx
+    .select({ id: action.id })
+    .from(action)
+    .where(and(eq(action.workspaceId, workspaceId), eq(action.id, id)))
+    .for("no key update");
+  return row !== undefined && (await tx.$count(actionDestination, eq(actionDestination.actionId, id))) > 0;
+}
+
+/**
+ * Returns false when the Workspace has no such rule, which includes another Workspace's, and when an
+ * Action has no Destination to enable it with.
+ */
 export async function setRuleEnabled(db: Db, workspaceId: string, type: RuleType, id: string, enabled: boolean) {
   if (!isUuid(id)) return false;
   const table = tables[type];
+  if (type === "action" && enabled) {
+    return db.transaction(async (tx) => {
+      if (!(await canEnableAction(tx, workspaceId, id))) return false;
+      await tx.update(action).set({ enabled }).where(eq(action.id, id));
+      return true;
+    });
+  }
   const changed = await db
     .update(table)
     .set({ enabled })
@@ -396,15 +475,26 @@ export async function setRuleEnabled(db: Db, workspaceId: string, type: RuleType
 }
 
 /**
- * Deletes the rule. The Categories and fields it wrote stay on their Items. Returns false when the
- * Workspace has no such rule, which includes another Workspace's.
+ * Deletes the rule. The Categories and fields it wrote stay on their Items, and an Action's Log rows on
+ * theirs, with one more for whatever it hadn't sent yet. Returns false when the Workspace has no such
+ * rule, which includes another Workspace's.
  */
 export async function removeRule(db: Db, workspaceId: string, type: RuleType, id: string) {
   if (!isUuid(id)) return false;
   const table = tables[type];
-  const removed = await db
-    .delete(table)
-    .where(and(eq(table.workspaceId, workspaceId), eq(table.id, id)))
-    .returning({ id: table.id });
-  return removed.length > 0;
+  return db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ name: table.name })
+      .from(table)
+      .where(and(eq(table.workspaceId, workspaceId), eq(table.id, id)))
+      .for("update");
+    if (row === undefined) return false;
+    if (type === "action") {
+      const message = `Not sent: the Action ${row.name} was deleted`;
+      await dropUnsent(tx, eq(delivery.actionId, id), message);
+      await dropCollected(tx, id, message);
+    }
+    await tx.delete(table).where(eq(table.id, id));
+    return true;
+  });
 }

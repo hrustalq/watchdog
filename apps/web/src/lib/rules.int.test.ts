@@ -10,10 +10,12 @@ import {
   type Db,
   delivery,
   destination,
+  digestItem,
   eq,
   extractorRule,
   item,
   itemCategory,
+  itemLog,
   migrate,
   modelConfig,
   source,
@@ -529,6 +531,112 @@ describe("Rules", () => {
       const pointedAt = await db.select().from(actionDestination).where(eq(actionDestination.actionId, id));
       expect(JSON.stringify(row?.definition)).not.toContain(mine.id);
       expect(pointedAt.map(({ destinationId }) => destinationId)).toEqual([other.id]);
+    });
+
+    describe("what it hasn't sent yet", () => {
+      async function itemIn(workspaceId = ours) {
+        const [feed] = await db
+          .insert(source)
+          .values({ workspaceId, type: "rss", name: "Blog", config: { url: `https://example.com/${unique()}` }, schedule: "*/15 * * * *" })
+          .returning({ id: source.id });
+        const [row] = await db
+          .insert(item)
+          .values({ workspaceId, sourceId: feed?.id ?? "", externalId: unique(), title: "T", body: "", raw: {} })
+          .returning({ id: item.id });
+        return row?.id ?? "";
+      }
+      const logOf = async (itemId: string) =>
+        (await db.select({ message: itemLog.message }).from(itemLog).where(eq(itemLog.itemId, itemId))).map(({ message }) => message);
+      const statusesOf = async (actionId: string) =>
+        (await db.select({ status: delivery.status }).from(delivery).where(eq(delivery.actionId, actionId)))
+          .map(({ status }) => status)
+          .sort();
+
+      it("never sends to a Destination the edit took out, and says so in the Log", async () => {
+        const kept = await addDestination("email");
+        const gone = await addDestination("email");
+        const name = unique();
+        const { type, id } = await saved(ours, alertYaml([kept.name, gone.name], name));
+        const [held, sent, stays] = [await itemIn(), await itemIn(), await itemIn()];
+        await db.insert(delivery).values([
+          { actionId: id, itemId: held, destinationId: gone.id, status: "held" },
+          { actionId: id, itemId: sent, destinationId: gone.id, status: "sent" },
+          { actionId: id, itemId: stays, destinationId: kept.id, status: "queued" },
+        ]);
+
+        await saved(ours, alertYaml([kept.name], name), { type, id });
+
+        expect(await statusesOf(id)).toEqual(["queued", "sent"]);
+        expect(await logOf(held)).toEqual([`Not sent: the Action ${name} no longer goes to ${gone.name}`]);
+        expect(await logOf(sent)).toEqual([]);
+        expect(await logOf(stays)).toEqual([]);
+      });
+
+      it("leaves unsent Deliveries alone when an edit keeps their Destination", async () => {
+        const mine = await addDestination("email");
+        const { type, id } = await saved(ours, alertYaml([mine.name]));
+        const held = await itemIn();
+        await db.insert(delivery).values({ actionId: id, itemId: held, destinationId: mine.id, status: "held" });
+        await saved(ours, alertYaml([mine.name]), { type, id });
+        expect(await statusesOf(id)).toEqual(["held"]);
+      });
+
+      it("drops what a Digest collected when it stops being one, so it can't go out later", async () => {
+        const mine = await addDestination("email");
+        const name = unique();
+        const { type, id } = await saved(ours, digestYaml([mine.name], 'schedule: "0 9 * * 1"\n', name));
+        const collected = await itemIn();
+        await db.insert(digestItem).values({ actionId: id, itemId: collected });
+
+        await saved(ours, alertYaml([mine.name], name), { type, id });
+
+        expect(await db.select().from(digestItem).where(eq(digestItem.actionId, id))).toEqual([]);
+        expect(await logOf(collected)).toEqual([`Not sent: the Action ${name} isn't a Digest any more`]);
+      });
+
+      it("says in the Log that a deleted Action's unsent alerts and collected Items never go out", async () => {
+        const mine = await addDestination("email");
+        const name = unique();
+        const alert = await saved(ours, alertYaml([mine.name], name));
+        const digestName = unique();
+        const digest = await saved(ours, digestYaml([mine.name], 'schedule: "0 9 * * 1"\n', digestName));
+        const [grouped, sent, collected] = [await itemIn(), await itemIn(), await itemIn()];
+        await db.insert(delivery).values([
+          { actionId: alert.id, itemId: grouped, destinationId: mine.id, status: "grouped" },
+          { actionId: alert.id, itemId: sent, destinationId: mine.id, status: "sent" },
+        ]);
+        await db.insert(digestItem).values({ actionId: digest.id, itemId: collected });
+
+        expect(await removeRule(db, ours, "action", alert.id)).toBe(true);
+        expect(await removeRule(db, ours, "action", digest.id)).toBe(true);
+
+        expect(await logOf(grouped)).toEqual([`Not sent: the Action ${name} was deleted`]);
+        expect(await logOf(sent)).toEqual([]);
+        expect(await logOf(collected)).toEqual([`Not sent: the Action ${digestName} was deleted`]);
+      });
+    });
+
+    it("won't be enabled with no Destination, and can be once it has one", async () => {
+      const mine = await addDestination("email");
+      const { type, id } = await saved(ours, alertYaml([mine.name]));
+      await setRuleEnabled(db, ours, type, id, false);
+      await removeDestination(db, ours, mine.id);
+
+      expect(await setRuleEnabled(db, ours, type, id, true)).toBe(false);
+      expect(await getRule(db, ours, type, id)).toMatchObject({ enabled: false });
+      // Turning it off is always allowed.
+      expect(await setRuleEnabled(db, ours, type, id, false)).toBe(true);
+
+      const another = await addDestination("email");
+      await saved(ours, alertYaml([another.name]), { type, id });
+      expect(await setRuleEnabled(db, ours, type, id, true)).toBe(true);
+      expect(await getRule(db, ours, type, id)).toMatchObject({ enabled: true });
+    });
+
+    it("refuses a Rating test that could never hold, beside its value", async () => {
+      const mine = await addDestination("email");
+      const yaml = `action: ${unique()}\nwhen: { field: severity, op: is, value: high }\nkind: alert\n${listed([mine.name])}`;
+      expect(await problems(yaml)).toEqual([{ path: "when.value", message: containing("1 to 5") }]);
     });
 
     it("is missing to every query from another Workspace", async () => {
