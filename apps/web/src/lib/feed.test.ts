@@ -74,11 +74,11 @@ describe("deliveryStatus", () => {
 
   it("gives held and grouped Deliveries their time in the Workspace timezone", () => {
     expect(deliveryStatus({ ...base, status: "held", nextAttemptAt: at }, "Europe/Berlin")).toEqual({
-      text: "Held until 14:30",
+      text: "Held until 14:30 Europe/Berlin",
       failed: false,
     });
     expect(deliveryStatus({ ...base, status: "grouped", nextAttemptAt: at }, "UTC")).toEqual({
-      text: "Grouped, goes at 13:30",
+      text: "Grouped, goes at 13:30 UTC",
       failed: false,
     });
   });
@@ -86,7 +86,7 @@ describe("deliveryStatus", () => {
   it("names a failed attempt's reason and the next retry, and says when there are no more", () => {
     const failing = { ...base, attempts: 2, nextAttemptAt: at, lastError: "the receiver answered 500" };
     expect(deliveryStatus(failing, "UTC")).toEqual({
-      text: "Failed: the receiver answered 500. Next retry at 13:30",
+      text: "Failed: the receiver answered 500. Next retry at 13:30 UTC",
       failed: true,
     });
     expect(deliveryStatus({ ...failing, status: "failed", nextAttemptAt: null }, "UTC")).toEqual({

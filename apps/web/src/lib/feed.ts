@@ -187,7 +187,8 @@ type Delivery = Pick<typeof delivery.$inferSelect, "status" | "attempts" | "next
  * says them. `last_error` holds Watchdog's own sentence, never a receiver's answer or a credential.
  */
 export function deliveryStatus({ status, attempts, nextAttemptAt, lastError }: Delivery, timezone: string) {
-  const at = (date: Date | null) => (date === null ? "a time not set" : localTime(date, timezone));
+  // With the zone, because the rest of the page reads in UTC.
+  const at = (date: Date | null) => (date === null ? "a time not set" : `${localTime(date, timezone)} ${timezone}`);
   const reason = lastError ?? "no reason was recorded";
   switch (status) {
     case "sent":

@@ -352,9 +352,16 @@ function ActionsSection({
                         className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor(sent.status, failed)}`}
                       />
                       <span className="min-w-0 break-words">
-                        <span className={failed ? "" : "text-foreground"}>{sent.destination}</span>
+                        {/* A failure links to where the Destination can be tested once it's fixed. */}
+                        {failed ? (
+                          <Link href="/destinations" className={inlineLink}>
+                            {sent.destination}
+                          </Link>
+                        ) : (
+                          <span className="text-foreground">{sent.destination}</span>
+                        )}
                         <span className={failed ? "" : "text-muted-foreground"}>
-                          {": "}
+                          {" · "}
                           {text}
                           {sent.status === "sent" && sent.sentAt !== null ? (
                             <>
@@ -372,7 +379,7 @@ function ActionsSection({
                     <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full border border-muted-foreground" />
                     <span className="min-w-0 break-words">
                       {name}
-                      <span className="text-muted-foreground">: in the next Digest</span>
+                      <span className="text-muted-foreground"> · In the next Digest</span>
                     </span>
                   </li>
                 ))}

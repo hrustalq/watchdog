@@ -686,7 +686,7 @@ describe("Feed", () => {
 
       const [fired] = await itemActions(db, seeded.workspaceId, itemId);
       const [held] = present(fired).deliveries;
-      expect(deliveryStatus(present(held), "Europe/Berlin")).toEqual({ text: "Held until 14:30", failed: false });
+      expect(deliveryStatus(present(held), "Europe/Berlin")).toEqual({ text: "Held until 14:30 Europe/Berlin", failed: false });
     });
 
     it("shows a Digest's Destinations waiting for it, and nothing to another Workspace", async () => {
