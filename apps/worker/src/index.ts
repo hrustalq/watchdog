@@ -2,10 +2,8 @@ import { rmSync, writeFileSync } from "node:fs";
 import {
   createAgentFetch,
   createEgressFetch,
-  createEmailSender,
   createMailer,
-  createTelegramSender,
-  createWebhookSender,
+  createSenders,
   linkChat,
   loadConfig,
   runBot,
@@ -51,14 +49,7 @@ const egressFetch = createEgressFetch(config);
 const mailer = createMailer(config);
 const alertFrom = config.smtp?.alertFrom;
 await startDelivery(deliveryDb, boss, {
-  senders: {
-    telegram: createTelegramSender(config.telegram.botToken, {
-      fetch: egressFetch,
-      encryptionKey: config.encryptionKey,
-    }),
-    email: createEmailSender(mailer, alertFrom),
-    webhook: createWebhookSender({ fetch: egressFetch, encryptionKey: config.encryptionKey, mode: config.mode }),
-  },
+  senders: createSenders(config, { fetch: egressFetch, mailer }),
   appUrl: config.auth.url,
   ...(config.mode === "hosted" && {
     sendCapNotice: (workspaceId: string) => sendEmailCapNotice(deliveryDb, workspaceId, mailer, alertFrom),

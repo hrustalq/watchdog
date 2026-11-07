@@ -1,4 +1,12 @@
-import { botUsername, createAgentFetch, createEgressFetch, createMailer, egressPolicy, loadConfig } from "@watchdog/core";
+import {
+  botUsername,
+  createAgentFetch,
+  createEgressFetch,
+  createMailer,
+  createSenders,
+  egressPolicy,
+  loadConfig,
+} from "@watchdog/core";
 import { createDb } from "@watchdog/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -41,6 +49,15 @@ function start() {
       baseURL: config.auth.url,
       encryptionKey: config.encryptionKey,
       egressAllows: egressPolicy(config),
+    },
+    /**
+     * What "Send a test" sends with: the worker's senders, built the same way. Telegram's pacing is kept in
+     * each process's memory, so this one paces the web app's tests only.
+     */
+    testAlertDeps: {
+      senders: createSenders(config, { fetch, mailer }),
+      appUrl: config.auth.url,
+      emailCapped: config.mode === "hosted",
     },
     telegramAvailable: config.telegram.botToken !== undefined,
     /**

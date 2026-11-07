@@ -89,6 +89,10 @@ const retryWindowMs = 24 * hourMs;
 /** Short enough that the Log's sentence keeps what follows the reason. */
 const reasonLength = 500;
 
+/** Why a send failed, as the Log and the Destination's `last_error` keep it. */
+export const failureReason = (error: unknown) =>
+  storableMessage(error instanceof Error ? error.message : String(error)).slice(0, reasonLength);
+
 /**
  * The Deliveries a job should send now, as Top would list them, with unrated Items last. Anything else
  * is held, grouped, finished or gone, or waiting for a retry whose job committed with that time. The
@@ -312,7 +316,7 @@ async function send(
     await transmit();
   } catch (error) {
     const failed = now();
-    const reason = storableMessage(error instanceof Error ? error.message : String(error)).slice(0, reasonLength);
+    const reason = failureReason(error);
     const failure = `Sending to ${target.name} failed: ${reason}`;
     const final = error instanceof FinalSendError;
 
