@@ -1,7 +1,15 @@
 // A Workspace's Destinations, as the Destinations page reads and changes them. Every query is scoped
 // to the Workspace, so another Workspace's Destination id behaves like a missing one.
 import { createHash, randomBytes } from "node:crypto";
-import { decryptSecret, emailDestinationConfig, encryptSecret, type Mailer, urlIpLiteral } from "@watchdog/core";
+import {
+  decryptSecret,
+  emailDestinationConfig,
+  encryptSecret,
+  issueLinkCode,
+  liveLinkCode,
+  type Mailer,
+  urlIpLiteral,
+} from "@watchdog/core";
 import {
   action,
   actionDestination,
@@ -381,6 +389,56 @@ export async function removeDestination(db: Db, workspaceId: string, destination
   });
 }
 
+/** Saves a Telegram Destination, waiting for the bot, with the first code to send it. */
+export async function addTelegramDestination(db: Db, workspaceId: string, input: { name: string }) {
+  const name = cleanName(input.name);
+  if (name === "") return { problem: "blank-name" } as const;
+  const [saved] = await db
+    .insert(destination)
+    .values({ workspaceId, type: "telegram", name })
+    .onConflictDoNothing()
+    .returning({ id: destination.id });
+  if (saved === undefined) return { problem: "duplicate-name" } as const;
+  return { destination: saved, code: await issueLinkCode(db, saved.id) };
+}
+
+/** A new code for a Telegram Destination still waiting for the bot. Undefined for anything else in the Workspace. */
+export async function newTelegramLink(db: Db, workspaceId: string, destinationId: string) {
+  if (!isUuid(destinationId)) return undefined;
+  const [waiting] = await db
+    .select({ id: destination.id })
+    .from(destination)
+    .where(
+      and(
+        eq(destination.workspaceId, workspaceId),
+        eq(destination.id, destinationId),
+        eq(destination.type, "telegram"),
+        isNull(destination.confirmedAt),
+      ),
+    );
+  return waiting && issueLinkCode(db, waiting.id);
+}
+
+/** Holds `<Destination id>.<code>` for pendingTelegramLink. */
+export const telegramLinkCookie = "telegram-link";
+
+/**
+ * The link to show for the code in this browser's cookie, while it works and its Destination still
+ * waits. The code stays out of the URL, where history and access logs would keep it, and the database only
+ * has its hash, so a cookie is what lets a reload show it again without replacing it.
+ */
+export async function pendingTelegramLink(
+  db: Db,
+  destinations: { id: string; name: string; state: DestinationState }[],
+  cookie: string | undefined,
+) {
+  const [destinationId, code] = (cookie ?? "").split(".");
+  const waiting = destinations.find(({ id, state }) => id === destinationId && state === "waiting-bot");
+  if (waiting === undefined || code === undefined) return undefined;
+  const live = await liveLinkCode(db, code);
+  return live?.destinationId === waiting.id ? { name: waiting.name, code, expiresAt: live.expiresAt } : undefined;
+}
+
 export type DestinationState = "ready" | "confirmed" | "waiting-confirmation" | "waiting-bot" | "unavailable";
 
 function stateOf(type: "telegram" | "email" | "webhook", confirmed: boolean, telegramAvailable: boolean): DestinationState {
@@ -391,10 +449,11 @@ function stateOf(type: "telegram" | "email" | "webhook", confirmed: boolean, tel
   return type === "telegram" ? "waiting-bot" : "waiting-confirmation";
 }
 
-/** What a Destination's settings point at: the address or the URL. */
+/** What a Destination's settings point at: the address, the Telegram chat or the URL. */
 function pointsAt(config: unknown) {
   if (typeof config !== "object" || config === null) return null;
   if ("address" in config && typeof config.address === "string") return config.address;
+  if ("chat" in config && typeof config.chat === "string") return config.chat;
   return "url" in config && typeof config.url === "string" ? config.url : null;
 }
 

@@ -14,8 +14,10 @@ const maxLength = 4096;
 const chatGapMs = 1050;
 const botGapMs = 35;
 
+export const botApiUrl = (botToken: string, method: string) => `https://api.telegram.org/bot${botToken}/${method}`;
+
 /** What Telegram's answer holds when it refuses a request. Anything else, such as a proxy's page, has neither. */
-const refusal = z
+export const refusal = z
   .object({
     description: z.string().optional(),
     parameters: z.object({ retry_after: z.number().positive().optional() }).optional(),
@@ -70,7 +72,7 @@ export function createTelegramSender(
       send: () => Promise.reject(new Error("the Telegram bot isn't set up: TELEGRAM_BOT_TOKEN is empty")),
     };
   }
-  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
+  const url = botApiUrl(botToken, "sendMessage");
   const nextTurn = floodLimiter();
 
   return {

@@ -6,7 +6,9 @@ import {
   createMailer,
   createTelegramSender,
   createWebhookSender,
+  linkChat,
   loadConfig,
+  runBot,
   sendEmailCapNotice,
 } from "@watchdog/core";
 import { createDb, migrate } from "@watchdog/db";
@@ -15,6 +17,7 @@ import { startDelivery } from "./delivery.ts";
 import { itemEnqueuer, startPipeline } from "./pipeline.ts";
 import { readyFile } from "./ready.ts";
 import { startScheduler } from "./scheduler.ts";
+import { startTelegramBot } from "./telegram.ts";
 
 // Stops with the invalid variables named before the worker does anything else.
 const config = (() => {
@@ -69,6 +72,20 @@ await startScheduler(db, boss, config.mode, {
   fetch: egressFetch,
   enqueueItems: itemEnqueuer(boss),
 });
+const { botToken } = config.telegram;
+const stopTelegramBot =
+  botToken === undefined
+    ? undefined
+    : await startTelegramBot(boss, (signal) =>
+        runBot(
+          {
+            botToken,
+            fetch: egressFetch,
+            linkChat: (code, chat) => linkChat(db, config.encryptionKey, code, chat),
+          },
+          signal,
+        ),
+      );
 
 // The first SIGTERM or SIGINT stops pg-boss, which stops the tick and lets running polls and sends finish.
 // A second signal while it stops is ignored.
@@ -77,6 +94,7 @@ const stop = async () => {
   if (stopping) return;
   stopping = true;
   rmSync(readyFile, { force: true });
+  stopTelegramBot?.();
   try {
     await boss.stop();
     await db.$client.end();

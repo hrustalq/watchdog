@@ -13,21 +13,25 @@ import {
   itemLog,
   migrate,
   source,
+  telegramLinkCode,
   user,
   workspace,
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
-import { decryptSecret, egressPolicy } from "@watchdog/core";
+import { decryptSecret, egressPolicy, linkChat } from "@watchdog/core";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   actionNames,
   actionsOnlyOn,
   addEmailDestination,
+  addTelegramDestination,
   addWebhookDestination,
   confirmationAddress,
   confirmDestination,
   type DestinationDeps,
   listDestinations,
+  newTelegramLink,
+  pendingTelegramLink,
   removeDestination,
   replaceWebhookSecret,
   revealWebhookSecret,
@@ -102,6 +106,87 @@ describe("Destinations", () => {
       await postgres.stop();
     };
   }, 120_000);
+
+  describe("a Telegram Destination", () => {
+    const addTelegram = async () => {
+      const added = await addTelegramDestination(db, ours, { name: newName() });
+      if ("problem" in added) throw new Error(`Not added: ${added.problem}`);
+      return added;
+    };
+    const chat = { id: "42", title: "private chat" };
+    const rowsOf = (workspaceId: string) => listDestinations(db, workspaceId, { telegramAvailable: true });
+    const expire = (id: string) =>
+      db
+        .update(telegramLinkCode)
+        .set({ expiresAt: new Date(Date.now() - 1000) })
+        .where(eq(telegramLinkCode.destinationId, id));
+
+    it("waits for the bot, with a code to send it", async () => {
+      const { destination: added, code } = await addTelegram();
+
+      expect(await stateOf(added.id)).toBe("waiting-bot");
+      const rows = await rowsOf(ours);
+      const link = await pendingTelegramLink(db, rows, `${added.id}.${code}`);
+      expect(link?.name).toBe(rows.find(({ id }) => id === added.id)?.name);
+      expect(link?.code).toBe(code);
+      expect(link?.expiresAt).toBeInstanceOf(Date);
+    });
+
+    it("is confirmed and shows its chat's title once the bot has the code", async () => {
+      const { destination: added, code } = await addTelegram();
+
+      await linkChat(db, deps.encryptionKey, code, { id: "-100200", title: "Ops room" });
+
+      expect((await rowsOf(ours)).find(({ id }) => id === added.id)).toMatchObject({
+        state: "confirmed",
+        pointsAt: "Ops room",
+      });
+      expect(await pendingTelegramLink(db, await rowsOf(ours), `${added.id}.${code}`)).toBeUndefined();
+    });
+
+    it("stays waiting on an expired code, shows no link for it, and offers a new code that works", async () => {
+      const { destination: added, code } = await addTelegram();
+      await expire(added.id);
+
+      expect(await linkChat(db, deps.encryptionKey, code, chat)).toBeUndefined();
+      expect(await stateOf(added.id)).toBe("waiting-bot");
+      expect(await pendingTelegramLink(db, await rowsOf(ours), `${added.id}.${code}`)).toBeUndefined();
+
+      const fresh = await newTelegramLink(db, ours, added.id);
+      await linkChat(db, deps.encryptionKey, fresh ?? "", chat);
+      expect(await stateOf(added.id)).toBe("confirmed");
+    });
+
+    it("refuses a blank or duplicate name", async () => {
+      const name = newName();
+      await addTelegramDestination(db, ours, { name });
+
+      expect(await addTelegramDestination(db, ours, { name })).toEqual({ problem: "duplicate-name" });
+      expect(await addTelegramDestination(db, ours, { name: "  " })).toEqual({ problem: "blank-name" });
+    });
+
+    it("gives a new code only to the Workspace's own Telegram Destination that is still waiting", async () => {
+      const { destination: added, code } = await addTelegram();
+      const { destination: email } = await addEmail();
+
+      expect(await newTelegramLink(db, theirs, added.id)).toBeUndefined();
+      expect(await newTelegramLink(db, ours, email.id)).toBeUndefined();
+      expect(await newTelegramLink(db, ours, "not-a-uuid")).toBeUndefined();
+
+      await linkChat(db, deps.encryptionKey, code, chat);
+      expect(await newTelegramLink(db, ours, added.id)).toBeUndefined();
+    });
+
+    it("shows a code only with the Destination it was made for, in this Workspace", async () => {
+      const { destination: first, code } = await addTelegram();
+      const { destination: second } = await addTelegram();
+
+      expect(await pendingTelegramLink(db, await rowsOf(ours), `${second.id}.${code}`)).toBeUndefined();
+      expect(await pendingTelegramLink(db, await rowsOf(theirs), `${first.id}.${code}`)).toBeUndefined();
+      expect(await pendingTelegramLink(db, await rowsOf(ours), undefined)).toBeUndefined();
+      expect(await pendingTelegramLink(db, await rowsOf(ours), "nonsense")).toBeUndefined();
+    });
+  });
 
   describe("an email Destination", () => {
     it("waits for confirmation until its link is used, and then is confirmed", async () => {
