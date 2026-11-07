@@ -124,6 +124,19 @@ describe("the Telegram bot runner", () => {
     expect(telegram.sent.filter(({ method }) => method === "getMe")).toHaveLength(1);
   });
 
+  it("stops between the updates of a batch once it's told to", async () => {
+    const telegram = fakeTelegram([[startMessage(10, "/start one"), startMessage(11, "/start two")]]);
+    const stopping = new AbortController();
+    const linkChat = vi.fn(() => {
+      stopping.abort();
+      return Promise.resolve("Ops alerts");
+    });
+
+    await runBot({ botToken, fetch: telegram.fetch, linkChat, retryMs: 1 }, stopping.signal);
+
+    expect(linkChat).toHaveBeenCalledOnce();
+  });
+
   it("keeps a link whose reply failed, and moves on", async () => {
     vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const telegram = fakeTelegram([[startMessage(10, "/start abc")]], {

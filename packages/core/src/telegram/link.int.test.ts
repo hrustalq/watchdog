@@ -116,16 +116,11 @@ describe("linking a Telegram chat", () => {
 
   it("binds the chat, encrypted, confirms the Destination and spends the code", async () => {
     const { id, name } = await waiting();
-    await db
-      .update(destination)
-      .set({ lastError: "the Telegram chat isn't linked", lastErrorAt: new Date() })
-      .where(eq(destination.id, id));
     const code = await issueLinkCode(db, id);
 
     expect(await linkChat(db, encryptionKey, code, chat)).toBe(name);
 
     const linked = await read(id);
-    expect(linked?.lastError).toBeNull();
     expect(linked?.confirmedAt).toBeInstanceOf(Date);
     expect(linked?.config).toEqual({ chat: "Ops room" });
     expect(linked?.secretCiphertext).not.toContain("-100200");
@@ -145,6 +140,55 @@ describe("linking a Telegram chat", () => {
 
   it("refuses an unknown code", async () => {
     expect(await linkChat(db, encryptionKey, "no-such-code", chat)).toBeUndefined();
+  });
+
+  it("takes the Destination before the code, so it can't deadlock with removing the Destination", async () => {
+    const { id } = await waiting();
+    const code = await issueLinkCode(db, id);
+    const remove = await db.$client.connect();
+    try {
+      // What removeDestination does: the Destination's row, then the code's through the cascade.
+      await remove.query("begin");
+      await remove.query("select 1 from destination where id = $1 for update", [id]);
+      const linking = linkChat(db, encryptionKey, code, chat);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await remove.query("set local lock_timeout = '2s'");
+      await remove.query("delete from destination where id = $1", [id]);
+      await remove.query("commit");
+
+      expect(await linking).toBeUndefined();
+    } finally {
+      remove.release();
+    }
+  });
+
+  it("leaves one live code when two are asked for at once", async () => {
+    const { id } = await waiting();
+
+    await Promise.all(Array.from({ length: 10 }, () => issueLinkCode(db, id)));
+
+    expect(await codesOf(id)).toHaveLength(1);
+  });
+
+  it("can't rebind a linked chat with a code that was still live", async () => {
+    const { id } = await waiting();
+    const first = await issueLinkCode(db, id);
+    await linkChat(db, encryptionKey, first, chat);
+    // A code that slipped in just after the link, as a page open from before it could ask for.
+    const late = await issueLinkCode(db, id);
+
+    expect(await linkChat(db, encryptionKey, late, { id: "1", title: "Private chat" })).toBeUndefined();
+
+    expect(decryptSecret((await read(id))?.secretCiphertext ?? "", encryptionKey)).toBe("-100200");
+  });
+
+  it("drops a NUL from a chat's title, which jsonb refuses and would stop the loop on this update", async () => {
+    const { id, name } = await waiting();
+    const code = await issueLinkCode(db, id);
+
+    expect(await linkChat(db, encryptionKey, code, { id: "1", title: "Ops\0 room" })).toBe(name);
+
+    expect((await read(id))?.config).toEqual({ chat: "Ops room" });
   });
 
   it("lets a new code replace the last one", async () => {

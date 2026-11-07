@@ -8,13 +8,12 @@ import {
   actionsOnlyOn,
   addProblems,
   type DestinationState,
-  justLinkedDestination,
   listDestinations,
-  pendingTelegramLink,
   problemField,
   problemMessage,
   revealWebhookSecret,
   telegramLinkCookie,
+  telegramLinkInCookie,
 } from "@/lib/destinations";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
@@ -46,10 +45,15 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
   };
   const { db, destinationDeps, mode, mailGoesToLog, telegramAvailable, telegramBotName } = server();
   const destinations = await listDestinations(db, workspace.id, { telegramAvailable });
-  const linkCookie = (await cookies()).get(telegramLinkCookie)?.value;
-  const telegramLink = await pendingTelegramLink(db, destinations, linkCookie);
-  const justLinked = justLinkedDestination(destinations, linkCookie);
-  const bot = telegramLink === undefined ? undefined : await telegramBotName();
+  const problem = addProblems.find((known) => known === param("error"));
+  const error = problem === undefined ? undefined : {
+    field: problemField(problem),
+    message: problemMessage(problem, mode),
+  };
+  const telegram = await telegramLinkInCookie(db, destinations, (await cookies()).get(telegramLinkCookie)?.value);
+  // A notice takes focus when it arrives, and a field with an error or a secret shown once comes first.
+  const telegramNotice = error === undefined && param("secret") === "" ? telegram : undefined;
+  const bot = telegramNotice?.status === "pending" ? await telegramBotName() : undefined;
 
   // Only ids and codes travel in the URL, so what it says comes from the Workspace or from fixed text.
   const secretFor = destinations.find(({ id }) => id === param("secret"));
@@ -59,14 +63,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
   // Last, because a read that fails after this would lose a secret nobody saw.
   const secret = await revealWebhookSecret(db, destinationDeps.encryptionKey, workspace.id, param("secret"));
 
-  const problem = addProblems.find((known) => known === param("error"));
-  const error = problem === undefined ? undefined : {
-    field: problemField(problem),
-    message: problemMessage(problem, mode),
-  };
   const form = param("form");
-  // A panel's notice would take focus from the field with the error, so it waits for the form to be put right.
-  const showTelegramLink = telegramLink !== undefined && error === undefined;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -94,12 +91,12 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
             The secret for {secretFor.name} was already shown. Replace it if you didn&apos;t keep a copy.
           </Notice>
         ) : null}
-        {showTelegramLink ? <TelegramLinkPanel link={telegramLink} bot={bot} /> : null}
-        {justLinked === undefined ? null : (
+        {telegramNotice?.status === "pending" ? <TelegramLinkPanel link={telegramNotice} bot={bot} /> : null}
+        {telegramNotice?.status === "linked" ? (
           <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
-            {justLinked.name} is linked.
+            {telegramNotice.name} is linked.
           </Notice>
-        )}
+        ) : null}
         <Outcome
           added={param("added")}
           resent={param("resent")}
@@ -220,7 +217,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                       <span aria-hidden="true">·</span>
                       <State state={row.state} failing={row.lastError !== null} />
                     </p>
-                    {row.state === "waiting-bot" && telegramLink?.id !== row.id ? (
+                    {row.state === "waiting-bot" && telegram?.id !== row.id ? (
                       <p className="text-sm text-muted-foreground">
                         No link is showing for it here. Get a new one to link a chat.
                       </p>

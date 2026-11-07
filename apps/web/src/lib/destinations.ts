@@ -419,35 +419,29 @@ export async function newTelegramLink(db: Db, workspaceId: string, destinationId
   return waiting && issueLinkCode(db, waiting.id);
 }
 
-/** Holds `<Destination id>.<code>` for pendingTelegramLink. */
+/** Keeps a code in the browser that asked for it, for telegramLinkInCookie. */
 export const telegramLinkCookie = "telegram-link";
+export const telegramLinkCookieValue = (destinationId: string, code: string) => `${destinationId}.${code}`;
 
 /**
- * The link to show for the code in this browser's cookie, while it works and its Destination still
- * waits. The code stays out of the URL, where history and access logs would keep it, and the database only
- * has its hash, so a cookie is what lets a reload show it again without replacing it.
+ * What this browser's cookie says about a Telegram link: a code that still works for a Destination still
+ * waiting, or a Destination that has been linked since. The code stays out of the URL, where history and
+ * access logs would keep it, and the database only has its hash, so a cookie is what lets a reload show
+ * it again without replacing it. A render can't clear the cookie, so "linked" lasts as long as the code would have.
  */
-export async function pendingTelegramLink(
+export async function telegramLinkInCookie(
   db: Db,
-  destinations: { id: string; name: string; state: DestinationState }[],
+  destinations: { id: string; type: string; name: string; state: DestinationState }[],
   cookie: string | undefined,
 ) {
   const [destinationId, code] = (cookie ?? "").split(".");
-  const waiting = destinations.find(({ id, state }) => id === destinationId && state === "waiting-bot");
-  if (waiting === undefined || code === undefined) return undefined;
+  const row = destinations.find(({ id, type }) => id === destinationId && type === "telegram");
+  if (row === undefined || code === undefined) return undefined;
+  const { id, name } = row;
+  if (row.state === "confirmed") return { status: "linked", id, name } as const;
+  if (row.state !== "waiting-bot") return undefined;
   const live = await liveLinkCode(db, code);
-  return live?.destinationId === waiting.id
-    ? { id: waiting.id, name: waiting.name, code, expiresAt: live.expiresAt }
-    : undefined;
-}
-
-/** The Telegram Destination this browser's cookie asked to link, once it is. A render can't clear the cookie, so this lasts as long as the code would have. */
-export function justLinkedDestination<T extends { id: string; type: string; state: DestinationState }>(
-  destinations: T[],
-  cookie: string | undefined,
-) {
-  const [destinationId] = (cookie ?? "").split(".");
-  return destinations.find(({ id, type, state }) => id === destinationId && type === "telegram" && state === "confirmed");
+  return live?.destinationId === id ? ({ status: "pending", id, name, code, expiresAt: live.expiresAt } as const) : undefined;
 }
 
 export type DestinationState = "ready" | "confirmed" | "waiting-confirmation" | "waiting-bot" | "unavailable";

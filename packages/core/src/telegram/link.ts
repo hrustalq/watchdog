@@ -13,6 +13,8 @@ const hashOf = (code: string) => createHash("sha256").update(code).digest("hex")
 export async function issueLinkCode(db: Db, destinationId: string) {
   const code = randomBytes(16).toString("base64url");
   await db.transaction(async (tx) => {
+    // Two asking at once would each see nothing to replace, and both codes would live.
+    await tx.select({ id: destination.id }).from(destination).where(eq(destination.id, destinationId)).for("update");
     await tx.delete(telegramLinkCode).where(eq(telegramLinkCode.destinationId, destinationId));
     await tx.insert(telegramLinkCode).values({
       codeHash: hashOf(code),
@@ -33,28 +35,36 @@ export async function liveLinkCode(db: Db, code: string) {
 }
 
 /**
- * Spends a code on a chat: the Destination holds the chat's id, encrypted, and is confirmed. The earlier
- * failures are about having no chat, so they go. Gives the Destination's name, or undefined for a code
- * that's unknown, used or expired.
+ * Spends a code on a chat: the Destination holds the chat's id, encrypted, and is confirmed. Gives the
+ * Destination's name, or undefined for a code that's unknown, used or expired, or for a Destination
+ * already linked, whose chat a late code must not replace.
  */
 export function linkChat(db: Db, encryptionKey: Buffer, code: string, chat: BotChat) {
+  const liveCode = and(eq(telegramLinkCode.codeHash, hashOf(code)), gt(telegramLinkCode.expiresAt, sql`now()`));
   return db.transaction(async (tx) => {
-    const [spent] = await tx
-      .delete(telegramLinkCode)
-      .where(and(eq(telegramLinkCode.codeHash, hashOf(code)), gt(telegramLinkCode.expiresAt, sql`now()`)))
-      .returning({ destinationId: telegramLinkCode.destinationId });
-    if (spent === undefined) return undefined;
-    const [linked] = await tx
+    const [found] = await tx
+      .select({ destinationId: telegramLinkCode.destinationId })
+      .from(telegramLinkCode)
+      .where(liveCode);
+    if (found === undefined) return undefined;
+    // The Destination's row before the code's, the order removing a Destination takes them through the
+    // cascade, so the two can't deadlock.
+    const [target] = await tx
+      .select({ name: destination.name, confirmedAt: destination.confirmedAt })
+      .from(destination)
+      .where(eq(destination.id, found.destinationId))
+      .for("update");
+    const spent = await tx.delete(telegramLinkCode).where(liveCode).returning({ codeHash: telegramLinkCode.codeHash });
+    if (target?.confirmedAt !== null || spent.length === 0) return undefined;
+    await tx
       .update(destination)
       .set({
         secretCiphertext: encryptSecret(chat.id, encryptionKey),
-        config: { chat: chat.title },
+        // Postgres refuses a NUL in jsonb, and this update would then come back on every poll.
+        config: { chat: chat.title.replaceAll("\0", "") },
         confirmedAt: sql`now()`,
-        lastError: null,
-        lastErrorAt: null,
       })
-      .where(eq(destination.id, spent.destinationId))
-      .returning({ name: destination.name });
-    return linked?.name;
+      .where(eq(destination.id, found.destinationId));
+    return target.name;
   });
 }

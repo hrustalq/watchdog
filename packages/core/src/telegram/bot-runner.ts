@@ -66,8 +66,8 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
 
 /**
  * Reads the bot's updates until the signal ends. An update counts as read only once it's handled, because
- * Telegram resends everything before the offset of the last poll. So a failure, logged here, tries again
- * after `retryMs`, and a stop just after a link can bring its `/start` back with a reply that the code is gone.
+ * Telegram resends everything from the offset of the last poll on. So a failure, logged here, tries again
+ * after `retryMs`, and a stop in the middle of a batch can bring a `/start` back with a reply that the code is gone.
  */
 export async function runBot(
   deps: {
@@ -119,6 +119,7 @@ export async function runBot(
         signal,
       );
       for (const next of updates) {
+        if (stopped()) return;
         await handle(next, bot);
         offset = next.update_id + 1;
       }

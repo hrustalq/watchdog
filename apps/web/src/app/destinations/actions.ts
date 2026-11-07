@@ -14,6 +14,7 @@ import {
   replaceWebhookSecret,
   sendConfirmationAgain,
   telegramLinkCookie,
+  telegramLinkCookieValue,
 } from "@/lib/destinations";
 import { requireWorkspace, server } from "@/lib/server";
 
@@ -50,9 +51,9 @@ export async function addWebhookAction(formData: FormData) {
   back({ secret: result.destination.id });
 }
 
-/** Keeps the code for the page to show, however often it's reloaded. See pendingTelegramLink. */
+/** Keeps the code for the page to show, however often it's reloaded. See telegramLinkInCookie. */
 async function showTelegramLink(destinationId: string, code: string) {
-  (await cookies()).set(telegramLinkCookie, `${destinationId}.${code}`, {
+  (await cookies()).set(telegramLinkCookie, telegramLinkCookieValue(destinationId, code), {
     httpOnly: true,
     sameSite: "lax",
     secure: server().baseURL.startsWith("https:"),

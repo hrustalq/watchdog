@@ -29,14 +29,14 @@ import {
   confirmationAddress,
   confirmDestination,
   type DestinationDeps,
-  justLinkedDestination,
   listDestinations,
   newTelegramLink,
-  pendingTelegramLink,
   removeDestination,
   replaceWebhookSecret,
   revealWebhookSecret,
   sendConfirmationAgain,
+  telegramLinkCookieValue,
+  telegramLinkInCookie,
 } from "./destinations.ts";
 
 const sent: { to: string; subject: string; text: string; from?: string | undefined }[] = [];
@@ -127,10 +127,9 @@ describe("Destinations", () => {
 
       expect(await stateOf(added.id)).toBe("waiting-bot");
       const rows = await rowsOf(ours);
-      const link = await pendingTelegramLink(db, rows, `${added.id}.${code}`);
+      const link = await telegramLinkInCookie(db, rows, telegramLinkCookieValue(added.id, code));
+      expect(link).toMatchObject({ status: "pending", id: added.id, code });
       expect(link?.name).toBe(rows.find(({ id }) => id === added.id)?.name);
-      expect(link?.code).toBe(code);
-      expect(link?.expiresAt).toBeInstanceOf(Date);
     });
 
     it("is confirmed and shows its chat's title once the bot has the code", async () => {
@@ -142,8 +141,10 @@ describe("Destinations", () => {
         state: "confirmed",
         pointsAt: "Ops room",
       });
-      expect(await pendingTelegramLink(db, await rowsOf(ours), `${added.id}.${code}`)).toBeUndefined();
-      expect(justLinkedDestination(await rowsOf(ours), `${added.id}.${code}`)?.id).toBe(added.id);
+      expect(await telegramLinkInCookie(db, await rowsOf(ours), telegramLinkCookieValue(added.id, code))).toMatchObject({
+        status: "linked",
+        id: added.id,
+      });
     });
 
     it("stays waiting on an expired code, shows no link for it, and offers a new code that works", async () => {
@@ -152,8 +153,7 @@ describe("Destinations", () => {
 
       expect(await linkChat(db, deps.encryptionKey, code, chat)).toBeUndefined();
       expect(await stateOf(added.id)).toBe("waiting-bot");
-      expect(await pendingTelegramLink(db, await rowsOf(ours), `${added.id}.${code}`)).toBeUndefined();
-      expect(justLinkedDestination(await rowsOf(ours), `${added.id}.${code}`)).toBeUndefined();
+      expect(await telegramLinkInCookie(db, await rowsOf(ours), telegramLinkCookieValue(added.id, code))).toBeUndefined();
 
       const fresh = await newTelegramLink(db, ours, added.id);
       await linkChat(db, deps.encryptionKey, fresh ?? "", chat);
@@ -184,10 +184,10 @@ describe("Destinations", () => {
       const { destination: first, code } = await addTelegram();
       const { destination: second } = await addTelegram();
 
-      expect(await pendingTelegramLink(db, await rowsOf(ours), `${second.id}.${code}`)).toBeUndefined();
-      expect(await pendingTelegramLink(db, await rowsOf(theirs), `${first.id}.${code}`)).toBeUndefined();
-      expect(await pendingTelegramLink(db, await rowsOf(ours), undefined)).toBeUndefined();
-      expect(await pendingTelegramLink(db, await rowsOf(ours), "nonsense")).toBeUndefined();
+      expect(await telegramLinkInCookie(db, await rowsOf(ours), telegramLinkCookieValue(second.id, code))).toBeUndefined();
+      expect(await telegramLinkInCookie(db, await rowsOf(theirs), telegramLinkCookieValue(first.id, code))).toBeUndefined();
+      expect(await telegramLinkInCookie(db, await rowsOf(ours), undefined)).toBeUndefined();
+      expect(await telegramLinkInCookie(db, await rowsOf(ours), "nonsense")).toBeUndefined();
     });
   });
 
