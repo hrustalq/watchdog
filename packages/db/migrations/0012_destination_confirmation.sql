@@ -5,5 +5,6 @@ CREATE TABLE "destination_confirmation" (
 	CONSTRAINT "destination_confirmation_destination_id_unique" UNIQUE("destination_id")
 );
 --> statement-breakpoint
+ALTER TABLE "workspace" ADD COLUMN "confirmation_mail_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "destination" ADD COLUMN "secret_shown_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "destination_confirmation" ADD CONSTRAINT "destination_confirmation_destination_id_destination_id_fk" FOREIGN KEY ("destination_id") REFERENCES "public"."destination"("id") ON DELETE cascade ON UPDATE no action;

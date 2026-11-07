@@ -34,6 +34,7 @@ const unlinked: Destination = {
   name: "ops-chat",
   config: {},
   secretCiphertext: null,
+  secretShownAt: null,
   confirmedAt: null,
   lastError: null,
   lastErrorAt: null,

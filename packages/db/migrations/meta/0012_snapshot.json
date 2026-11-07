@@ -1,5 +1,5 @@
 {
-  "id": "5fd2dce8-8ecf-4b43-af2b-8df27643103f",
+  "id": "e30868e3-6271-40e9-906f-8e2c4af421ad",
   "prevId": "95e8443b-7e77-42bb-b83f-e6b27949ec47",
   "version": "7",
   "dialect": "postgresql",
@@ -426,6 +426,12 @@
         },
         "email_cap_notice_until": {
           "name": "email_cap_notice_until",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "confirmation_mail_at": {
+          "name": "confirmation_mail_at",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false

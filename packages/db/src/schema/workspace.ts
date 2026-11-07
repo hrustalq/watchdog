@@ -33,6 +33,11 @@ export const workspace = pgTable(
     burstWindowSeconds: integer("burst_window_seconds").notNull().default(60),
     /** The end of the local day whose hosted email cap notice has gone, so there's one a day. */
     emailCapNoticeUntil: timestamp("email_cap_notice_until", { withTimezone: true }),
+    /**
+     * When a Destination's confirmation mail last went. Here and not on the Destination, so neither a
+     * new Destination nor removing one gets past the limit of one a minute.
+     */
+    confirmationMailAt: timestamp("confirmation_mail_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()

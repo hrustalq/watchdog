@@ -15,8 +15,11 @@ import {
   inArray,
   isNull,
   itemLog,
+  lte,
+  or,
   sql,
   type Tx,
+  workspace,
 } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
@@ -65,28 +68,32 @@ const hashOf = (token: string) => createHash("sha256").update(token).digest("hex
 
 /** A confirmation link stays valid this long (docs: Security and privacy, "Destinations"). */
 const linkLifetime = sql`now() + interval '24 hours'`;
-/** A new link is refused until the last one is this old, so the button can't flood someone's inbox. */
-const resendAfter = sql`now() + interval '24 hours' - interval '1 minute'`;
 
 /**
- * Makes a new confirmation link and mails it, replacing any earlier link. Returns "too-soon" when the
- * last one is under a minute old. A mail that fails takes its token with it, so the next try isn't too
- * soon. The mail holds nothing the user typed, because it goes to an address nobody has confirmed.
+ * Mails a new confirmation link, which replaces any earlier one, unless the Workspace sent one in the last
+ * minute: nothing else stops someone mailing any address again and again from this screen. The mail holds
+ * nothing the user typed, because it goes to an address nobody has confirmed.
  */
-async function sendConfirmation(db: Db, deps: DestinationDeps, destinationId: string, address: string) {
-  const token = randomBytes(32).toString("base64url");
-  const tokenHash = hashOf(token);
-  const issued = await db
-    .insert(destinationConfirmation)
-    .values({ tokenHash, destinationId, expiresAt: linkLifetime })
-    .onConflictDoUpdate({
-      target: destinationConfirmation.destinationId,
-      set: { tokenHash, expiresAt: linkLifetime },
-      setWhere: sql`${destinationConfirmation.expiresAt} < ${resendAfter}`,
-    })
-    .returning({ tokenHash: destinationConfirmation.tokenHash });
-  if (issued.length === 0) return "too-soon";
+async function sendConfirmation(
+  db: Db,
+  deps: DestinationDeps,
+  workspaceId: string,
+  destinationId: string,
+  address: string,
+) {
+  const claimed = await db
+    .update(workspace)
+    .set({ confirmationMailAt: sql`now()` })
+    .where(
+      and(
+        eq(workspace.id, workspaceId),
+        or(isNull(workspace.confirmationMailAt), lte(workspace.confirmationMailAt, sql`now() - interval '1 minute'`)),
+      ),
+    )
+    .returning({ id: workspace.id });
+  if (claimed.length === 0) return "too-soon";
 
+  const token = randomBytes(32).toString("base64url");
   const url = new URL("/destinations/confirm", deps.baseURL);
   url.searchParams.set("token", token);
   try {
@@ -103,14 +110,24 @@ async function sendConfirmation(db: Db, deps: DestinationDeps, destinationId: st
       ].join("\n"),
       ...(deps.alertFrom !== undefined && { from: deps.alertFrom }),
     });
-    return "sent";
   } catch (error) {
     // The server's own answer goes to the log, because on hosted the mail server is the operator's.
     const answer = error instanceof Error ? error.message : String(error);
     process.stderr.write(`Sending a confirmation mail to Destination ${destinationId} failed: ${answer}\n`);
-    await db.delete(destinationConfirmation).where(eq(destinationConfirmation.tokenHash, tokenHash));
+    await db.update(workspace).set({ confirmationMailAt: null }).where(eq(workspace.id, workspaceId));
     return "failed";
   }
+
+  // After the mail, so one that fails leaves the link already in someone's inbox working.
+  const tokenHash = hashOf(token);
+  await db
+    .insert(destinationConfirmation)
+    .values({ tokenHash, destinationId, expiresAt: linkLifetime })
+    .onConflictDoUpdate({
+      target: destinationConfirmation.destinationId,
+      set: { tokenHash, expiresAt: linkLifetime },
+    });
+  return "sent";
 }
 
 /**
@@ -139,8 +156,7 @@ export async function addEmailDestination(
   if (saved === undefined) return { problem: "duplicate-name" } as const;
   if (own) return { destination: saved, mail: "not-needed" } as const;
 
-  const mail = await sendConfirmation(db, deps, saved.id, address);
-  return { destination: saved, mail: mail === "sent" ? "sent" : "failed" } as const;
+  return { destination: saved, mail: await sendConfirmation(db, deps, workspaceId, saved.id, address) } as const;
 }
 
 /** Sends a waiting email Destination a new link. Anything else in the Workspace is "not-found". */
@@ -159,7 +175,7 @@ export async function sendConfirmationAgain(db: Db, deps: DestinationDeps, works
     );
   const parsed = emailDestinationConfig.safeParse(waiting?.config);
   if (!parsed.success) return "not-found";
-  return sendConfirmation(db, deps, destinationId, parsed.data.address);
+  return sendConfirmation(db, deps, workspaceId, destinationId, parsed.data.address);
 }
 
 /** The address a live confirmation token is for, or undefined. It spends nothing, so a mail scanner can load the page. */
@@ -307,7 +323,8 @@ export async function actionNames(db: Db, workspaceId: string, actionIds: string
 export async function removeDestination(db: Db, workspaceId: string, destinationId: string) {
   if (!isUuid(destinationId)) return undefined;
   return db.transaction(async (tx) => {
-    // The Destination first, as a send holds it, so the two can't deadlock. A send in progress finishes first.
+    // The Destination first, as a send holds it, so the two can't deadlock. An email or Telegram send in
+    // progress finishes first. A webhook call holds no lock, so it can still reach its receiver after this.
     const [target] = await tx
       .select({ name: destination.name })
       .from(destination)
@@ -317,12 +334,15 @@ export async function removeDestination(db: Db, workspaceId: string, destination
 
     // In a statement of its own, so the check below sees a remove that finished while this one waited.
     // Otherwise two removes could each leave an enabled Action the other Destination, and it would have none.
+    // No key update, because this changes no key, and the Act stage holds key share on an Action while it
+    // waits for that Action's Destinations, which this holds. In id order, so two removes can't deadlock.
     const using = await tx
       .select({ id: action.id })
       .from(action)
       .innerJoin(actionDestination, eq(actionDestination.actionId, action.id))
       .where(eq(actionDestination.destinationId, destinationId))
-      .for("update", { of: action });
+      .orderBy(action.id)
+      .for("no key update", { of: action });
     const refused = await actionsOnlyOn(tx, workspaceId, destinationId);
     if (refused.length > 0) return { refused };
 
@@ -331,7 +351,7 @@ export async function removeDestination(db: Db, workspaceId: string, destination
       await tx
         .update(action)
         .set({
-          definition: sql`jsonb_set(${action.definition}, '{destinations}', (${action.definition}->'destinations') - ${destinationId}::text)`,
+          definition: sql`jsonb_set(${action.definition}, '{destinations}', coalesce(${action.definition}->'destinations', '[]'::jsonb) - ${destinationId}::text)`,
           // The Act stage only fires an Action saved before an Item's capture. This isn't a save, and moving
           // the time would silently skip Items already captured and still in the pipeline.
           updatedAt: sql`${action.updatedAt}`,

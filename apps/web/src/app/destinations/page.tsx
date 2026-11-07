@@ -42,11 +42,12 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
   const destinations = await listDestinations(db, workspace.id, { telegramAvailable });
 
   // Only ids and codes travel in the URL, so what it says comes from the Workspace or from fixed text.
-  const secret = await revealWebhookSecret(db, destinationDeps.encryptionKey, workspace.id, param("secret"));
   const secretFor = destinations.find(({ id }) => id === param("secret"));
   const refused = await actionsOnlyOn(db, workspace.id, param("refused"));
   const refusedName = destinations.find(({ id }) => id === param("refused"))?.name;
   const left = await actionNames(db, workspace.id, param("left").split(","));
+  // Last, because a read that fails after this would lose a secret nobody saw.
+  const secret = await revealWebhookSecret(db, destinationDeps.encryptionKey, workspace.id, param("secret"));
 
   const problem = addProblems.find((known) => known === param("error"));
   const error = problem === undefined ? undefined : {
@@ -353,10 +354,11 @@ function Outcome({
       </Notice>
     );
   }
-  if (resent === "too-soon") {
+  if (added === "too-soon" || resent === "too-soon") {
     return (
       <Notice role="status" className={quietly}>
-        A link went out less than a minute ago. Give it a moment, and check the spam folder.
+        {added === "too-soon" ? "Destination added. " : ""}A confirmation mail went out from this Workspace less than
+        a minute ago, and it sends one a minute. Press &quot;Send the link again&quot; in a minute.
       </Notice>
     );
   }

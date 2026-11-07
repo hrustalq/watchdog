@@ -18,7 +18,7 @@ import {
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { decryptSecret, egressPolicy } from "@watchdog/core";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   actionNames,
   actionsOnlyOn,
@@ -73,6 +73,12 @@ describe("Destinations", () => {
     if (result.destination === undefined) throw new Error(`Not added: ${result.problem}`);
     return result;
   };
+
+  /** The Workspace's last confirmation mail is over a minute old. */
+  const minutePasses = () => db.update(workspace).set({ confirmationMailAt: null }).where(eq(workspace.id, ours));
+  beforeEach(async () => {
+    await minutePasses();
+  });
 
   beforeAll(async () => {
     const postgres = await startPostgres();
@@ -204,21 +210,40 @@ describe("Destinations", () => {
     it("sends the link again with a new token, which replaces the old one", async () => {
       const added = await addEmail();
       const first = lastToken();
-      await db
-        .update(destinationConfirmation)
-        .set({ expiresAt: new Date(Date.now() + 23 * 60 * 60 * 1000) })
-        .where(eq(destinationConfirmation.destinationId, added.destination.id));
+      await minutePasses();
 
       expect(await sendConfirmationAgain(db, deps, ours, added.destination.id)).toBe("sent");
       expect(await confirmDestination(db, first)).toBe(false);
       expect(await confirmDestination(db, lastToken())).toBe(true);
     });
 
-    it("sends at most one link a minute to a Destination", async () => {
+    it("leaves the link already sent working when sending a new one fails", async () => {
+      const added = await addEmail();
+      const first = lastToken();
+      await minutePasses();
+      const failing: DestinationDeps = {
+        ...deps,
+        mailer: { send: () => Promise.reject(new Error("the server said no")) },
+      };
+
+      expect(await sendConfirmationAgain(db, failing, ours, added.destination.id)).toBe("failed");
+      expect(await confirmDestination(db, first)).toBe(true);
+    });
+
+    it("sends at most one confirmation mail a minute from a Workspace, however it's asked", async () => {
       const added = await addEmail();
       const before = sent.length;
+
       expect(await sendConfirmationAgain(db, deps, ours, added.destination.id)).toBe("too-soon");
+      const another = await addEmail("another@example.com");
+      expect(another.mail).toBe("too-soon");
+      expect(await stateOf(another.destination.id)).toBe("waiting-confirmation");
+      await removeDestination(db, ours, added.destination.id);
+      expect((await addEmail("third@example.com")).mail).toBe("too-soon");
       expect(sent).toHaveLength(before);
+
+      await minutePasses();
+      expect(await sendConfirmationAgain(db, deps, ours, another.destination.id)).toBe("sent");
     });
 
     it("sends nothing for a confirmed Destination or another Workspace's", async () => {
@@ -412,6 +437,28 @@ describe("Destinations", () => {
       const [logged] = await db.select().from(itemLog).where(eq(itemLog.itemId, heldItem));
       expect(logged).toMatchObject({ stage: "act", data: { actionId, destinationId: id } });
       expect(logged?.message).toContain("Not sent");
+    });
+
+    it("can't deadlock with the Act stage, which reads an Action and then its Destinations", async () => {
+      const [{ id }, other] = [await addWebhook(), await addWebhook()];
+      const actionId = await addAction("Firing", [id, other.id]);
+
+      const removed = await db.transaction(async (tx) => {
+        await tx.select({ id: action.id }).from(action).where(eq(action.id, actionId)).for("key share");
+        const removing = removeDestination(db, ours, id);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        await tx.select({ id: destination.id }).from(destination).where(eq(destination.id, id)).for("key share");
+        return removing;
+      });
+      expect(removed).toEqual({ changed: [actionId] });
+    });
+
+    it("leaves an Action whose stored definition lists no Destinations", async () => {
+      const [{ id }, other] = [await addWebhook(), await addWebhook()];
+      const actionId = await addAction("Old shape", [id, other.id]);
+      await db.update(action).set({ definition: { action: "Old shape" } }).where(eq(action.id, actionId));
+
+      expect(await removeDestination(db, ours, id)).toEqual({ changed: [actionId] });
     });
 
     it("returns nothing for another Workspace's Destination, and leaves it alone", async () => {
