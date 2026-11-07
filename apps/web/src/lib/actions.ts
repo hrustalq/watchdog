@@ -1,15 +1,15 @@
 // What only a save can know about an Action (docs: Rule model, "Actions"): the mode, and which
-// Destinations the Workspace has. The Rules screen calls this once it can save Actions.
+// Destinations the Workspace has.
 import { type Action, type Config, scheduleError } from "@watchdog/core";
 import type { destination } from "@watchdog/db";
-import type { RuleProblem } from "./rule-draft.ts";
+import { destinationFits, type RuleProblem } from "./rule-draft.ts";
 
 export type WorkspaceDestination = Pick<typeof destination.$inferSelect, "name" | "type">;
 
 function destinationError(action: Action, name: string, destinations: readonly WorkspaceDestination[]) {
   const found = destinations.find((other) => other.name === name);
   if (found === undefined) return `This Workspace has no Destination named “${name}”.`;
-  if ((found.type === "webhook") === (action.kind === "webhook")) return undefined;
+  if (destinationFits(action.kind, found.type)) return undefined;
   if (action.kind === "webhook") {
     return `A webhook Action sends only to webhook Destinations, and “${name}” isn't one.`;
   }

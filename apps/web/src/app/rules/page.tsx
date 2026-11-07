@@ -1,15 +1,24 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
+import { textLink } from "@/components/field-classes";
 import { buttonVariants } from "@/components/ui/button";
-import { type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
+import { type ActionKind, type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
 import { removeRuleAction, setRuleEnabledAction } from "./actions";
 import { RulesBreadcrumb } from "./rules-breadcrumb";
-import { appliesFromNow, kindLabel, kindsExplained, modelLink } from "./words";
+import {
+  actionApplies,
+  appliesFromNow,
+  destinationsLink,
+  kindLabel,
+  kindsExplained,
+  modelLink,
+  waitingForConfirmation,
+} from "./words";
 
 export const metadata: Metadata = { title: "Rules · Watchdog" };
 
@@ -31,11 +40,15 @@ export default function RulesPage({ searchParams }: PageProps<"/rules">) {
             Add a rule
           </h2>
           <p className="text-sm text-muted-foreground">{kindsExplained}</p>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <AddRule type="classifier" description="Sorts every Item into Categories." />
             <AddRule
               type="extractor"
               description="Pulls structured fields out of the Items that meet its Condition."
+            />
+            <AddRule
+              type="action"
+              description="Sends an alert, calls a webhook or collects a Digest when an Item meets its Condition."
             />
           </div>
         </section>
@@ -67,23 +80,31 @@ function AddRule({ type, description }: { type: RuleType; description: string })
       {kindLabel[kind]}
     </Link>
   );
+  const links =
+    type === "action" ? (
+      <Link href="/rules/new?type=action" className={buttonVariants({ variant: "outline" })}>
+        New Action
+      </Link>
+    ) : (
+      <>
+        {newRule("deterministic")}
+        {newRule("agent")}
+      </>
+    );
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-col gap-0.5">
         <h3 className="text-sm font-medium">{ruleNoun[type]}</h3>
         <p className="text-sm text-muted-foreground">{description}</p>
       </div>
-      <div className="mt-auto flex flex-wrap gap-2">
-        {newRule("deterministic")}
-        {newRule("agent")}
-      </div>
+      <div className="mt-auto flex flex-wrap gap-2">{links}</div>
     </div>
   );
 }
 
 async function RuleLists() {
   const { workspace } = await requireWorkspace();
-  const { classifiers, extractorRules, hasModel } = await listRules(server().db, workspace.id);
+  const { classifiers, extractorRules, actions, hasModel } = await listRules(server().db, workspace.id);
   return (
     <>
       <RuleList
@@ -100,6 +121,18 @@ async function RuleLists() {
         rules={extractorRules}
         hasModel={hasModel}
       />
+      <RuleList
+        type="action"
+        heading="Actions"
+        note={actionApplies}
+        empty="None yet. Nothing leaves the Feed until you add one."
+        rules={actions.map((action) => ({
+          ...action,
+          detail: <ActionDetail action={action} />,
+          noDestination: action.destinations.length === 0,
+        }))}
+        hasModel={hasModel}
+      />
     </>
   );
 }
@@ -107,19 +140,25 @@ async function RuleLists() {
 interface RuleRow {
   id: string;
   name: string;
-  kind: RuleKind;
+  kind: RuleKind | ActionKind;
   enabled: boolean;
+  /** What the row says beyond its name and kind. */
+  detail?: React.ReactNode;
+  /** An Action left with none can't be enabled until it has one. */
+  noDestination?: boolean;
 }
 
 function RuleList({
   type,
   heading,
+  note,
   empty,
   rules,
   hasModel,
 }: {
   type: RuleType;
   heading: string;
+  note?: string;
   empty: string;
   rules: RuleRow[];
   hasModel: boolean;
@@ -129,6 +168,7 @@ function RuleList({
       <h2 id={`${type}-rules`} className="text-title">
         {heading} <span className="font-normal text-muted-foreground tabular-nums">{rules.length}</span>
       </h2>
+      {note === undefined ? null : <p className="text-sm text-muted-foreground">{note}</p>}
       {rules.length === 0 ? (
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
@@ -155,6 +195,7 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
           </Link>
         </h3>
         <p className="text-xs font-medium tracking-[0.01em] text-muted-foreground">{kindLabel[rule.kind]}</p>
+        {rule.detail}
         {needsModel ? (
           <p className="text-sm text-muted-foreground">
             Disabled until this Workspace has a model.{" "}
@@ -165,23 +206,69 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
         ) : null}
       </div>
       <div className="flex shrink-0 items-start gap-2">
-        <EnableSwitch type={type} rule={rule} needsModel={needsModel} />
+        <EnableSwitch type={type} rule={rule} locked={needsModel || rule.noDestination === true} />
         <DeleteRule type={type} rule={rule} />
       </div>
     </li>
   );
 }
 
+/** What an Action does in words, where it goes, and where it can't deliver yet. */
+function ActionDetail({
+  action: { condition, schedule, destinations },
+}: {
+  action: { condition: string | null; schedule: string | null; destinations: { name: string; confirmed: boolean }[] };
+}) {
+  const waiting = destinations.filter(({ confirmed }) => !confirmed).map(({ name }) => name);
+  return (
+    <>
+      {condition === null ? (
+        <Warning>Its definition no longer parses, so it doesn&apos;t fire. Open it to fix it.</Warning>
+      ) : (
+        <p className="line-clamp-3 text-sm break-words">{condition}</p>
+      )}
+      {destinations.length === 0 ? (
+        <Warning>No Destination, so it doesn&apos;t fire. Open it to add one.</Warning>
+      ) : (
+        <p className="text-sm break-words text-muted-foreground">To {destinations.map(({ name }) => name).join(", ")}</p>
+      )}
+      {schedule === null ? null : (
+        <p className="text-sm text-muted-foreground">
+          Schedule <span className="font-mono text-[0.8125rem]">{schedule}</span>
+        </p>
+      )}
+      {waiting.length === 0 ? null : (
+        <Warning>
+          {waitingForConfirmation(waiting)}{" "}
+          <Link href={destinationsLink} className={textLink}>
+            Go to Destinations
+          </Link>
+        </Warning>
+      )}
+    </>
+  );
+}
+
+/** Why an Action that looks enabled won't deliver: a lamp and full-strength text, unlike the row's other lines. */
+function Warning({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="flex items-baseline gap-2 text-sm">
+      <span aria-hidden="true" className="size-1.5 shrink-0 translate-y-[-1px] rounded-full bg-caution" />
+      <span className="min-w-0 break-words">{children}</span>
+    </p>
+  );
+}
+
 /** A form with one button, so it works without JavaScript. The word says what color alone wouldn't. */
-function EnableSwitch({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; needsModel: boolean }) {
-  const on = rule.enabled && !needsModel;
+function EnableSwitch({ type, rule, locked }: { type: RuleType; rule: RuleRow; locked: boolean }) {
+  const on = rule.enabled && !locked;
   return (
     <form action={setRuleEnabledAction.bind(null, type, rule.id, !rule.enabled)}>
       <button
         type="submit"
         role="switch"
         aria-checked={on}
-        disabled={needsModel}
+        disabled={locked}
         className="group flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-muted/50"
       >
         <span className="sr-only">{rule.name}: </span>
@@ -196,7 +283,10 @@ function EnableSwitch({ type, rule, needsModel }: { type: RuleType; rule: RuleRo
 
 /** Delete, then a confirmation in the page. A disclosure works without JavaScript, unlike confirm(). */
 function DeleteRule({ type, rule }: { type: RuleType; rule: RuleRow }) {
-  const kept = type === "classifier" ? "Categories it already assigned" : "fields it already extracted";
+  const consequence =
+    type === "action"
+      ? "Deleting it stops it firing, and anything it hasn't sent yet never goes out. The Log keeps what it did."
+      : `Deleting ${rule.name} stops it running. The ${type === "classifier" ? "Categories it already assigned" : "fields it already extracted"} stay on their Items.`;
   return (
     <details className="group sm:max-w-64">
       <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
@@ -209,8 +299,7 @@ function DeleteRule({ type, rule }: { type: RuleType; rule: RuleRow }) {
       </summary>
       <div className="mt-2 flex flex-col gap-3 rounded-lg border p-3">
         <p className="text-sm">
-          Deleting {rule.name} stops it running. The {kept} stay on their Items. This can&apos;t be
-          undone.
+          {consequence} This can&apos;t be undone.
         </p>
         <form action={removeRuleAction.bind(null, type, rule.id)}>
           {/* A lighter tint than the button's own, which leaves its text at 3.3:1. */}

@@ -13,8 +13,10 @@ import {
   isNull,
   item,
   itemLog,
+  lt,
   lte,
   or,
+  sentMessage,
   source,
   type SQL,
   sql,
@@ -236,19 +238,11 @@ async function applySchedule(
       },
     );
 
-  // One time for each message, because the rows of a Grouped alert count as one.
   const sends = await tx
-    .select({ at: sql<Date>`max(${delivery.sentAt})`.mapWith(delivery.sentAt) })
-    .from(delivery)
-    .where(
-      and(
-        eq(delivery.destinationId, target.id),
-        eq(delivery.status, "sent"),
-        gt(delivery.sentAt, new Date(now.getTime() - hourMs)),
-      ),
-    )
-    .groupBy(sql`coalesce(${delivery.groupId}, ${delivery.id})`)
-    .orderBy(sql`max(${delivery.sentAt})`);
+    .select({ at: sentMessage.sentAt })
+    .from(sentMessage)
+    .where(and(eq(sentMessage.destinationId, target.id), gt(sentMessage.sentAt, new Date(now.getTime() - hourMs))))
+    .orderBy(sentMessage.sentAt);
   const recentSends = sends.map(({ at }) => at);
 
   let groupId: string | undefined;
@@ -281,6 +275,23 @@ async function applySchedule(
   for (const row of sending) await hold(row, capEnd, capReason, null);
   await queueCapNoticeOnce(tx, settings, capEnd, emailCap);
   return [];
+}
+
+/** Counts a message against the rate limit and the hosted email cap (ADR 0030). A webhook isn't counted. */
+export async function recordSentMessage(tx: Tx, target: Destination, sentAt: Date) {
+  if (target.type === "webhook") return;
+  await tx
+    .insert(sentMessage)
+    .values({ workspaceId: target.workspaceId, destinationId: target.id, type: target.type, sentAt });
+}
+
+/**
+ * Forgets messages too old for either limit: the cap reads back to the start of a local day, under 24
+ * hours ago. The worker's sweep runs this, outside any send, because a failure here mustn't undo the
+ * record of a message that has already gone, and a retry would send it twice.
+ */
+export async function purgeSentMessages(db: Db) {
+  await db.delete(sentMessage).where(lt(sentMessage.sentAt, sql`now() - interval '48 hours'`));
 }
 
 /**
@@ -372,6 +383,7 @@ async function send(
   }
   // Not from `target`, which a webhook's unlocked send read before another send to it could fail.
   await recording(async (tx) => {
+    await recordSentMessage(tx, target, sentAt);
     await tx
       .update(destination)
       .set({ lastError: null, lastErrorAt: null })

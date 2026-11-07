@@ -3,6 +3,7 @@ import { check, index, integer, pgTable, primaryKey, text, timestamp, unique, uu
 import { destination } from "./destination.ts";
 import { item } from "./item.ts";
 import { ruleColumns } from "./rule.ts";
+import { workspace } from "./workspace.ts";
 
 /**
  * The third type of rule: what happens outside the Feed when an Item meets a Condition (docs:
@@ -72,7 +73,7 @@ export const delivery = pgTable(
     attempts: integer("attempts").notNull().default(0),
     /** When a held or grouped Delivery goes, or a failed attempt is retried. */
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
-    /** The Grouped alert it waits for or went out in. The rows of one share it, and it counts as one message. */
+    /** The Grouped alert it waits for or went out in. The rows of one share it. */
     groupId: uuid("group_id"),
     /** When a hold ended, from which its 24 hours of retries run. Without a hold, they run from created_at. */
     retryFrom: timestamp("retry_from", { withTimezone: true }),
@@ -95,6 +96,32 @@ export const delivery = pgTable(
       .where(sql`${table.status} in ('held', 'grouped')`),
     // The Log's view of an Item, and the cascade when the Item is deleted.
     index("delivery_item_id_idx").on(table.itemId),
+  ],
+);
+
+/**
+ * One Telegram message or mail that went out, which the rate limit and the hosted email cap count (ADR
+ * 0030). Apart from `delivery`, whose rows go with their Action, Item or Destination, because deleting and
+ * making one again mustn't reset a count. A Grouped alert is one row. A webhook isn't counted.
+ */
+export const sentMessage = pgTable(
+  "sent_message",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    /** Null once the Destination is deleted: its rate limit goes with it, and the Workspace's cap doesn't. */
+    destinationId: uuid("destination_id").references(() => destination.id, { onDelete: "set null" }),
+    type: text("type", { enum: ["telegram", "email"] }).notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    check("sent_message_type_check", sql`${table.type} in ('telegram', 'email')`),
+    index("sent_message_workspace_id_sent_at_idx").on(table.workspaceId, table.sentAt),
+    index("sent_message_destination_id_sent_at_idx").on(table.destinationId, table.sentAt),
+    // The worker's sweep forgets old rows across every Workspace.
+    index("sent_message_sent_at_idx").on(table.sentAt),
   ],
 );
 

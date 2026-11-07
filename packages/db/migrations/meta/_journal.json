@@ -92,6 +92,13 @@
       "when": 1794011038354,
       "tag": "0012_destination_confirmation",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1794050931244,
+      "tag": "0013_sent_message",
+      "breakpoints": true
     }
   ]
 }

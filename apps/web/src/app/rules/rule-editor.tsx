@@ -6,12 +6,22 @@ import { useRouter } from "next/navigation";
 import { startTransition, useActionState, useEffect, useRef, useState } from "react";
 import { dataBox, fieldError, label, textBox } from "@/components/field-classes";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { type Draft, formShows, kindOf, readDraft, type RuleProblem, yamlWithoutScript } from "@/lib/rule-draft";
+import {
+  type DeclaredField,
+  type DestinationChoice,
+  type Draft,
+  formShows,
+  kindOf,
+  readDraft,
+  type RuleProblem,
+  ruleTypeOf,
+  yamlWithoutScript,
+} from "@/lib/rule-draft";
 import type { RuleTarget } from "@/lib/rules";
 import { cn } from "@/lib/utils";
 import { saveRuleAction } from "./actions";
-import { RuleForm } from "./rule-form";
-import { appliesFromNow, modelLink } from "./words";
+import { RuleForm, WaitingNotice } from "./rule-form";
+import { actionApplies, appliesFromNow, modelLink } from "./words";
 
 const yamlBox = cn(textBox, dataBox, "min-h-80 py-2 leading-[1.5]");
 
@@ -27,6 +37,9 @@ interface RuleEditorProps {
   initialProblems: RuleProblem[];
   hasModel: boolean;
   sources: { id: string; name: string }[];
+  destinations: DestinationChoice[];
+  declared: DeclaredField[];
+  scheduleHelp: string;
 }
 
 /**
@@ -44,7 +57,16 @@ export function RuleEditor(props: RuleEditorProps) {
  * only checked when saved, on the server, so moving between the views can't lose a value. Whichever
  * view is open, the server is sent YAML.
  */
-function Editor({ target, initialYaml, initialProblems, hasModel, sources }: RuleEditorProps) {
+function Editor({
+  target,
+  initialYaml,
+  initialProblems,
+  hasModel,
+  sources,
+  destinations,
+  declared,
+  scheduleHelp,
+}: RuleEditorProps) {
   const [state, formAction, pending] = useActionState(saveRuleAction.bind(null, target), {
     problems: initialProblems,
   });
@@ -62,6 +84,7 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
   // The YAML view is the draft while it's open, so what it says now decides the notice below.
   const readYaml = view === "yaml" ? readDraft(yaml) : undefined;
   const current = readYaml !== undefined && "draft" in readYaml ? readYaml.draft : draft;
+  const isAction = ruleTypeOf(current) === "action";
 
   // A refusal moves focus to the first thing to fix, as on Sources.
   useEffect(() => {
@@ -147,6 +170,9 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
           <RuleForm
             draft={draft}
             sources={sources}
+            destinations={destinations}
+            declared={declared}
+            scheduleHelp={scheduleHelp}
             problems={problems}
             onEdit={setDraft}
             onReshape={(next) => {
@@ -178,6 +204,7 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
               </div>
             )}
             <ProblemList id="rule-yaml-problems" problems={problems} />
+            {isAction ? <WaitingNotice destinations={destinations} listed={current.destinations} /> : null}
           </div>
         )}
 
@@ -200,7 +227,7 @@ function Editor({ target, initialYaml, initialProblems, hasModel, sources }: Rul
             ) : null}
           </div>
         )}
-        <p className="text-sm text-muted-foreground">{appliesFromNow}</p>
+        <p className="text-sm text-muted-foreground">{isAction ? actionApplies : appliesFromNow}</p>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button type="submit" disabled={pending} className="w-full sm:w-auto">
             {pending ? "Saving…" : "Save rule"}

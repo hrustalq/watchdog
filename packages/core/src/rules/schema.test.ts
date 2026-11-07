@@ -408,6 +408,43 @@ describe("actionSchema", () => {
     expect(issue?.path).toEqual(["schedule"]);
   });
 
+  it.each([
+    ["a word", "is", "high"],
+    ["a number as text", "is", "4"],
+    ["a level above the scale", "gte", 9],
+    ["a level below the scale", "lte", 0],
+    ["a fraction", "is", 2.5],
+    ["a word in a list", "in", [4, "high"]],
+    ["text to find", "contains", "4"],
+    ["a pattern", "matches", "4"],
+  ])("refuses a Rating test on %s, beside its value", (_, op, value) => {
+    for (const field of ["severity", "importance"]) {
+      const issue = issuesOf(actionSchema.safeParse({ ...alert, when: { not: { field, op, value } } }))[0];
+      expect(issue?.message).toContain("1 to 5");
+      expect(issue?.path).toEqual(["when", "not", "value"]);
+    }
+  });
+
+  it.each([
+    ["is", 1],
+    ["gte", 5],
+    ["lte", 3],
+    ["in", [1, 5]],
+  ])("accepts a Rating test with %s %j", (op, value) => {
+    expect(actionSchema.safeParse({ ...alert, when: { field: "severity", op, value } }).success).toBe(true);
+  });
+
+  it("lets a Condition test whether an Item has a Rating", () => {
+    const exists = { field: "importance", op: "exists" };
+    expect(actionSchema.safeParse({ ...alert, when: exists }).success).toBe(true);
+  });
+
+  it.each(["", "   "])("refuses a blank schedule %j as blank, beside the field", (schedule) => {
+    const issue = issuesOf(actionSchema.safeParse({ ...digest, schedule }))[0];
+    expect(issue?.message).not.toContain("cron");
+    expect(issue?.path).toEqual(["schedule"]);
+  });
+
   it("leaves a schedule's minimum interval to the save, which knows the mode", () => {
     expect(actionSchema.safeParse({ ...digest, schedule: "* * * * *" }).success).toBe(true);
   });

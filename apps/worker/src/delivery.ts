@@ -1,5 +1,12 @@
 // Sends each Delivery in its own job (docs: Actions and delivery, "Deliveries"; ADR 0028).
-import { deliver, type DeliverDeps, type EmailCap, type ProcessItemDeps, releaseDueDeliveries } from "@watchdog/core";
+import {
+  deliver,
+  type DeliverDeps,
+  type EmailCap,
+  type ProcessItemDeps,
+  purgeSentMessages,
+  releaseDueDeliveries,
+} from "@watchdog/core";
 import { type Db, sql } from "@watchdog/db";
 import { fromDrizzle, type PgBoss } from "pg-boss";
 
@@ -108,7 +115,10 @@ export async function startDelivery(
 
   // pg-boss runs a schedule once a minute however many workers there are. The first sweep doesn't wait
   // for it, so what came due while no worker ran goes at once.
-  await boss.work(sweepQueue, () => enqueueDueDeliveries(db, boss));
+  await boss.work(sweepQueue, async () => {
+    await enqueueDueDeliveries(db, boss);
+    await purgeSentMessages(db);
+  });
   await boss.schedule(sweepQueue, "* * * * *");
   await boss.send(sweepQueue);
 }

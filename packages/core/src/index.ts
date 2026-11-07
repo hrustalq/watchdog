@@ -11,7 +11,7 @@ export {
   type EgressRule,
   urlIpLiteral,
 } from "./egress/egress.ts";
-export { deliver, type DeliverDeps, releaseDueDeliveries, type Sender } from "./delivery/deliver.ts";
+export { deliver, type DeliverDeps, purgeSentMessages, releaseDueDeliveries, type Sender } from "./delivery/deliver.ts";
 export { type EmailCap, sendEmailCapNotice } from "./delivery/email-cap.ts";
 export { createEmailSender, emailDestinationConfig } from "./delivery/email.ts";
 export { createTelegramSender } from "./delivery/telegram.ts";
@@ -30,7 +30,7 @@ export {
   NotAFeedError,
 } from "./sources/rss/fetch-feed.ts";
 export { createMailer, type MailMessage, type Mailer } from "./mail/mailer.ts";
-export { defaultSchedule, nextPollAt, scheduleError } from "./schedule.ts";
+export { defaultSchedule, minimumMinutes, nextPollAt, scheduleError } from "./schedule.ts";
 export { decryptSecret, encryptSecret } from "./secrets/secrets.ts";
 export {
   type ConditionItem,

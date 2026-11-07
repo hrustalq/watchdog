@@ -140,7 +140,7 @@ export const conditionSchema = z
 export function* predicates(
   condition: Condition,
   path: PropertyKey[] = [],
-): Generator<{ field: string; path: PropertyKey[] }> {
+): Generator<{ field: string; predicate: Predicate; path: PropertyKey[] }> {
   if ("all" in condition) {
     for (const [i, child] of condition.all.entries()) yield* predicates(child, [...path, "all", i]);
   } else if ("any" in condition) {
@@ -148,7 +148,7 @@ export function* predicates(
   } else if ("not" in condition) {
     yield* predicates(condition.not, [...path, "not"]);
   } else {
-    yield { field: condition.field, path: [...path, "field"] };
+    yield { field: condition.field, predicate: condition, path: [...path, "field"] };
   }
 }
 
@@ -273,7 +273,24 @@ const destinations = z
   });
 
 // This schema has no mode, so it asks only for a cron expression. A save applies the mode's minimum.
-const digestSchedule = z.string().trim().pipe(refusedBy(scheduleError));
+const digestSchedule = z.string().trim().min(1).pipe(refusedBy(scheduleError));
+
+// A Rating is a whole number, so `is 2.5` could never hold.
+const isOnRatingScale = (value: unknown) => typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5;
+
+/** A Rating test that no Item could meet saves as if it worked and never fires, or under `not`, always. */
+const actionWhen = conditionSchema.superRefine((condition, ctx) => {
+  for (const { field, predicate, path } of predicates(condition)) {
+    if (!ratingFields.includes(field) || predicate.op === "exists") continue;
+    if (![predicate.value].flat().every(isOnRatingScale)) {
+      ctx.addIssue({
+        code: "custom",
+        path: [...path.slice(0, -1), "value"],
+        message: `"${field}" is rated 1 to 5, so a test on it takes those whole numbers.`,
+      });
+    }
+  }
+});
 
 // An Action runs after every other stage, so its Condition can test any field (docs: Rule model,
 // "What each rule can test"). The keys are in the order the Rule model page writes them.
@@ -282,13 +299,13 @@ export const actionSchema = z.discriminatedUnion(
   [
     z.strictObject({
       action: label,
-      when: conditionSchema,
+      when: actionWhen,
       kind: z.enum(["alert", "webhook"]),
       destinations,
     }),
     z.strictObject({
       action: label,
-      when: conditionSchema,
+      when: actionWhen,
       kind: z.literal("digest"),
       schedule: digestSchedule,
       destinations,

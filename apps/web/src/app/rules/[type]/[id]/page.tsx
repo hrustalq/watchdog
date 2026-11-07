@@ -18,7 +18,7 @@ export default async function EditRulePage({ params, searchParams }: PageProps<"
   const rule = (await getRule(server().db, workspace.id, type, id)) ?? notFound();
   return (
     <EditorScreen
-      workspaceId={workspace.id}
+      workspace={workspace}
       target={{ type, id }}
       heading={rule.name}
       detail={`${ruleNoun[type]} · ${kindLabel[rule.kind]}`}

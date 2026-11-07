@@ -43,7 +43,8 @@ export async function saveRuleAction(
   const posted = typeof withoutScript === "string" ? withoutScript : formData.get("yaml");
   const yaml = typeof posted === "string" ? posted : "";
 
-  const result = await saveRule(server().db, workspace.id, target, yaml);
+  const { db, mode } = server();
+  const result = await saveRule(db, workspace.id, target, yaml, mode);
   if ("saved" in result) redirect("/rules?saved=1");
   if (typeof withoutScript === "string") redirect(editorWithDraft(target, yaml));
   return { problems: result.problems };

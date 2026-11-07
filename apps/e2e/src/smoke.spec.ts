@@ -27,16 +27,35 @@ async function signInAgain(page: Page) {
   await page.getByRole("button", { name: "Sign in to Watchdog" }).click();
 }
 
-/** From the Workspace, opens a new Classifier in the Form view. */
-async function openNewClassifier(page: Page, kind: "Deterministic" | "Agent-backed") {
-  await page.getByRole("link", { name: "Rules", exact: true }).click();
-  await page.getByRole("link", { name: `New ${kind} Classifier` }).click();
+/** On a rule editor that just loaded, waits until it responds, and leaves it in the Form view. */
+async function waitForEditor(page: Page) {
   // A click does nothing until React has hydrated the page. From here on, navigation is client-side.
   await expect(async () => {
     await page.getByRole("button", { name: "YAML", exact: true }).click();
     await expect(visibleField(page, "Rule as YAML")).toBeVisible({ timeout: 1_000 });
   }).toPass({ timeout: 30_000 });
   await page.getByRole("button", { name: "Form", exact: true }).click();
+}
+
+/** From the Workspace, opens a new Classifier in the Form view. */
+async function openNewClassifier(page: Page, kind: "Deterministic" | "Agent-backed") {
+  await page.getByRole("link", { name: "Rules", exact: true }).click();
+  await page.getByRole("link", { name: `New ${kind} Classifier` }).click();
+  await waitForEditor(page);
+}
+
+/** On the Destinations screen, adds one through the form under `opener`. */
+async function addDestination(page: Page, opener: string, name: string, field: string, value: string, submit: string) {
+  await page.goto(new URL("/destinations", page.url()).href);
+  const form = page.locator("details", { has: page.locator("summary", { hasText: opener }) });
+  // As on Sources, the streamed form replaces the first copy, and that drops what was typed.
+  await expect(async () => {
+    if ((await form.getAttribute("open")) === null) await form.locator("summary").click();
+    await form.getByLabel("Name", { exact: true }).fill(name);
+    await form.getByLabel(field, { exact: true }).fill(value);
+    await form.getByRole("button", { name: submit }).click();
+    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible({ timeout: 10_000 });
+  }).toPass({ timeout: 30_000 });
 }
 
 async function saveRule(page: Page) {
@@ -142,8 +161,8 @@ test("a new install with no model classifies its first RSS Source's Items and le
 // because a hard load remounts the page and hides what Next.js keeps across navigations (Activity).
 // It runs before the rate limit test below, which uses up the sign-in bucket.
 test("the Rules editor keeps a draft only where it should, with and without JavaScript", async ({ page, browser }) => {
-  // Two log reads and a wait for hydration leave too little of the default for the rest on a slow runner.
-  test.setTimeout(120_000);
+  // Log reads and waits for hydration leave too little of the default for the rest on a slow runner.
+  test.setTimeout(240_000);
   const field = (label: string) => visibleField(page, label);
   const name = field("Name");
   const operator = field("Operator");
@@ -257,6 +276,97 @@ test("the Rules editor keeps a draft only where it should, with and without Java
 
     await page.goto(new URL("/rules", page.url()).href);
     await expect(page.getByRole("link", { name: "Written without JavaScript" })).toBeVisible();
+  });
+
+  const inbox = page.getByRole("checkbox", { name: /^Smoke inbox/ });
+  const elsewhere = page.getByRole("checkbox", { name: /^Other inbox/ });
+  const hook = page.getByRole("checkbox", { name: /^Smoke hook/ });
+  const kind = field("Kind");
+  const newAction = page.getByRole("link", { name: "New Action" });
+  const savedAction = page.getByRole("link", { name: "Severe alerts", exact: true });
+
+  await test.step("an Action's form and YAML views edit one draft, and it saves", async () => {
+    await addDestination(page, "Email address", "Smoke inbox", "Address", email, "Add email address");
+    await addDestination(page, "Email address", "Other inbox", "Address", "other@example.com", "Add email address");
+    await addDestination(page, "Webhook URL", "Smoke hook", "URL", "http://fixtures/hook", "Add webhook");
+    await page.goto(new URL("/rules", page.url()).href);
+    await newAction.click();
+    await waitForEditor(page);
+
+    await name.fill("Half written Action");
+    await field("Field").selectOption("severity");
+    await expect(operator).toHaveValue("gte");
+    await value.fill("4");
+    await inbox.check();
+    await showYaml.click();
+    await expect(yaml).toHaveValue(/field: severity\n\s+op: gte\n\s+value: 4\n/);
+    await expect(yaml).toHaveValue(/destinations:\n\s+- Smoke inbox\n/);
+    await yaml.fill((await yaml.inputValue()).replace("Half written Action", "Severe alerts"));
+    await showForm.click();
+    await expect(name).toHaveValue("Severe alerts");
+    await expect(inbox).toBeChecked();
+    await saveRule(page);
+    await expect(page.getByText("Severity is at least 4", { exact: true }).locator("visible=true")).toBeVisible();
+    await expect(page.getByText("To Smoke inbox", { exact: true }).locator("visible=true")).toBeVisible();
+  });
+
+  await test.step("New is blank after an Action is saved, and an opened one shows its saved values", async () => {
+    await newAction.click();
+    await expect(name).toHaveValue("");
+    await expect(inbox).not.toBeChecked();
+    await cancel.click();
+    await savedAction.click();
+    await expect(name).toHaveValue("Severe alerts");
+    await name.fill("Abandoned edit");
+    await cancel.click();
+    await savedAction.click();
+    await expect(name).toHaveValue("Severe alerts");
+    await expect(field("Field")).toHaveValue("severity");
+    await cancel.click();
+  });
+
+  await test.step("the form offers only the Destinations the kind allows, and the YAML can't sneak one in", async () => {
+    await newAction.click();
+    await expect(hook).toHaveCount(0);
+    await kind.selectOption("webhook");
+    await expect(hook).toBeVisible();
+    await expect(inbox).toHaveCount(0);
+
+    await name.fill("Wrong Destination");
+    await value.fill("launch");
+    await showYaml.click();
+    await yaml.fill((await yaml.inputValue()).replace("destinations: []", "destinations:\n  - Smoke inbox"));
+    await save.click();
+    await expect(page.getByRole("listitem").filter({ hasText: "“Smoke inbox” isn't one" })).toBeVisible();
+    await showForm.click();
+    await expect(inbox).toBeChecked();
+    await expect(inbox).toHaveAccessibleDescription(/“Smoke inbox” isn't one/);
+    await cancel.click();
+  });
+
+  await test.step("a Digest with no schedule is refused beside the field, and an unconfirmed Destination gets a notice", async () => {
+    const schedule = field("Schedule");
+    const waiting = page.getByText(/Won't deliver to Other inbox until it's confirmed\./).locator("visible=true");
+    await newAction.click();
+    await kind.selectOption("digest");
+    await name.fill("Weekly");
+    await value.fill("launch");
+    await elsewhere.check();
+    await expect(waiting).toBeVisible();
+    await save.click();
+    await expect(schedule).toHaveAccessibleDescription(/can't be blank/);
+    await expect(schedule).toBeFocused();
+    await schedule.fill("0 9 * * 1");
+    await saveRule(page);
+    await expect(waiting).toBeVisible();
+  });
+
+  await test.step("the switch disables an Action, so the later tests' Items fire nothing", async () => {
+    for (const action of ["Severe alerts", "Weekly"]) {
+      const on = page.getByRole("switch", { name: new RegExp(`^${action}:`) });
+      await on.click();
+      await expect(on).toHaveAttribute("aria-checked", "false");
+    }
   });
 });
 
