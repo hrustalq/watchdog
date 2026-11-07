@@ -6,7 +6,8 @@ import type { AlertMessage } from "./content.ts";
 import { FinalSendError, type Sender } from "./deliver.ts";
 import { groupedAlertText, oneLine } from "./group.ts";
 
-const config = z.object({ address: z.email() });
+/** An email Destination's settings: one valid address, because a list would reach people who never confirmed. */
+export const emailDestinationConfig = z.object({ address: z.email() });
 
 /** What the Rating scale says a level means, which reads as a word for how urgent an Item is. */
 function severityWord(severity: number | null) {
@@ -29,7 +30,7 @@ export function createEmailSender(mailer: Mailer, from: string | undefined): Sen
   return {
     send: async (destination, message) => {
       if (destination.confirmedAt === null) throw new FinalSendError("the address isn't confirmed yet");
-      const parsed = config.safeParse(destination.config);
+      const parsed = emailDestinationConfig.safeParse(destination.config);
       if (!parsed.success) throw new FinalSendError("the Destination has no valid address");
 
       const grouped = "lines" in message;

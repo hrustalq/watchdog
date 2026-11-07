@@ -24,6 +24,8 @@ export const destination = pgTable(
      * packages/core. Null until there is one.
      */
     secretCiphertext: text("secret_ciphertext"),
+    /** When a webhook secret was shown. Null until then, and it is shown only while this is null. */
+    secretShownAt: timestamp("secret_shown_at", { withTimezone: true }),
     /** Null for an unconfirmed email address or an unlinked Telegram chat. */
     confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
     lastError: text("last_error"),
@@ -39,6 +41,20 @@ export const destination = pgTable(
     unique("destination_workspace_id_name_key").on(table.workspaceId, table.name),
   ],
 );
+
+/**
+ * The link that confirms an email Destination (docs: Security and privacy, "Destinations"). Only the
+ * SHA-256 hash is stored, as for the setup token. A Destination has one live link: sending it again
+ * replaces this row, and using it deletes the row.
+ */
+export const destinationConfirmation = pgTable("destination_confirmation", {
+  tokenHash: text("token_hash").primaryKey(),
+  destinationId: uuid("destination_id")
+    .notNull()
+    .unique()
+    .references(() => destination.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+});
 
 /**
  * A code from a Telegram deep link, waiting for the bot to be sent `/start <code>` (ADR 0029).

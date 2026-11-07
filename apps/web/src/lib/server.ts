@@ -1,4 +1,4 @@
-import { createAgentFetch, createEgressFetch, createMailer, loadConfig } from "@watchdog/core";
+import { createAgentFetch, createEgressFetch, createMailer, egressPolicy, loadConfig } from "@watchdog/core";
 import { createDb } from "@watchdog/db";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
@@ -10,12 +10,13 @@ import { workspaceFor } from "./workspace.ts";
 function start() {
   const config = loadConfig();
   const db = createDb(config.databaseUrl);
+  const mailer = createMailer(config);
   const auth = createAuth({
     mode: config.mode,
     baseURL: config.auth.url,
     secret: config.auth.secret,
     db,
-    mailer: createMailer(config),
+    mailer,
     oauth: config.oauth,
   });
   return {
@@ -31,6 +32,15 @@ function start() {
     baseURL: config.auth.url,
     // On a self-hosted install without SMTP, magic links go to the web log instead.
     mailGoesToLog: config.smtp === undefined,
+    /** What the Destinations screen saves and mails with. */
+    destinationDeps: {
+      mailer,
+      alertFrom: config.smtp?.alertFrom,
+      baseURL: config.auth.url,
+      encryptionKey: config.encryptionKey,
+      egressAllows: egressPolicy(config),
+    },
+    telegramAvailable: config.telegram.botToken !== undefined,
     /** The OAuth providers the sign-in page offers. Names only: secrets never leave the server. */
     providers: enabledProviders(config.oauth),
   };

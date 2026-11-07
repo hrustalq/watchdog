@@ -24,6 +24,7 @@ const confirmed: Destination = {
   name: "me",
   config: { address: "me@example.com" },
   secretCiphertext: null,
+  secretShownAt: null,
   confirmedAt: new Date(),
   lastError: null,
   lastErrorAt: null,
