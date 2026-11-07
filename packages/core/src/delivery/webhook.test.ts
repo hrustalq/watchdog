@@ -57,7 +57,7 @@ function receiver(answer: () => Promise<Response>) {
     requests.push({ url: String(input), headers: new Headers(init?.headers), body, method: init?.method });
     return answer();
   };
-  return { requests, sender: createWebhookSender({ fetch, encryptionKey }) };
+  return { requests, sender: createWebhookSender({ fetch, encryptionKey, mode: "hosted" }) };
 }
 
 const answering = (status: number, text: string | null = null) =>
@@ -181,7 +181,24 @@ describe("the webhook sender", () => {
     const error = await failure(sender.send(hook, message));
 
     expect(error).toBeInstanceOf(FinalSendError);
-    expect(error.message).toMatch(/private, local or non-web address/);
+    expect(error.message).toBe(
+      "the URL, or a redirect from it, goes to a private, local or non-web address, which Watchdog doesn't call",
+    );
+    expect(error.message).not.toContain("10.0.0.5");
+  });
+
+  it("says on self-hosted how to allow a blocked address", async () => {
+    const blocked = new EgressBlockedError("hooks.test", "it resolves to the blocked address 10.0.0.5", "10.0.0.5");
+    const sender = createWebhookSender({
+      fetch: () => Promise.reject(blocked),
+      encryptionKey,
+      mode: "self-hosted",
+    });
+
+    const error = await failure(sender.send(hook, message));
+
+    expect(error).toBeInstanceOf(FinalSendError);
+    expect(error.message).toMatch(/non-web address, which Watchdog doesn't call\. .*EGRESS_ALLOWLIST/);
     expect(error.message).not.toContain("10.0.0.5");
   });
 

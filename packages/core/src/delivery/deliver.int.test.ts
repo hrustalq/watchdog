@@ -477,6 +477,7 @@ describe("deliver", () => {
 
     const webhook = createWebhookSender({
       encryptionKey,
+      mode: "hosted",
       fetch: createEgressFetch(
         { mode: "self-hosted", egressAllowlist: [{ type: "host", host: "receiver.test" }] },
         {
@@ -631,7 +632,8 @@ describe("deliver", () => {
       expect(received).toEqual([]);
       expect(retries).toEqual([]);
       expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "failed", attempts: 1 });
-      const reason = "the URL is a private, local or non-web address, which Watchdog doesn't call";
+      const reason =
+        "the URL, or a redirect from it, goes to a private, local or non-web address, which Watchdog doesn't call";
       expect(await actLog(seeded.itemId)).toMatchObject([
         { message: `Sending to ops-chat failed: ${reason}. It won't be retried` },
       ]);
@@ -647,6 +649,22 @@ describe("deliver", () => {
       .set({ lastError: "Chat unreachable", lastErrorAt: new Date() })
       .where(eq(destination.id, seeded.destinationId));
     const { deps } = recording();
+
+    await deliver(db, seeded.deliveryId, deps);
+
+    const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
+    expect(shown).toMatchObject({ lastError: null, lastErrorAt: null });
+  });
+
+  it("clears an error that another send to the Destination recorded while this one was on its way", async () => {
+    const seeded = await seed();
+    await db.update(destination).set({ type: "webhook" }).where(eq(destination.id, seeded.destinationId));
+    const { deps } = recording(async () => {
+      await db
+        .update(destination)
+        .set({ lastError: "The receiver answered 404", lastErrorAt: new Date() })
+        .where(eq(destination.id, seeded.destinationId));
+    });
 
     await deliver(db, seeded.deliveryId, deps);
 

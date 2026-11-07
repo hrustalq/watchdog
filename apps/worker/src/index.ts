@@ -54,7 +54,7 @@ await startDelivery(deliveryDb, boss, {
       encryptionKey: config.encryptionKey,
     }),
     email: createEmailSender(mailer, alertFrom),
-    webhook: createWebhookSender({ fetch: egressFetch, encryptionKey: config.encryptionKey }),
+    webhook: createWebhookSender({ fetch: egressFetch, encryptionKey: config.encryptionKey, mode: config.mode }),
   },
   appUrl: config.auth.url,
   ...(config.mode === "hosted" && {

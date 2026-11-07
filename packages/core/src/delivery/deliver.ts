@@ -9,6 +9,7 @@ import {
   eq,
   gt,
   inArray,
+  isNotNull,
   isNull,
   item,
   itemLog,
@@ -369,11 +370,13 @@ async function send(
       ),
     );
   }
-  if (target.lastError !== null) {
-    await recording(async (tx) => {
-      await tx.update(destination).set({ lastError: null, lastErrorAt: null }).where(eq(destination.id, target.id));
-    });
-  }
+  // Not from `target`, which a webhook's unlocked send read before another send to it could fail.
+  await recording(async (tx) => {
+    await tx
+      .update(destination)
+      .set({ lastError: null, lastErrorAt: null })
+      .where(and(eq(destination.id, target.id), isNotNull(destination.lastError)));
+  });
 }
 
 /**
