@@ -508,7 +508,7 @@ function DestinationList({ hidden }: { hidden: boolean }) {
             <ul className="flex flex-col gap-1">
               {rows.map(({ entry, note }, position) => (
                 <li key={entry}>
-                  <label className="flex min-h-11 cursor-pointer items-center gap-2 text-sm sm:min-h-8">
+                  <label className="flex min-h-8 cursor-pointer items-center gap-2 text-sm">
                     <input
                       type="checkbox"
                       checked={list.includes(entry)}
