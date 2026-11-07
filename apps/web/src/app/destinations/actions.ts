@@ -40,7 +40,8 @@ export async function addWebhookAction(formData: FormData) {
   const values = { name: text(formData, "name"), url: text(formData, "url") };
   const { db, destinationDeps } = server();
   const result = await addWebhookDestination(db, destinationDeps, workspace.id, values);
-  if ("problem" in result) back({ form: "webhook", error: result.problem, ...values });
+  // Not the URL, which can hold a secret and would stay in the history and any access log.
+  if ("problem" in result) back({ form: "webhook", error: result.problem, name: values.name });
   back({ secret: result.destination.id });
 }
 

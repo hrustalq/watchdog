@@ -162,6 +162,17 @@ export async function sendConfirmationAgain(db: Db, deps: DestinationDeps, works
   return sendConfirmation(db, deps, destinationId, parsed.data.address);
 }
 
+/** The address a live confirmation token is for, or undefined. It spends nothing, so a mail scanner can load the page. */
+export async function confirmationAddress(db: Db, token: string) {
+  const [live] = await db
+    .select({ config: destination.config })
+    .from(destinationConfirmation)
+    .innerJoin(destination, eq(destination.id, destinationConfirmation.destinationId))
+    .where(and(eq(destinationConfirmation.tokenHash, hashOf(token)), gt(destinationConfirmation.expiresAt, sql`now()`)));
+  const parsed = emailDestinationConfig.safeParse(live?.config);
+  return parsed.success ? parsed.data.address : undefined;
+}
+
 /**
  * Spends a confirmation token and confirms its Destination. The token alone is the proof, because the
  * person who owns the address may have no account. False when it's unknown, used or expired.
@@ -179,12 +190,12 @@ export function confirmDestination(db: Db, token: string) {
 }
 
 /** Why a webhook URL can't be saved, or undefined when it can. */
-function urlProblem(url: URL | null, deps: Pick<DestinationDeps, "egressAllows">) {
+function urlProblem(url: URL | null, egressAllows: DestinationDeps["egressAllows"]) {
   if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) return "invalid-url";
   // fetch refuses a URL with credentials in it, so it could never be called.
   if (url.username !== "" || url.password !== "" || url.href.length > 2048) return "invalid-url";
   const literal = urlIpLiteral(url);
-  return literal !== undefined && !deps.egressAllows(literal, literal) ? "blocked" : undefined;
+  return literal !== undefined && !egressAllows(literal, literal) ? "blocked" : undefined;
 }
 
 /** A webhook secret is 32 random bytes as hex, encrypted at rest (docs: Security and privacy). */
@@ -196,14 +207,14 @@ const newSecret = (encryptionKey: Buffer) => encryptSecret(randomBytes(32).toStr
  */
 export async function addWebhookDestination(
   db: Db,
-  deps: Pick<DestinationDeps, "egressAllows" | "encryptionKey">,
+  deps: DestinationDeps,
   workspaceId: string,
   input: { name: string; url: string },
 ) {
   const name = cleanName(input.name);
   if (name === "") return { problem: "blank-name" } as const;
   const url = URL.parse(input.url.trim());
-  const problem = urlProblem(url, deps);
+  const problem = urlProblem(url, deps.egressAllows);
   if (problem !== undefined || url === null) return { problem: problem ?? "invalid-url" } as const;
 
   const [saved] = await db
@@ -363,11 +374,8 @@ function stateOf(type: "telegram" | "email" | "webhook", confirmed: boolean, tel
 /** What a Destination's settings point at: the address or the URL. */
 function pointsAt(config: unknown) {
   if (typeof config !== "object" || config === null) return null;
-  for (const key of ["address", "url"]) {
-    const value: unknown = Object.entries(config).find(([name]) => name === key)?.[1];
-    if (typeof value === "string") return value;
-  }
-  return null;
+  if ("address" in config && typeof config.address === "string") return config.address;
+  return "url" in config && typeof config.url === "string" ? config.url : null;
 }
 
 /** The Workspace's Destinations, newest first. No column here holds a credential. */

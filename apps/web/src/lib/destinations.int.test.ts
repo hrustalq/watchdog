@@ -24,6 +24,7 @@ import {
   actionsOnlyOn,
   addEmailDestination,
   addWebhookDestination,
+  confirmationAddress,
   confirmDestination,
   type DestinationDeps,
   listDestinations,
@@ -115,6 +116,16 @@ describe("Destinations", () => {
         .where(eq(destinationConfirmation.destinationId, added.destination.id));
       expect(stored?.tokenHash).toMatch(/^[0-9a-f]{64}$/);
       expect(stored?.tokenHash).not.toBe(lastToken());
+    });
+
+    it("names the address a live link is for, without spending it", async () => {
+      await addEmail("named@example.com");
+      const token = lastToken();
+      expect(await confirmationAddress(db, token)).toBe("named@example.com");
+      expect(await confirmationAddress(db, token)).toBe("named@example.com");
+      expect(await confirmDestination(db, token)).toBe(true);
+      expect(await confirmationAddress(db, token)).toBeUndefined();
+      expect(await confirmationAddress(db, "not-a-token")).toBeUndefined();
     });
 
     it("confirms once: a used link does nothing", async () => {

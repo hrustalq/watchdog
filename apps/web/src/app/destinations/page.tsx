@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { field, fieldError, label } from "@/components/field-classes";
+import { dataBox, field, label, textBox } from "@/components/field-classes";
 import { Timestamp } from "@/components/timestamp";
 import {
   actionNames,
@@ -22,6 +22,7 @@ import {
   replaceSecretAction,
   sendAgainAction,
 } from "./actions";
+import { FieldError } from "./field-error";
 
 export const metadata: Metadata = { title: "Destinations · Watchdog" };
 
@@ -45,7 +46,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
   const secretFor = destinations.find(({ id }) => id === param("secret"));
   const refused = await actionsOnlyOn(db, workspace.id, param("refused"));
   const refusedName = destinations.find(({ id }) => id === param("refused"))?.name;
-  const left = await actionNames(db, workspace.id, param("left").split(",").slice(0, 100));
+  const left = await actionNames(db, workspace.id, param("left").split(","));
 
   const problem = addProblems.find((known) => known === param("error"));
   const error = problem === undefined ? undefined : {
@@ -68,13 +69,18 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
         </span>
         <span aria-current="page">Destinations</span>
       </nav>
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
+      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 break-words">
         <div className="flex flex-col gap-1">
           <h1 className="text-headline">Destinations</h1>
           <p className="text-sm text-muted-foreground">Where Actions deliver alerts, webhook calls and Digests.</p>
         </div>
 
         {secret === undefined ? null : <SecretPanel secret={secret} name={secretFor?.name} />}
+        {secret === undefined && secretFor?.type === "webhook" ? (
+          <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+            The secret for {secretFor.name} was already shown. Replace it if you didn&apos;t keep a copy.
+          </Notice>
+        ) : null}
         <Outcome
           added={param("added")}
           resent={param("resent")}
@@ -86,82 +92,12 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
           mailGoesToLog={mailGoesToLog}
         />
 
-        <section aria-labelledby="destinations" className="flex flex-col gap-3">
-          <h2 id="destinations" className="text-title">
-            <span className="tabular-nums">{destinations.length}</span>{" "}
-            {destinations.length === 1 ? "Destination" : "Destinations"}
-          </h2>
-          {destinations.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              None yet. Add one below, so Actions have somewhere to deliver.
-            </p>
-          ) : (
-            <ul className="divide-y rounded-lg border">
-              {destinations.map((row) => (
-                <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <h3 className="text-title break-words">{row.name}</h3>
-                    {row.pointsAt === null ? null : (
-                      <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{row.pointsAt}</p>
-                    )}
-                    <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-                      <span>{typeNames[row.type]}</span>
-                      <span aria-hidden="true">·</span>
-                      <State state={row.state} />
-                    </p>
-                    {row.lastError === null ? null : (
-                      <p className="flex items-start gap-2 text-sm text-alarm">
-                        <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
-                        <span className="min-w-0 break-words">
-                          Last delivery failed
-                          {row.lastErrorAt === null ? null : (
-                            <>
-                              {" "}
-                              at <Timestamp at={row.lastErrorAt} />
-                            </>
-                          )}
-                          : {row.lastError}
-                        </span>
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 flex-col gap-2 sm:max-w-64 sm:items-end">
-                    {row.state === "waiting-confirmation" ? (
-                      <form action={sendAgainAction.bind(null, row.id)}>
-                        <SubmitButton variant="outline" pendingLabel="Sending…" className="w-auto">
-                          Send the link again
-                        </SubmitButton>
-                      </form>
-                    ) : null}
-                    {row.type === "webhook" ? (
-                      <Confirming
-                        label="Replace the secret"
-                        warning={`The current secret stops working now, so ${row.name}'s receiver has to be given the new one.`}
-                        action={replaceSecretAction.bind(null, row.id)}
-                        button="Replace it"
-                        pendingLabel="Replacing…"
-                      />
-                    ) : null}
-                    <Confirming
-                      label="Remove"
-                      warning={`${row.name} leaves any Action that uses it, and alerts still waiting to go there won't be sent. Item Logs keep what was sent. This can't be undone.`}
-                      action={removeDestinationAction.bind(null, row.id)}
-                      button="Remove Destination"
-                      pendingLabel="Removing…"
-                    />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
         <section aria-labelledby="add-destination" className="flex flex-col gap-3">
           <h2 id="add-destination" className="text-title">
             Add a Destination
           </h2>
           <div className="divide-y rounded-lg border">
-            <AddForm title="Email address" open={form === "email" || destinations.length === 0}>
+            <AddForm title="Email address" open={form === "email" || (form === "" && destinations.length === 0)}>
               <form action={addEmailAction} className="flex flex-col gap-4">
                 <NameField
                   id="email-name"
@@ -190,11 +126,12 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                   error={form === "webhook" ? error : undefined}
                 />
                 <TextField
-                  id="url"
+                  id="webhook-url"
+                  name="url"
                   label="URL"
                   type="url"
                   placeholder="https://example.com/watchdog"
-                  value={form === "webhook" ? param("url") : ""}
+                  value=""
                   error={form === "webhook" && error?.field === "url" ? error.message : undefined}
                   help="Watchdog generates a signing secret and shows it once."
                 />
@@ -219,6 +156,79 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
             </AddForm>
           </div>
         </section>
+
+        <section aria-labelledby="destinations" className="flex flex-col gap-3">
+          <h2 id="destinations" className="text-title">
+            <span className="tabular-nums">{destinations.length}</span>{" "}
+            {destinations.length === 1 ? "Destination" : "Destinations"}
+          </h2>
+          {destinations.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              None yet. Add one above, so Actions have somewhere to deliver.
+            </p>
+          ) : (
+            <ul className="divide-y rounded-lg border">
+              {destinations.map((row) => (
+                <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <h3 className="text-title break-words">{row.name}</h3>
+                    {row.pointsAt === null ? null : (
+                      <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{row.pointsAt}</p>
+                    )}
+                    <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+                      <span>{typeNames[row.type]}</span>
+                      <span aria-hidden="true">·</span>
+                      <State state={row.state} failing={row.lastError !== null} />
+                    </p>
+                    {row.lastError === null ? null : (
+                      <p className="flex items-start gap-2 text-sm text-alarm">
+                        <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
+                        <span className="min-w-0 break-words">
+                          Last delivery failed
+                          {row.lastErrorAt === null ? null : (
+                            <>
+                              {" "}
+                              at <Timestamp at={row.lastErrorAt} />
+                            </>
+                          )}
+                          : {row.lastError}
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-2 sm:max-w-64 sm:items-end">
+                    {row.state === "waiting-confirmation" ? (
+                      <form action={sendAgainAction.bind(null, row.id)}>
+                        <SubmitButton variant="outline" pendingLabel="Sending…" className="w-auto">
+                          Send the link again
+                          <span className="sr-only"> to {row.name}</span>
+                        </SubmitButton>
+                      </form>
+                    ) : null}
+                    {row.type === "webhook" ? (
+                      <Confirming
+                        label="Replace the secret"
+                        name={row.name}
+                        warning={`The current secret stops working now, so ${row.name}'s receiver has to be given the new one.`}
+                        action={replaceSecretAction.bind(null, row.id)}
+                        button="Replace it"
+                        pendingLabel="Replacing…"
+                      />
+                    ) : null}
+                    <Confirming
+                      label="Remove"
+                      name={row.name}
+                      warning={`${row.name} leaves any Action that uses it, and alerts still waiting to go there won't be sent. Item Logs keep what was sent. This can't be undone.`}
+                      action={removeDestinationAction.bind(null, row.id)}
+                      button="Remove Destination"
+                      pendingLabel="Removing…"
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       </main>
     </div>
   );
@@ -234,11 +244,14 @@ const stateWords: Record<DestinationState, { word: string; lamp: string }> = {
   unavailable: { word: "Unavailable until the bot is set up", lamp: "bg-caution" },
 };
 
-function State({ state }: { state: DestinationState }) {
+/** No green lamp above a failure, because a lamp is a reading of whether it works. */
+function State({ state, failing }: { state: DestinationState; failing: boolean }) {
   const { word, lamp } = stateWords[state];
   return (
     <span className="inline-flex items-center gap-1.5">
-      <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${lamp}`} />
+      {failing && lamp === "bg-ok" ? null : (
+        <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${lamp}`} />
+      )}
       {word}
     </span>
   );
@@ -249,12 +262,20 @@ function SecretPanel({ secret, name }: { secret: string; name: string | undefine
   return (
     <section aria-labelledby="secret" className="flex flex-col gap-2 rounded-lg border bg-card p-4">
       <h2 id="secret" className="text-title">
-        {name === undefined ? "The webhook's secret" : `The secret for ${name}`}
+        The secret for {name ?? "this webhook"}
       </h2>
       <Notice role="status" className="text-sm">
-        Copy it now. Watchdog won&apos;t show it again. Your receiver uses it to check the signature on every call.
+        Copy it now. Watchdog won&apos;t show it again. Your receiver uses it to check the{" "}
+        <code className="font-mono text-[0.8125rem]">X-Watchdog-Signature</code> header on every call.
       </Notice>
-      <code className="rounded-lg bg-muted px-3 py-2 font-mono text-[0.8125rem] break-all select-all">{secret}</code>
+      {/* A text box, because Tab, select-all and copy work on it with no JavaScript and from a keyboard. */}
+      <textarea
+        readOnly
+        rows={2}
+        aria-labelledby="secret"
+        value={secret}
+        className={`${textBox} ${dataBox} resize-none py-1.5`}
+      />
     </section>
   );
 }
@@ -281,9 +302,9 @@ function Outcome({
 }) {
   const quietly = "rounded-lg bg-muted px-3 py-2 text-sm";
   const failed = "rounded-lg bg-destructive/10 px-3 py-2 text-sm text-alarm";
-  const check = mailGoesToLog
-    ? "This install has no mail server, so the link is in the web container's log."
-    : "It stays waiting until the link in that mail is opened.";
+  const where = mailGoesToLog
+    ? "This install has no mail server, so the confirmation link is in the web container's log."
+    : "A confirmation link is on its way, and it stays waiting until that link is opened. The link lasts 24 hours.";
 
   if (refused.length > 0) {
     return (
@@ -298,7 +319,7 @@ function Outcome({
     return (
       <Notice role="status" className={quietly}>
         Destination removed.
-        {left.length > 0 ? ` It left ${left.join(", ")}.` : ""}
+        {left.length > 0 ? ` ${left.join(", ")} no longer ${left.length === 1 ? "delivers" : "deliver"} there.` : ""}
       </Notice>
     );
   }
@@ -319,7 +340,8 @@ function Outcome({
   if (added === "sent" || resent === "sent") {
     return (
       <Notice role="status" className={quietly}>
-        {added === "sent" ? "Destination added, and a" : "A"} confirmation link is on its way. {check}
+        {added === "sent" ? "Destination added. " : ""}
+        {where}
       </Notice>
     );
   }
@@ -344,12 +366,15 @@ function Outcome({
 /** A control whose result can't be undone, opened first. A disclosure works without JavaScript. */
 function Confirming({
   label: opener,
+  name,
   warning,
   action,
   button,
   pendingLabel,
 }: {
   label: string;
+  /** The Destination, for a screen reader tabbing through several rows of the same controls. */
+  name: string;
   warning: string;
   action: () => Promise<void>;
   button: string;
@@ -357,15 +382,17 @@ function Confirming({
 }) {
   return (
     <details className="group">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg border border-transparent px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
         <span className="group-open:hidden">{opener}</span>
         <span className="hidden group-open:inline">Keep it</span>
+        <span className="sr-only"> {name}</span>
       </summary>
       <div className="mt-2 flex flex-col gap-3 rounded-lg bg-muted p-3">
         <p className="text-sm">{warning}</p>
         <form action={action}>
           <SubmitButton variant="destructive" pendingLabel={pendingLabel}>
             {button}
+            <span className="sr-only"> {name}</span>
           </SubmitButton>
         </form>
       </div>
@@ -375,8 +402,9 @@ function Confirming({
 
 function AddForm({ title, open, children }: { title: string; open: boolean; children: React.ReactNode }) {
   return (
-    <details open={open} className="group">
-      <summary className="flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm font-medium outline-none select-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:ring-inset">
+    // Display stays the summary's own, because flex would take away the marker that says it opens.
+    <details name="add-destination" open={open}>
+      <summary className="cursor-pointer rounded-lg border border-transparent px-4 py-3 text-sm font-medium outline-hidden select-none hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:ring-inset">
         {title}
       </summary>
       <div className="p-4 pt-2">{children}</div>
@@ -438,6 +466,8 @@ function TextField({
         type={type}
         required
         maxLength={type === "text" ? 200 : 2048}
+        // The name is the Destination's, and "name" alone would have a browser offer the person's own.
+        autoComplete={type === "email" ? "email" : "off"}
         spellCheck={false}
         placeholder={placeholder}
         defaultValue={value}
@@ -449,9 +479,7 @@ function TextField({
         className={field}
       />
       {invalid ? (
-        <p id={`${id}-error`} role="alert" className={fieldError}>
-          {error}
-        </p>
+        <FieldError id={`${id}-error`}>{error}</FieldError>
       ) : (
         <p id={`${id}-help`} className="text-xs text-muted-foreground">
           {help}
