@@ -21,8 +21,9 @@ export function proxy(request: NextRequest) {
   return NextResponse.redirect(new URL(signInPath(returnTo(`${pathname}${search}`)), request.url));
 }
 
-// Every route needs a session except sign-in, setup, Better Auth's own endpoints, Next's build output
-// and public/ files (any non-API path ending in an extension).
+// Every route needs a session except sign-in, setup, a Destination's confirmation link (whose owner may
+// have no account), Better Auth's own endpoints, Next's build output and public/ files (any non-API path
+// ending in an extension).
 export const config = {
-  matcher: ["/((?!sign-in(?:/|$)|setup$|api/auth/|_next/static/|_next/image|(?!api/).*\\.\\w+$).*)"],
+  matcher: ["/((?!sign-in(?:/|$)|setup$|destinations/confirm$|api/auth/|_next/static/|_next/image|(?!api/).*\\.\\w+$).*)"],
 };

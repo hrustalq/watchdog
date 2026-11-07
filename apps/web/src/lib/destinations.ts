@@ -1,8 +1,23 @@
 // A Workspace's Destinations, as the Destinations page reads and changes them. Every query is scoped
 // to the Workspace, so another Workspace's Destination id behaves like a missing one.
 import { createHash, randomBytes } from "node:crypto";
-import { emailDestinationConfig, type Mailer } from "@watchdog/core";
-import { and, type Db, destination, destinationConfirmation, eq, gt, isNull, sql } from "@watchdog/db";
+import { decryptSecret, emailDestinationConfig, encryptSecret, type Mailer, urlIpLiteral } from "@watchdog/core";
+import {
+  action,
+  actionDestination,
+  and,
+  type Db,
+  delivery,
+  destination,
+  destinationConfirmation,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  itemLog,
+  sql,
+  type Tx,
+} from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 export interface DestinationDeps {
@@ -67,7 +82,7 @@ async function sendConfirmation(db: Db, deps: DestinationDeps, destinationId: st
     .onConflictDoUpdate({
       target: destinationConfirmation.destinationId,
       set: { tokenHash, expiresAt: linkLifetime },
-      where: sql`${destinationConfirmation.expiresAt} < ${resendAfter}`,
+      setWhere: sql`${destinationConfirmation.expiresAt} < ${resendAfter}`,
     })
     .returning({ tokenHash: destinationConfirmation.tokenHash });
   if (issued.length === 0) return "too-soon";
@@ -163,6 +178,178 @@ export function confirmDestination(db: Db, token: string) {
   });
 }
 
+/** Why a webhook URL can't be saved, or undefined when it can. */
+function urlProblem(url: URL | null, deps: Pick<DestinationDeps, "egressAllows">) {
+  if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) return "invalid-url";
+  // fetch refuses a URL with credentials in it, so it could never be called.
+  if (url.username !== "" || url.password !== "" || url.href.length > 2048) return "invalid-url";
+  const literal = urlIpLiteral(url);
+  return literal !== undefined && !deps.egressAllows(literal, literal) ? "blocked" : undefined;
+}
+
+/** A webhook secret is 32 random bytes as hex, encrypted at rest (docs: Security and privacy). */
+const newSecret = (encryptionKey: Buffer) => encryptSecret(randomBytes(32).toString("hex"), encryptionKey);
+
+/**
+ * Saves a webhook Destination with a new secret, for revealWebhookSecret to show once. A host name
+ * that resolves to a blocked address is only found when it's called, by the egress guard.
+ */
+export async function addWebhookDestination(
+  db: Db,
+  deps: Pick<DestinationDeps, "egressAllows" | "encryptionKey">,
+  workspaceId: string,
+  input: { name: string; url: string },
+) {
+  const name = cleanName(input.name);
+  if (name === "") return { problem: "blank-name" } as const;
+  const url = URL.parse(input.url.trim());
+  const problem = urlProblem(url, deps);
+  if (problem !== undefined || url === null) return { problem: problem ?? "invalid-url" } as const;
+
+  const [saved] = await db
+    .insert(destination)
+    .values({
+      workspaceId,
+      type: "webhook",
+      name,
+      config: { url: url.href },
+      secretCiphertext: newSecret(deps.encryptionKey),
+    })
+    .onConflictDoNothing()
+    .returning({ id: destination.id });
+  return saved === undefined ? ({ problem: "duplicate-name" } as const) : { destination: saved };
+}
+
+const isWebhook = (workspaceId: string, destinationId: string) =>
+  and(eq(destination.workspaceId, workspaceId), eq(destination.id, destinationId), eq(destination.type, "webhook"));
+
+/**
+ * The webhook's secret, the first time this is asked and never again. The page calls this while it
+ * renders, because it has to work without JavaScript: only a redirect renders a whole page then, so the
+ * secret can't come back from the Server Action, and it must not travel in the URL. A render that dies
+ * after this loses the secret, which "Replace the secret" gets past.
+ */
+export async function revealWebhookSecret(db: Db, encryptionKey: Buffer, workspaceId: string, destinationId: string) {
+  if (!isUuid(destinationId)) return undefined;
+  const [shown] = await db
+    .update(destination)
+    .set({ secretShownAt: sql`now()` })
+    .where(and(isWebhook(workspaceId, destinationId), isNull(destination.secretShownAt)))
+    .returning({ ciphertext: destination.secretCiphertext });
+  const ciphertext = shown?.ciphertext ?? null;
+  return ciphertext === null ? undefined : decryptSecret(ciphertext, encryptionKey);
+}
+
+/** Gives the webhook a new secret, for revealWebhookSecret to show once. False when there's no such webhook. */
+export async function replaceWebhookSecret(db: Db, encryptionKey: Buffer, workspaceId: string, destinationId: string) {
+  if (!isUuid(destinationId)) return false;
+  const replaced = await db
+    .update(destination)
+    .set({ secretCiphertext: newSecret(encryptionKey), secretShownAt: null })
+    .where(isWebhook(workspaceId, destinationId))
+    .returning({ id: destination.id });
+  return replaced.length > 0;
+}
+
+/** The enabled Actions that would have nowhere to deliver without this Destination. */
+export async function actionsOnlyOn(reader: Db | Tx, workspaceId: string, destinationId: string) {
+  if (!isUuid(destinationId)) return [];
+  const rows = await reader
+    .select({ name: action.name })
+    .from(action)
+    .innerJoin(actionDestination, eq(actionDestination.actionId, action.id))
+    .where(
+      and(
+        eq(action.workspaceId, workspaceId),
+        eq(action.enabled, true),
+        eq(actionDestination.destinationId, destinationId),
+        sql`not exists (
+          select 1 from ${actionDestination} other
+          where other.action_id = ${action.id} and other.destination_id <> ${destinationId}
+        )`,
+      ),
+    )
+    .orderBy(action.name);
+  return rows.map(({ name }) => name);
+}
+
+/** The names of the Workspace's Actions with these ids. The ids come from a URL, so others are ignored. */
+export async function actionNames(db: Db, workspaceId: string, actionIds: string[]) {
+  const ids = actionIds.filter(isUuid);
+  if (ids.length === 0) return [];
+  const rows = await db
+    .select({ name: action.name })
+    .from(action)
+    .where(and(eq(action.workspaceId, workspaceId), inArray(action.id, ids)))
+    .orderBy(action.name);
+  return rows.map(({ name }) => name);
+}
+
+/**
+ * Removes a Destination (docs: Actions and delivery, "Deleting a Destination"). `refused` names the
+ * enabled Actions that point only at it. Otherwise it leaves the Actions that used it, whose ids are in
+ * `changed`, and a disabled one can be left with none. Undefined when the Workspace has no such Destination.
+ *
+ * Its Deliveries go with it, because their foreign key would refuse the delete. The Log keeps what was
+ * sent, and gets a row for each alert that now never will be.
+ */
+export async function removeDestination(db: Db, workspaceId: string, destinationId: string) {
+  if (!isUuid(destinationId)) return undefined;
+  return db.transaction(async (tx) => {
+    // The Destination first, as a send holds it, so the two can't deadlock. A send in progress finishes first.
+    const [target] = await tx
+      .select({ name: destination.name })
+      .from(destination)
+      .where(and(eq(destination.workspaceId, workspaceId), eq(destination.id, destinationId)))
+      .for("update");
+    if (target === undefined) return undefined;
+
+    // In a statement of its own, so the check below sees a remove that finished while this one waited.
+    // Otherwise two removes could each leave an enabled Action the other Destination, and it would have none.
+    const using = await tx
+      .select({ id: action.id })
+      .from(action)
+      .innerJoin(actionDestination, eq(actionDestination.actionId, action.id))
+      .where(eq(actionDestination.destinationId, destinationId))
+      .for("update", { of: action });
+    const refused = await actionsOnlyOn(tx, workspaceId, destinationId);
+    if (refused.length > 0) return { refused };
+
+    const changed = using.map(({ id }) => id);
+    if (changed.length > 0) {
+      await tx
+        .update(action)
+        .set({
+          definition: sql`jsonb_set(${action.definition}, '{destinations}', (${action.definition}->'destinations') - ${destinationId}::text)`,
+          // The Act stage only fires an Action saved before an Item's capture. This isn't a save, and moving
+          // the time would silently skip Items already captured and still in the pipeline.
+          updatedAt: sql`${action.updatedAt}`,
+        })
+        .where(inArray(action.id, changed));
+    }
+
+    const unsent = await tx
+      .select({ itemId: delivery.itemId, actionId: delivery.actionId })
+      .from(delivery)
+      .where(and(eq(delivery.destinationId, destinationId), inArray(delivery.status, ["queued", "held", "grouped"])));
+    if (unsent.length > 0) {
+      await tx.insert(itemLog).values(
+        unsent.map(({ itemId, actionId }) => ({
+          itemId,
+          stage: "act" as const,
+          message: `Not sent: the Destination ${target.name} was removed`,
+          data: { actionId, destinationId, destination: target.name },
+        })),
+      );
+    }
+
+    await tx.delete(delivery).where(eq(delivery.destinationId, destinationId));
+    await tx.delete(actionDestination).where(eq(actionDestination.destinationId, destinationId));
+    await tx.delete(destination).where(eq(destination.id, destinationId));
+    return { changed };
+  });
+}
+
 export type DestinationState = "ready" | "confirmed" | "waiting-confirmation" | "waiting-bot" | "unavailable";
 
 function stateOf(type: "telegram" | "email" | "webhook", confirmed: boolean, telegramAvailable: boolean): DestinationState {
@@ -176,8 +363,11 @@ function stateOf(type: "telegram" | "email" | "webhook", confirmed: boolean, tel
 /** What a Destination's settings point at: the address or the URL. */
 function pointsAt(config: unknown) {
   if (typeof config !== "object" || config === null) return null;
-  const value = "address" in config ? config.address : "url" in config ? config.url : null;
-  return typeof value === "string" ? value : null;
+  for (const key of ["address", "url"]) {
+    const value: unknown = Object.entries(config).find(([name]) => name === key)?.[1];
+    if (typeof value === "string") return value;
+  }
+  return null;
 }
 
 /** The Workspace's Destinations, newest first. No column here holds a credential. */

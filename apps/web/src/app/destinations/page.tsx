@@ -1,0 +1,462 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { field, fieldError, label } from "@/components/field-classes";
+import { Timestamp } from "@/components/timestamp";
+import {
+  actionNames,
+  actionsOnlyOn,
+  addProblems,
+  type DestinationState,
+  listDestinations,
+  problemField,
+  problemMessage,
+  revealWebhookSecret,
+} from "@/lib/destinations";
+import { requireWorkspace, server } from "@/lib/server";
+import { Notice } from "../sign-in/notice";
+import { SubmitButton } from "../sign-in/submit-button";
+import {
+  addEmailAction,
+  addWebhookAction,
+  removeDestinationAction,
+  replaceSecretAction,
+  sendAgainAction,
+} from "./actions";
+
+export const metadata: Metadata = { title: "Destinations · Watchdog" };
+
+// The data is read without Suspense, so all of it is in the first HTML. A webhook secret has to reach
+// someone without JavaScript too, and it's shown only this once.
+export const instant = false;
+
+const configurationPage = "https://knowledge.hrustalq.dev/documents/8e6aedb7-ccc1-4057-9f9f-2a881d612d47";
+
+export default async function DestinationsPage({ searchParams }: PageProps<"/destinations">) {
+  const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
+  const param = (name: string) => {
+    const value = params[name];
+    return typeof value === "string" ? value : "";
+  };
+  const { db, destinationDeps, mode, mailGoesToLog, telegramAvailable } = server();
+  const destinations = await listDestinations(db, workspace.id, { telegramAvailable });
+
+  // Only ids and codes travel in the URL, so what it says comes from the Workspace or from fixed text.
+  const secret = await revealWebhookSecret(db, destinationDeps.encryptionKey, workspace.id, param("secret"));
+  const secretFor = destinations.find(({ id }) => id === param("secret"));
+  const refused = await actionsOnlyOn(db, workspace.id, param("refused"));
+  const refusedName = destinations.find(({ id }) => id === param("refused"))?.name;
+  const left = await actionNames(db, workspace.id, param("left").split(",").slice(0, 100));
+
+  const problem = addProblems.find((known) => known === param("error"));
+  const error = problem === undefined ? undefined : {
+    field: problemField(problem),
+    message: problemMessage(problem, mode),
+  };
+  const form = param("form");
+
+  return (
+    <div className="flex flex-1 flex-col">
+      <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
+        <Link
+          href="/"
+          className="rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+        >
+          Workspace
+        </Link>
+        <span aria-hidden="true" className="text-muted-foreground">
+          /
+        </span>
+        <span aria-current="page">Destinations</span>
+      </nav>
+      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-headline">Destinations</h1>
+          <p className="text-sm text-muted-foreground">Where Actions deliver alerts, webhook calls and Digests.</p>
+        </div>
+
+        {secret === undefined ? null : <SecretPanel secret={secret} name={secretFor?.name} />}
+        <Outcome
+          added={param("added")}
+          resent={param("resent")}
+          missing={param("missing") !== ""}
+          removed={param("removed") !== ""}
+          left={left}
+          refused={refused}
+          refusedName={refusedName}
+          mailGoesToLog={mailGoesToLog}
+        />
+
+        <section aria-labelledby="destinations" className="flex flex-col gap-3">
+          <h2 id="destinations" className="text-title">
+            <span className="tabular-nums">{destinations.length}</span>{" "}
+            {destinations.length === 1 ? "Destination" : "Destinations"}
+          </h2>
+          {destinations.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              None yet. Add one below, so Actions have somewhere to deliver.
+            </p>
+          ) : (
+            <ul className="divide-y rounded-lg border">
+              {destinations.map((row) => (
+                <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <h3 className="text-title break-words">{row.name}</h3>
+                    {row.pointsAt === null ? null : (
+                      <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{row.pointsAt}</p>
+                    )}
+                    <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+                      <span>{typeNames[row.type]}</span>
+                      <span aria-hidden="true">·</span>
+                      <State state={row.state} />
+                    </p>
+                    {row.lastError === null ? null : (
+                      <p className="flex items-start gap-2 text-sm text-alarm">
+                        <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
+                        <span className="min-w-0 break-words">
+                          Last delivery failed
+                          {row.lastErrorAt === null ? null : (
+                            <>
+                              {" "}
+                              at <Timestamp at={row.lastErrorAt} />
+                            </>
+                          )}
+                          : {row.lastError}
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-2 sm:max-w-64 sm:items-end">
+                    {row.state === "waiting-confirmation" ? (
+                      <form action={sendAgainAction.bind(null, row.id)}>
+                        <SubmitButton variant="outline" pendingLabel="Sending…" className="w-auto">
+                          Send the link again
+                        </SubmitButton>
+                      </form>
+                    ) : null}
+                    {row.type === "webhook" ? (
+                      <Confirming
+                        label="Replace the secret"
+                        warning={`The current secret stops working now, so ${row.name}'s receiver has to be given the new one.`}
+                        action={replaceSecretAction.bind(null, row.id)}
+                        button="Replace it"
+                        pendingLabel="Replacing…"
+                      />
+                    ) : null}
+                    <Confirming
+                      label="Remove"
+                      warning={`${row.name} leaves any Action that uses it, and alerts still waiting to go there won't be sent. Item Logs keep what was sent. This can't be undone.`}
+                      action={removeDestinationAction.bind(null, row.id)}
+                      button="Remove Destination"
+                      pendingLabel="Removing…"
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section aria-labelledby="add-destination" className="flex flex-col gap-3">
+          <h2 id="add-destination" className="text-title">
+            Add a Destination
+          </h2>
+          <div className="divide-y rounded-lg border">
+            <AddForm title="Email address" open={form === "email" || destinations.length === 0}>
+              <form action={addEmailAction} className="flex flex-col gap-4">
+                <NameField
+                  id="email-name"
+                  value={form === "email" ? param("name") : ""}
+                  error={form === "email" ? error : undefined}
+                />
+                <TextField
+                  id="address"
+                  label="Address"
+                  type="email"
+                  placeholder="you@example.com"
+                  value={form === "email" ? param("address") : ""}
+                  error={form === "email" && error?.field === "address" ? error.message : undefined}
+                  help="Any address but your own gets a link to confirm it, and receives nothing until then."
+                />
+                <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
+                  Add email address
+                </SubmitButton>
+              </form>
+            </AddForm>
+            <AddForm title="Webhook URL" open={form === "webhook"}>
+              <form action={addWebhookAction} className="flex flex-col gap-4">
+                <NameField
+                  id="webhook-name"
+                  value={form === "webhook" ? param("name") : ""}
+                  error={form === "webhook" ? error : undefined}
+                />
+                <TextField
+                  id="url"
+                  label="URL"
+                  type="url"
+                  placeholder="https://example.com/watchdog"
+                  value={form === "webhook" ? param("url") : ""}
+                  error={form === "webhook" && error?.field === "url" ? error.message : undefined}
+                  help="Watchdog generates a signing secret and shows it once."
+                />
+                <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
+                  Add webhook
+                </SubmitButton>
+              </form>
+            </AddForm>
+            <AddForm title="Telegram chat" open={false}>
+              {telegramAvailable ? (
+                <p className="text-sm text-muted-foreground">Linking a Telegram chat from here isn&apos;t ready yet.</p>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Telegram isn&apos;t set up on this install. Whoever runs this Watchdog can set{" "}
+                  <code className="font-mono text-[0.8125rem]">TELEGRAM_BOT_TOKEN</code>, as the{" "}
+                  <a href={configurationPage} className="underline underline-offset-4">
+                    Configuration page
+                  </a>{" "}
+                  describes.
+                </p>
+              )}
+            </AddForm>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+const typeNames = { email: "Email", webhook: "Webhook", telegram: "Telegram" };
+
+const stateWords: Record<DestinationState, { word: string; lamp: string }> = {
+  ready: { word: "Ready", lamp: "bg-ok" },
+  confirmed: { word: "Confirmed", lamp: "bg-ok" },
+  "waiting-confirmation": { word: "Waiting for confirmation", lamp: "bg-caution" },
+  "waiting-bot": { word: "Waiting for the bot", lamp: "bg-caution" },
+  unavailable: { word: "Unavailable until the bot is set up", lamp: "bg-caution" },
+};
+
+function State({ state }: { state: DestinationState }) {
+  const { word, lamp } = stateWords[state];
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${lamp}`} />
+      {word}
+    </span>
+  );
+}
+
+/** The one time a webhook secret is shown. A reload doesn't show it again. */
+function SecretPanel({ secret, name }: { secret: string; name: string | undefined }) {
+  return (
+    <section aria-labelledby="secret" className="flex flex-col gap-2 rounded-lg border bg-card p-4">
+      <h2 id="secret" className="text-title">
+        {name === undefined ? "The webhook's secret" : `The secret for ${name}`}
+      </h2>
+      <Notice role="status" className="text-sm">
+        Copy it now. Watchdog won&apos;t show it again. Your receiver uses it to check the signature on every call.
+      </Notice>
+      <code className="rounded-lg bg-muted px-3 py-2 font-mono text-[0.8125rem] break-all select-all">{secret}</code>
+    </section>
+  );
+}
+
+/** What the last action did. The words are fixed here, and any names come from the Workspace. */
+function Outcome({
+  added,
+  resent,
+  missing,
+  removed,
+  left,
+  refused,
+  refusedName,
+  mailGoesToLog,
+}: {
+  added: string;
+  resent: string;
+  missing: boolean;
+  removed: boolean;
+  left: string[];
+  refused: string[];
+  refusedName: string | undefined;
+  mailGoesToLog: boolean;
+}) {
+  const quietly = "rounded-lg bg-muted px-3 py-2 text-sm";
+  const failed = "rounded-lg bg-destructive/10 px-3 py-2 text-sm text-alarm";
+  const check = mailGoesToLog
+    ? "This install has no mail server, so the link is in the web container's log."
+    : "It stays waiting until the link in that mail is opened.";
+
+  if (refused.length > 0) {
+    return (
+      <Notice role="alert" className={failed}>
+        {refusedName ?? "That Destination"} can&apos;t be removed, because it&apos;s the only Destination of{" "}
+        {refused.join(", ")}. Give {refused.length === 1 ? "that Action" : "those Actions"} another Destination, or
+        disable {refused.length === 1 ? "it" : "them"}, first.
+      </Notice>
+    );
+  }
+  if (removed) {
+    return (
+      <Notice role="status" className={quietly}>
+        Destination removed.
+        {left.length > 0 ? ` It left ${left.join(", ")}.` : ""}
+      </Notice>
+    );
+  }
+  if (missing || resent === "not-found") {
+    return (
+      <Notice role="alert" className={failed}>
+        That Destination wasn&apos;t found in this Workspace.
+      </Notice>
+    );
+  }
+  if (added === "not-needed") {
+    return (
+      <Notice role="status" className={quietly}>
+        Destination added. It&apos;s your own address, so it&apos;s confirmed already.
+      </Notice>
+    );
+  }
+  if (added === "sent" || resent === "sent") {
+    return (
+      <Notice role="status" className={quietly}>
+        {added === "sent" ? "Destination added, and a" : "A"} confirmation link is on its way. {check}
+      </Notice>
+    );
+  }
+  if (added === "failed" || resent === "failed") {
+    return (
+      <Notice role="alert" className={failed}>
+        {added === "failed" ? "Destination added, but the" : "The"} confirmation mail couldn&apos;t be sent. Try
+        &quot;Send the link again&quot; in a moment.
+      </Notice>
+    );
+  }
+  if (resent === "too-soon") {
+    return (
+      <Notice role="status" className={quietly}>
+        A link went out less than a minute ago. Give it a moment, and check the spam folder.
+      </Notice>
+    );
+  }
+  return null;
+}
+
+/** A control whose result can't be undone, opened first. A disclosure works without JavaScript. */
+function Confirming({
+  label: opener,
+  warning,
+  action,
+  button,
+  pendingLabel,
+}: {
+  label: string;
+  warning: string;
+  action: () => Promise<void>;
+  button: string;
+  pendingLabel: string;
+}) {
+  return (
+    <details className="group">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+        <span className="group-open:hidden">{opener}</span>
+        <span className="hidden group-open:inline">Keep it</span>
+      </summary>
+      <div className="mt-2 flex flex-col gap-3 rounded-lg bg-muted p-3">
+        <p className="text-sm">{warning}</p>
+        <form action={action}>
+          <SubmitButton variant="destructive" pendingLabel={pendingLabel}>
+            {button}
+          </SubmitButton>
+        </form>
+      </div>
+    </details>
+  );
+}
+
+function AddForm({ title, open, children }: { title: string; open: boolean; children: React.ReactNode }) {
+  return (
+    <details open={open} className="group">
+      <summary className="flex min-h-11 cursor-pointer items-center gap-2 px-4 text-sm font-medium outline-none select-none hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:ring-inset">
+        {title}
+      </summary>
+      <div className="p-4 pt-2">{children}</div>
+    </details>
+  );
+}
+
+function NameField({
+  id,
+  value,
+  error,
+}: {
+  id: string;
+  value: string;
+  error: { field: string; message: string } | undefined;
+}) {
+  return (
+    <TextField
+      id={id}
+      name="name"
+      label="Name"
+      type="text"
+      placeholder="Team inbox"
+      value={value}
+      error={error?.field === "name" ? error.message : undefined}
+      help="Actions refer to it by this name."
+    />
+  );
+}
+
+function TextField({
+  id,
+  name = id,
+  label: title,
+  type,
+  placeholder,
+  value,
+  error,
+  help,
+}: {
+  id: string;
+  name?: string;
+  label: string;
+  type: "text" | "email" | "url";
+  placeholder: string;
+  value: string;
+  error: string | undefined;
+  help: string;
+}) {
+  const invalid = error !== undefined;
+  return (
+    <div className="flex flex-col gap-2">
+      <label htmlFor={id} className={label}>
+        {title}
+      </label>
+      <input
+        id={id}
+        name={name}
+        type={type}
+        required
+        maxLength={type === "text" ? 200 : 2048}
+        spellCheck={false}
+        placeholder={placeholder}
+        defaultValue={value}
+        aria-invalid={invalid}
+        aria-describedby={`${id}-${invalid ? "error" : "help"}`}
+        // Focus lands here with the error, so the field and its message are read together.
+        // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
+        autoFocus={invalid}
+        className={field}
+      />
+      {invalid ? (
+        <p id={`${id}-error`} role="alert" className={fieldError}>
+          {error}
+        </p>
+      ) : (
+        <p id={`${id}-help`} className="text-xs text-muted-foreground">
+          {help}
+        </p>
+      )}
+    </div>
+  );
+}

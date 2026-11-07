@@ -130,7 +130,7 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
 }
 
 function HeaderLinks({ admin }: { admin: boolean }) {
-  const links = ["Sources", "Rules", "Profile", "Model", "Usage", ...(admin ? ["Settings"] : [])];
+  const links = ["Sources", "Rules", "Destinations", "Profile", "Model", "Usage", ...(admin ? ["Settings"] : [])];
   return links.map((label) => (
     <Link key={label} href={`/${label.toLowerCase()}`} className={buttonVariants({ variant: "ghost" })}>
       {label}
