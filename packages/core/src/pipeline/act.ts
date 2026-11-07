@@ -10,18 +10,16 @@ import {
   digestItem,
   eq,
   item,
-  itemField,
   itemLog,
   lte,
   source,
-  sql,
   type Tx,
 } from "@watchdog/db";
 import { storableMessage } from "../agent/call-agent.ts";
 import { evaluateActionCondition } from "../rules/condition.ts";
 import { actionSchema } from "../rules/schema.ts";
 import { conditionToWords } from "../rules/words.ts";
-import { categoriesOf } from "./extract.ts";
+import { categoriesOf, fieldsOf } from "./extract.ts";
 
 export interface ActDeps {
   /**
@@ -67,17 +65,11 @@ async function conditionItem(tx: Tx, itemId: string) {
     .innerJoin(source, eq(item.sourceId, source.id))
     .where(eq(item.id, itemId));
   if (row === undefined) return undefined;
-  const fields = await tx
-    // Not the column itself: Drizzle parses a jsonb string again on read, which turns the string "2" into
-    // the number 2, and a Condition compares types.
-    .select({ name: itemField.name, value: sql<unknown>`${itemField.value}` })
-    .from(itemField)
-    .where(eq(itemField.itemId, itemId));
   return {
     ...row.item,
     sourceType: row.sourceType,
     categories: await categoriesOf(tx, itemId),
-    fields: Object.fromEntries(fields.map(({ name, value }) => [name, value])),
+    fields: await fieldsOf(tx, itemId),
   };
 }
 

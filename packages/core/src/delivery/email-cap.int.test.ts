@@ -146,7 +146,11 @@ describe("alert email", () => {
     };
     const noRetry = () => Promise.reject(new Error("No test here expects a retry"));
     const deps: DeliverDeps = {
-      senders: { email: sender, telegram: sender, webhook: sender },
+      senders: {
+        email: sender,
+        telegram: sender,
+        webhook: { send: () => Promise.reject(new Error("No test here sends a webhook")) },
+      },
       appUrl: "https://watchdog.test",
       retryDelivery: noRetry,
       ...(capped && { emailCap }),

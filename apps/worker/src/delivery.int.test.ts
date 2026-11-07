@@ -118,7 +118,11 @@ describe("the deliver queue", () => {
     await worker.start();
     const sender = { send };
     await startDelivery(db, worker, {
-      senders: { telegram: sender, email: sender, webhook: sender },
+      senders: {
+        telegram: sender,
+        email: sender,
+        webhook: { send: () => Promise.reject(new Error("These tests send no webhooks")) },
+      },
       appUrl: "https://watchdog.test",
     });
     return worker;
