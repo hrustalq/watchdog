@@ -485,9 +485,9 @@ function DestinationList({ hidden }: { hidden: boolean }) {
     );
     return { "aria-invalid": invalid, "aria-describedby": invalid ? "problems-destinations" : undefined };
   };
-  const rows = [
+  const rows: { entry: string | number; note: string }[] = [
     ...offered.map(({ name, type, confirmed }) => ({
-      entry: name as string | number,
+      entry: name,
       note: confirmed ? destinationTypes[type] : `${destinationTypes[type]} · not confirmed yet`,
     })),
     ...others.map((entry) => ({

@@ -525,8 +525,7 @@ describe("Rules", () => {
 
       const [row] = await db.select({ definition: action.definition }).from(action).where(eq(action.id, id));
       const pointedAt = await db.select().from(actionDestination).where(eq(actionDestination.actionId, id));
-      const stored = (row?.definition as { destinations: string[] }).destinations;
-      expect(stored).not.toContain(mine.id);
+      expect(JSON.stringify(row?.definition)).not.toContain(mine.id);
       expect(pointedAt.map(({ destinationId }) => destinationId)).toEqual([other.id]);
     });
 

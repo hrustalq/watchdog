@@ -125,9 +125,8 @@ async function RuleLists() {
         heading="Actions"
         note={actionApplies}
         empty="None yet. Nothing leaves the Feed until you add one."
-        rules={actions}
+        rules={actions.map((action) => ({ ...action, detail: <ActionDetail action={action} /> }))}
         hasModel={hasModel}
-        detail={(action) => <ActionDetail action={action} />}
       />
     </>
   );
@@ -138,24 +137,24 @@ interface RuleRow {
   name: string;
   kind: RuleKind | ActionKind;
   enabled: boolean;
+  /** What the row says beyond its name and kind. */
+  detail?: React.ReactNode;
 }
 
-function RuleList<Row extends RuleRow>({
+function RuleList({
   type,
   heading,
   note,
   empty,
   rules,
   hasModel,
-  detail,
 }: {
   type: RuleType;
   heading: string;
   note?: string;
   empty: string;
-  rules: Row[];
+  rules: RuleRow[];
   hasModel: boolean;
-  detail?: (rule: Row) => React.ReactNode;
 }) {
   return (
     <section aria-labelledby={`${type}-rules`} className="flex flex-col gap-3">
@@ -168,9 +167,7 @@ function RuleList<Row extends RuleRow>({
       ) : (
         <ul className="divide-y rounded-lg border">
           {rules.map((rule) => (
-            <RuleItem key={rule.id} type={type} rule={rule} needsModel={rule.kind === "agent" && !hasModel}>
-              {detail?.(rule)}
-            </RuleItem>
+            <RuleItem key={rule.id} type={type} rule={rule} needsModel={rule.kind === "agent" && !hasModel} />
           ))}
         </ul>
       )}
@@ -178,17 +175,7 @@ function RuleList<Row extends RuleRow>({
   );
 }
 
-function RuleItem({
-  type,
-  rule,
-  needsModel,
-  children,
-}: {
-  type: RuleType;
-  rule: RuleRow;
-  needsModel: boolean;
-  children?: React.ReactNode;
-}) {
+function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; needsModel: boolean }) {
   return (
     <li className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 flex-col gap-1">
@@ -201,7 +188,7 @@ function RuleItem({
           </Link>
         </h3>
         <p className="text-xs font-medium tracking-[0.01em] text-muted-foreground">{kindLabel[rule.kind]}</p>
-        {children}
+        {rule.detail}
         {needsModel ? (
           <p className="text-sm text-muted-foreground">
             Disabled until this Workspace has a model.{" "}

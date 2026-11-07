@@ -89,11 +89,11 @@ export const kindOf = (draft: Draft): RuleKind =>
 const actionKeys = ["action", "when", "kind", "schedule", "destinations"];
 
 /** An Action's keys in the order the rule model writes them, then whatever else it holds. */
-export const inActionOrder = (draft: Draft): Draft =>
-  Object.fromEntries([
-    ...actionKeys.filter((key) => key in draft).map((key) => [key, draft[key]]),
-    ...Object.entries(draft).filter(([key]) => !actionKeys.includes(key)),
-  ]);
+export function inActionOrder(draft: Draft): Draft {
+  const entries = Object.entries(draft);
+  const inOrder = actionKeys.flatMap((key) => entries.filter(([name]) => name === key));
+  return Object.fromEntries([...inOrder, ...entries.filter(([name]) => !actionKeys.includes(name))]);
+}
 
 /** The Action under another kind. Only a Digest takes a schedule, and it starts blank for the user to fill in. */
 export function changeKind({ schedule, ...draft }: Draft, kind: string): Draft {

@@ -78,7 +78,7 @@ async function listActions(db: Db, workspaceId: string) {
     return {
       ...row,
       condition: when.success ? conditionToWords(when.data) : null,
-      destinations: actionDestinations.map((row) => ({ name: row.destination.name, confirmed: isConfirmed(row.destination) })),
+      destinations: actionDestinations.map(({ destination: target }) => ({ name: target.name, confirmed: isConfirmed(target) })),
     };
   });
 }
@@ -147,7 +147,7 @@ export async function getRule(db: Db, workspaceId: string, type: RuleType, id: s
 /** A stored Action as the YAML shows it: Destinations by name, and an id with no Destination left as it is. */
 async function withDestinationNames(db: Db, workspaceId: string, definition: unknown) {
   if (!isMap(definition) || !Array.isArray(definition.destinations)) return definition;
-  const names = new Map((await destinationsIn(db, workspaceId)).map(({ id, name }) => [id as unknown, name]));
+  const names = new Map<unknown, string>((await destinationsIn(db, workspaceId)).map(({ id, name }) => [id, name]));
   return { ...definition, destinations: definition.destinations.map((id: unknown) => names.get(id) ?? id) };
 }
 
