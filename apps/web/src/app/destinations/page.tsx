@@ -516,15 +516,16 @@ function TestOutcome({
   if (capped) {
     return (
       <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
-        The test to {name} wasn&apos;t sent: this Workspace has sent the hosted limit of 50 alert mails for today. Mail
-        goes again after midnight ({timezone}).
+        The test to {name} wasn&apos;t sent: this Workspace has sent the hosted limit of 50 alert mails for today. Alert
+        mail goes out again after midnight, {timezone} time.
       </Notice>
     );
   }
   if (lastError !== null) {
     return (
       <Notice role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-alarm">
-        The test to {name} failed: {lastError}
+        The test to {name} failed: {lastError}. Alerts to it fail the same way until that&apos;s fixed, so fix it and send
+        another test.
       </Notice>
     );
   }
