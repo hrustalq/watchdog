@@ -74,11 +74,11 @@ describe("deliveryStatus", () => {
 
   it("gives held and grouped Deliveries their time in the Workspace timezone", () => {
     expect(deliveryStatus({ ...base, status: "held", nextAttemptAt: at }, "Europe/Berlin")).toEqual({
-      text: "Held until 14:30 Europe/Berlin",
+      text: "Held until 2026-11-07 14:30 Europe/Berlin",
       failed: false,
     });
     expect(deliveryStatus({ ...base, status: "grouped", nextAttemptAt: at }, "UTC")).toEqual({
-      text: "Grouped, goes at 13:30 UTC",
+      text: "Grouped, goes at 2026-11-07 13:30 UTC",
       failed: false,
     });
   });
@@ -86,13 +86,18 @@ describe("deliveryStatus", () => {
   it("names a failed attempt's reason and the next retry, and says when there are no more", () => {
     const failing = { ...base, attempts: 2, nextAttemptAt: at, lastError: "the receiver answered 500" };
     expect(deliveryStatus(failing, "UTC")).toEqual({
-      text: "Failed: the receiver answered 500. Next retry at 13:30 UTC",
+      text: "Failed: the receiver answered 500. Next retry at 2026-11-07 13:30 UTC",
       failed: true,
     });
-    expect(deliveryStatus({ ...failing, status: "failed", nextAttemptAt: null }, "UTC")).toEqual({
-      text: "Failed: the receiver answered 500. No more retries",
+    expect(deliveryStatus({ ...failing, status: "failed", nextAttemptAt: null, lastError: "refused." }, "UTC")).toEqual({
+      text: "Failed: refused. No more retries",
       failed: true,
     });
+  });
+
+  it("says a retry released from a hold is queued, because it goes now", () => {
+    const released = { ...base, attempts: 1, lastError: "the receiver answered 500" };
+    expect(deliveryStatus(released, "UTC")).toEqual({ text: "Queued", failed: false });
   });
 });
 

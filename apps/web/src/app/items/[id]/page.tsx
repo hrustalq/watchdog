@@ -154,7 +154,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
         fired={fired}
         processed={found.processedAt !== null}
         isBackfill={found.isBackfill}
-        anyMatched={found.log.some(({ stage, data }) => stage === "act" && hasKind(data))}
+        actedOn={found.log.some(({ stage, data }) => stage === "act" && aboutAnAction(data))}
         timezone={workspace.timezone}
       />
       <section aria-labelledby="run-rule" className="flex flex-col gap-3">
@@ -299,8 +299,8 @@ function lampFor(status: string, failed: boolean) {
   return status === "sent" ? `bg-ok ${filledLamp}` : "border border-muted-foreground";
 }
 
-/** Whether an `act` Log row is about an Action whose Condition held, which is what carries its kind. */
-const hasKind = (data: unknown) => typeof data === "object" && data !== null && "kind" in data;
+/** Whether an `act` Log row names an Action: one that fired, couldn't fire, was skipped, or sent. */
+const aboutAnAction = (data: unknown) => typeof data === "object" && data !== null && "actionId" in data;
 
 /**
  * What each Action that fired on this Item did, from its Deliveries. Nothing in a row is a receiver's
@@ -310,19 +310,19 @@ function ActionsSection({
   fired,
   processed,
   isBackfill,
-  anyMatched,
+  actedOn,
   timezone,
 }: {
   fired: Awaited<ReturnType<typeof itemActions>>;
   processed: boolean;
   isBackfill: boolean;
-  anyMatched: boolean;
+  actedOn: boolean;
   timezone: string;
 }) {
   let empty = "No Action matched.";
   if (!processed) empty = "Actions haven't been evaluated yet. They run once the pipeline finishes with this Item.";
   else if (isBackfill) empty = "No Action fires on an Item from a Backfill.";
-  else if (anyMatched) empty = "An Action matched, but nothing is waiting or was sent. The Log says why.";
+  else if (actedOn) empty = "Nothing is waiting to go or was sent from this Item. The Log says why.";
   return (
     <section aria-labelledby="actions" className="flex flex-col gap-3">
       <h2 id="actions" className="text-title">
@@ -376,7 +376,7 @@ function ActionsSection({
                 })}
                 {row.digestTo.map((name) => (
                   <li key={name} className="flex items-start gap-2">
-                    <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full border border-muted-foreground" />
+                    <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor("queued", false)}`} />
                     <span className="min-w-0 break-words">
                       {name}
                       <span className="text-muted-foreground"> · In the next Digest</span>

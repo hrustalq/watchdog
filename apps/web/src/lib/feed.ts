@@ -1,7 +1,6 @@
 // The Feed as the Workspace screen reads it, in its Top and Latest views (docs: Processing pipeline,
 // "Feed"). Every query is scoped to the Workspace, so another Workspace's Item id behaves like a
 // missing one.
-import { localTime } from "@watchdog/core";
 import {
   action,
   actionDestination,
@@ -95,8 +94,11 @@ async function readPage(db: Db, cursor: SQL<string>, where: SQL | undefined, ord
       // The summary once the Agent has written one. A row shows two lines at most, and either can be long.
       excerpt: sql<string>`left(coalesce(${item.summary}, ${item.body}), 300)`,
       // Whether the user was already told about it, so Top can show what's old news.
+      // A webhook call tells a machine, not the user, so only a Telegram or email alert counts.
       alerted: sql<boolean>`exists(
-        select 1 from ${delivery} where ${delivery.itemId} = ${item.id} and ${delivery.status} = 'sent')`,
+        select 1 from ${delivery} join ${destination} on ${destination.id} = ${delivery.destinationId}
+        where ${delivery.itemId} = ${item.id} and ${delivery.status} = 'sent'
+          and ${destination.type} in ('telegram', 'email'))`,
       cursor,
     })
     .from(item)
@@ -184,12 +186,15 @@ type Delivery = Pick<typeof delivery.$inferSelect, "status" | "attempts" | "next
 
 /**
  * Where a Delivery stands, in words. Times are in the Workspace timezone, as the Log's "Held until"
- * says them. `last_error` holds Watchdog's own sentence, never a receiver's answer or a credential.
+ * says them, with the date and the zone, because a hold can run past midnight and the rest of the page
+ * reads in UTC. `last_error` holds Watchdog's own sentence, never a receiver's answer or a credential.
  */
 export function deliveryStatus({ status, attempts, nextAttemptAt, lastError }: Delivery, timezone: string) {
-  // With the zone, because the rest of the page reads in UTC.
-  const at = (date: Date | null) => (date === null ? "a time not set" : `${localTime(date, timezone)} ${timezone}`);
-  const reason = lastError ?? "no reason was recorded";
+  // Swedish writes a date and time as 2026-11-07 14:30, the shape Timestamp gives UTC.
+  const clock = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone, dateStyle: "short", timeStyle: "short" });
+  const at = (date: Date | null) => (date === null ? "a time not set" : `${clock.format(date)} ${timezone}`);
+  // A sender's reason may end in a full stop already.
+  const reason = (lastError ?? "no reason was recorded").replace(/\.$/, "");
   switch (status) {
     case "sent":
       return { text: "Sent", failed: false };
@@ -200,9 +205,10 @@ export function deliveryStatus({ status, attempts, nextAttemptAt, lastError }: D
     case "failed":
       return { text: `Failed: ${reason}. No more retries`, failed: true };
     case "queued":
-      return attempts === 0
-        ? { text: "Queued", failed: false }
-        : { text: `Failed: ${reason}. Next retry at ${at(nextAttemptAt)}`, failed: true };
+      // A failed attempt's retry waits for its time. Without one, it was released from a hold and goes now.
+      return attempts > 0 && nextAttemptAt !== null
+        ? { text: `Failed: ${reason}. Next retry at ${at(nextAttemptAt)}`, failed: true }
+        : { text: "Queued", failed: false };
   }
 }
 
@@ -218,6 +224,7 @@ export async function itemActions(db: Db, workspaceId: string, itemId: string) {
       .select({
         actionId: action.id,
         actionName: action.name,
+        createdAt: action.createdAt,
         destination: destination.name,
         status: delivery.status,
         attempts: delivery.attempts,
@@ -231,24 +238,37 @@ export async function itemActions(db: Db, workspaceId: string, itemId: string) {
       .where(and(eq(delivery.itemId, itemId), eq(action.workspaceId, workspaceId)))
       .orderBy(action.createdAt, action.id, destination.name),
     db
-      .select({ actionId: action.id, actionName: action.name, destination: destination.name })
+      .select({
+        actionId: action.id,
+        actionName: action.name,
+        createdAt: action.createdAt,
+        destination: destination.name,
+      })
       .from(digestItem)
       .innerJoin(action, eq(action.id, digestItem.actionId))
       .innerJoin(actionDestination, eq(actionDestination.actionId, action.id))
       .innerJoin(destination, eq(destination.id, actionDestination.destinationId))
-      .where(and(eq(digestItem.itemId, itemId), eq(action.workspaceId, workspaceId)))
+      // A Digest only sends to confirmed Destinations, as the Act stage only collects for them.
+      .where(and(eq(digestItem.itemId, itemId), eq(action.workspaceId, workspaceId), isNotNull(destination.confirmedAt)))
       .orderBy(action.createdAt, action.id, destination.name),
   ]);
 
-  const fired = new Map<string, { id: string; name: string; deliveries: typeof deliveries; digestTo: string[] }>();
-  const entry = (id: string, name: string) => {
-    const found = fired.get(id) ?? { id, name, deliveries: [], digestTo: [] };
+  interface Fired {
+    id: string;
+    name: string;
+    createdAt: Date;
+    deliveries: typeof deliveries;
+    digestTo: string[];
+  }
+  const fired = new Map<string, Fired>();
+  const entry = ({ actionId: id, actionName: name, createdAt }: { actionId: string; actionName: string; createdAt: Date }) => {
+    const found = fired.get(id) ?? { id, name, createdAt, deliveries: [], digestTo: [] };
     fired.set(id, found);
     return found;
   };
-  for (const row of deliveries) entry(row.actionId, row.actionName).deliveries.push(row);
-  for (const row of digests) entry(row.actionId, row.actionName).digestTo.push(row.destination);
-  return [...fired.values()];
+  for (const row of deliveries) entry(row).deliveries.push(row);
+  for (const row of digests) entry(row).digestTo.push(row.destination);
+  return [...fired.values()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
 }
 
 /**

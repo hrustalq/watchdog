@@ -675,6 +675,14 @@ describe("Feed", () => {
       expect(rest).toEqual([]);
       expect(await itemActions(db, seeded.workspaceId, other)).toEqual([]);
       expect(await alerted()).toEqual({ [itemId]: true, [other]: false });
+
+      // A webhook call tells a machine, not the user.
+      const [hook] = await db
+        .insert(destination)
+        .values({ workspaceId: seeded.workspaceId, type: "webhook", name: "CI", config: { url: "https://ci.test" } })
+        .returning();
+      await db.insert(delivery).values({ actionId, itemId: other, destinationId: present(hook).id, status: "sent" });
+      expect(await alerted()).toEqual({ [itemId]: true, [other]: false });
     });
 
     it("reads a held Delivery's time from its row", async () => {
@@ -686,11 +694,16 @@ describe("Feed", () => {
 
       const [fired] = await itemActions(db, seeded.workspaceId, itemId);
       const [held] = present(fired).deliveries;
-      expect(deliveryStatus(present(held), "Europe/Berlin")).toEqual({ text: "Held until 14:30 Europe/Berlin", failed: false });
+      expect(deliveryStatus(present(held), "Europe/Berlin")).toEqual({ text: "Held until 2099-01-01 14:30 Europe/Berlin", failed: false });
     });
 
     it("shows a Digest's Destinations waiting for it, and nothing to another Workspace", async () => {
-      const { seeded } = await withAction("digest");
+      const { seeded, actionId } = await withAction("digest");
+      const [waiting] = await db
+        .insert(destination)
+        .values({ workspaceId: seeded.workspaceId, type: "email", name: "Unconfirmed", config: { address: "u@example.com" } })
+        .returning();
+      await db.insert(actionDestination).values({ actionId, destinationId: present(waiting).id });
       const [itemId = ""] = await insertItems(seeded, [{ title: "A launch" }]);
       await processItem(db, itemId, pipelineDeps);
 
