@@ -108,11 +108,9 @@ export async function runBot(
     return { code, chat: message.chat };
   };
 
-  const handle = async (next: z.output<typeof update>, bot: string) => {
-    const start = startOf(next, bot);
-    if (start === undefined) return;
-    const { id, title = "Private chat" } = start.chat;
-    const name = await linkChat(start.code, { id: String(id), title });
+  const link = async ({ code, chat }: NonNullable<ReturnType<typeof startOf>>) => {
+    const { id, title = "Private chat" } = chat;
+    const name = await linkChat(code, { id: String(id), title });
     await reply(
       id,
       name === undefined
@@ -135,8 +133,9 @@ export async function runBot(
       );
       for (const next of updates) {
         if (stopped()) return;
+        const start = startOf(next, bot);
         try {
-          await handle(next, bot);
+          if (start !== undefined) await link(start);
         } catch (error) {
           if (!(await pingDatabase().then(() => true, () => false))) throw error;
           attempts = failedId === next.update_id ? attempts + 1 : 1;
@@ -147,8 +146,7 @@ export async function runBot(
             `Skipped Telegram update ${String(next.update_id)} after ${String(attempts)} failed attempts: ${messageOf(error)}\n`,
           );
           // A failed link spent nothing, so the same code still works until it expires.
-          const chatId = startOf(next, bot)?.chat.id;
-          if (chatId !== undefined) await reply(chatId, "Watchdog couldn't link this chat. Try the same link again.");
+          if (start !== undefined) await reply(start.chat.id, "Watchdog couldn't link this chat. Try the same link again.");
         }
         offset = next.update_id + 1;
       }
