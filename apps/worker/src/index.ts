@@ -74,6 +74,7 @@ const stopTelegramBot =
             botToken,
             fetch: egressFetch,
             linkChat: (code, chat) => linkChat(db, config.encryptionKey, code, chat),
+            pingDatabase: () => db.$client.query("select 1"),
           },
           signal,
         ),

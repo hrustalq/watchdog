@@ -49,8 +49,9 @@ function fakeTelegram(batches: unknown[][], answers: Partial<Record<string, () =
 function run(
   telegram: ReturnType<typeof fakeTelegram>,
   linkChat: (code: string, chat: BotChat) => Promise<string | undefined> = () => Promise.resolve(undefined),
+  pingDatabase: () => Promise<unknown> = () => Promise.resolve(),
 ) {
-  return runBot({ botToken, fetch: telegram.fetch, linkChat, retryMs: 1 }, telegram.signal);
+  return runBot({ botToken, fetch: telegram.fetch, linkChat, pingDatabase, retryMs: 1 }, telegram.signal);
 }
 
 describe("the Telegram bot runner", () => {
@@ -132,7 +133,10 @@ describe("the Telegram bot runner", () => {
       return Promise.resolve("Ops alerts");
     });
 
-    await runBot({ botToken, fetch: telegram.fetch, linkChat, retryMs: 1 }, stopping.signal);
+    await runBot(
+      { botToken, fetch: telegram.fetch, linkChat, pingDatabase: () => Promise.resolve(), retryMs: 1 },
+      stopping.signal,
+    );
 
     expect(linkChat).toHaveBeenCalledOnce();
   });
@@ -163,6 +167,67 @@ describe("the Telegram bot runner", () => {
     expect(telegram.polls().map(({ offset }) => offset)).toEqual([undefined, undefined, 11]);
     expect(telegram.replies()).toHaveLength(1);
     expect(stderr.mock.calls.join()).toContain("the database went away");
+  });
+
+  it("skips an update that fails 3 times while the database answers, and handles the one behind it", async () => {
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const batch = [startMessage(10, "/start broken"), startMessage(11, "/start abc", { id: 7, type: "private" })];
+    const telegram = fakeTelegram([batch, batch, batch]);
+    const linkChat = vi.fn((code: string) =>
+      code === "broken" ? Promise.reject(new Error("a bad row")) : Promise.resolve("Ops alerts"),
+    );
+
+    await run(telegram, linkChat);
+
+    expect(linkChat.mock.calls.map(([code]) => code)).toEqual(["broken", "broken", "broken", "abc"]);
+    expect(telegram.polls().map(({ offset }) => offset)).toEqual([undefined, undefined, undefined, 12]);
+    expect(telegram.replies()).toMatchObject([{ chat_id: 42 }, { chat_id: 7, text: "Linked to Ops alerts in Watchdog" }]);
+  });
+
+  it("never skips an update while the database can't be reached", async () => {
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const batch = [startMessage(10, "/start abc")];
+    const telegram = fakeTelegram([batch, batch, batch, batch, batch]);
+    const linkChat = vi.fn(() => Promise.reject(new Error("connection refused")));
+
+    await run(telegram, linkChat, () => Promise.reject(new Error("connection refused")));
+
+    expect(linkChat).toHaveBeenCalledTimes(5);
+    expect(telegram.polls().every(({ offset }) => offset === undefined)).toBe(true);
+    expect(telegram.replies()).toEqual([]);
+  });
+
+  it("asks a skipped chat once to try again, and its code still links afterwards", async () => {
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const start = startMessage(10, "/start abc");
+    const telegram = fakeTelegram([[start], [start], [start], [startMessage(11, "/start abc")]]);
+    const linkChat = vi
+      .fn<(code: string, chat: BotChat) => Promise<string | undefined>>()
+      .mockRejectedValueOnce(new Error("a bad row"))
+      .mockRejectedValueOnce(new Error("a bad row"))
+      .mockRejectedValueOnce(new Error("a bad row"))
+      .mockResolvedValue("Ops alerts");
+
+    await run(telegram, linkChat);
+
+    expect(telegram.replies().map(({ text }) => text)).toEqual([
+      "Watchdog couldn't link this chat. Try the same link again.",
+      "Linked to Ops alerts in Watchdog",
+    ]);
+    expect(linkChat).toHaveBeenLastCalledWith("abc", { id: "42", title: "Private chat" });
+  });
+
+  it("logs which update it skipped and why, without the message's text or the bot's token", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const start = startMessage(10, "/start s3cret-code");
+    const telegram = fakeTelegram([[start], [start], [start]]);
+
+    await run(telegram, () => Promise.reject(new Error("a bad row")));
+
+    const logged = stderr.mock.calls.join();
+    expect(logged).toContain("Skipped Telegram update 10 after 3 failed attempts: a bad row");
+    expect(logged).not.toContain("s3cret-code");
+    expect(logged).not.toContain(botToken);
   });
 
   it("keeps trying after Telegram refuses, without the bot's token in the log", async () => {
