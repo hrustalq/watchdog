@@ -10,7 +10,10 @@ import { fieldError } from "@/components/field-classes";
  */
 export function FieldError({ id, children }: { id: string; children: React.ReactNode }) {
   const ref = useRef<HTMLParagraphElement>(null);
-  useEffect(() => ref.current?.scrollIntoView({ block: "nearest" }), []);
+  // A block body: Chrome's scrollIntoView returns a promise, which React would call as the cleanup.
+  useEffect(() => {
+    ref.current?.scrollIntoView({ block: "nearest" });
+  }, []);
   return (
     <p ref={ref} id={id} role="alert" className={fieldError}>
       {children}
