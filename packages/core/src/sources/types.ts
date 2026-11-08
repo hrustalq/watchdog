@@ -6,9 +6,6 @@ import type { ItemDraft } from "./item.ts";
 import { rss } from "./rss/source-type.ts";
 import type { FetchFeedDeps } from "./rss/fetch-feed.ts";
 
-/** The types with a Schedule Trigger, the only ones polled. A webhook or Telegram Source is pushed. */
-export const scheduleTypes = ["rss", "github", "website"] as const satisfies SourceType[];
-
 /** A first capture's limits: the newest dated drafts within `window` ms, at most `max` of them. */
 export interface Backfill {
   window: number;
@@ -18,7 +15,7 @@ export interface Backfill {
 export type PollDeps = FetchFeedDeps;
 
 /** A poll's answer: nothing new since the last poll, or the drafts it found. */
-export type Polled = { notModified: true } | { drafts: ItemDraft[]; fetchState: object };
+export type Polled = { notModified: true } | { drafts: ItemDraft[]; fetchState: Record<string, string> };
 
 export interface SourceTypeImpl {
   /** The shape of the type's `config`. */
@@ -32,5 +29,5 @@ export interface SourceTypeImpl {
   poll?: (source: { config: unknown; fetchState: Record<string, string> }, deps: PollDeps) => Promise<Polled>;
 }
 
-/** The types implemented so far. A Source of any other type captures nothing yet. */
+/** The types implemented so far. A Source of any other type polls nothing and takes no Backfill. */
 export const sourceTypes: Partial<Record<SourceType, SourceTypeImpl>> = { rss };

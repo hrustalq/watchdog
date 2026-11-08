@@ -29,6 +29,9 @@ export type SourceType = keyof SourceConfigs;
 
 const sourceTypes = ["rss", "github", "website", "webhook", "telegram"] as const satisfies SourceType[];
 
+/** The types with a Schedule Trigger, the only ones polled. source_schedule_check lists them too. */
+export const scheduleTypes = ["rss", "github", "website"] as const satisfies SourceType[];
+
 /** A place a Workspace watches for new Items. */
 export const source = pgTable(
   "source",
@@ -98,6 +101,7 @@ export const source = pgTable(
   (table) => [
     check("source_type_check", sql`${table.type} in ('rss', 'github', 'website', 'webhook', 'telegram')`),
     // Schedule types poll, so they need both; the rest never poll, so the tick must not find them.
+    // The list is scheduleTypes.
     check(
       "source_schedule_check",
       sql`case when ${table.type} in ('rss', 'github', 'website')

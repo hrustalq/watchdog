@@ -21,11 +21,16 @@ export { botUsername, runBot } from "./telegram/bot-runner.ts";
 export { issueLinkCode, linkChat, linkCodeMinutes, liveLinkCode } from "./telegram/link.ts";
 export { checkUnsubscribeToken, unsubscribeUrl } from "./delivery/unsubscribe.ts";
 export { verifyWebhookSignature } from "./delivery/verify-signature.ts";
-export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/capture.ts";
+export {
+  captureItems,
+  type CaptureDeps,
+  pollSource,
+  type PollResult,
+  type PollSourceDeps,
+} from "./pipeline/capture.ts";
 export { runExtractorRuleByHand } from "./pipeline/manual-run.ts";
 export { processItem, type ProcessItemDeps } from "./pipeline/process-item.ts";
 export type { ItemDraft } from "./sources/item.ts";
-export { scheduleTypes } from "./sources/types.ts";
 export {
   FeedHttpError,
   fetchFeed,

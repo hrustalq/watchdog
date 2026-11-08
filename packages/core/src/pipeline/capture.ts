@@ -2,7 +2,7 @@
 // push delivered them (docs: Processing pipeline, "Stages").
 import { and, type Db, eq, inArray, item, itemLog, source, type Tx } from "@watchdog/db";
 import type { ItemDraft } from "../sources/item.ts";
-import { type Backfill, type PollDeps, sourceTypes } from "../sources/types.ts";
+import { type PollDeps, sourceTypes } from "../sources/types.ts";
 import { detectLanguage } from "./language.ts";
 
 export interface CaptureDeps {
@@ -22,7 +22,7 @@ export type PollResult = { captured: number } | { error: string };
 interface Success {
   at: Date;
   polled: boolean;
-  fetchState?: object;
+  fetchState?: Record<string, string>;
 }
 
 /** How a poll or push ended, as the Source records it. */
@@ -59,18 +59,19 @@ export async function pollSource(
     return { captured: 0 };
   }
   const outcome = { at, polled: true, fetchState: polled.fetchState };
-  return captureItems(db, sourceId, polled.drafts, { backfill: type.backfill, outcome }, deps);
+  return captureItems(db, sourceId, polled.drafts, outcome, deps);
 }
 
 /**
  * Captures drafts from any Source type as Items: the first capture takes the type's Backfill, a
  * draft already stored is skipped, and each new Item gets a capture Log row and its pipeline job.
+ * A push type's receiver calls it with a non-poll outcome.
  */
 export async function captureItems(
   db: Db,
   sourceId: string,
   drafts: ItemDraft[],
-  { backfill, outcome }: { backfill: Backfill | null; outcome: Success },
+  outcome: Success,
   deps: CaptureDeps,
 ): Promise<{ captured: number }> {
   const byId = new Map(drafts.map(withoutNul).map((draft) => [draft.externalId, draft]));
@@ -81,6 +82,7 @@ export async function captureItems(
     const [locked] = await tx.select().from(source).where(eq(source.id, sourceId)).for("update");
     if (locked === undefined) return { captured: 0 };
 
+    const backfill = sourceTypes[locked.type]?.backfill ?? null;
     const { backfilledAt } = locked;
     const isBackfill = backfill !== null && backfilledAt === null;
     let capture: ItemDraft[];
@@ -155,8 +157,8 @@ export async function captureItems(
 }
 
 /**
- * Records how a poll or push of a Source ended. Every outcome comes through here, so Source Health
- * is kept in one place.
+ * Records how a poll or push of a Source ended. Every outcome comes through here, so this is where
+ * Source Health will be updated.
  */
 async function recordOutcome(
   db: Db | Tx,
@@ -171,9 +173,7 @@ async function recordOutcome(
           lastError: null,
           lastErrorAt: null,
           ...(outcome.polled && { lastPolledAt: outcome.at }),
-          // A fetch state type is an interface, so it lacks the index signature the column's type
-          // has. A copy of it has one.
-          ...(outcome.fetchState && { fetchState: { ...outcome.fetchState } }),
+          ...(outcome.fetchState && { fetchState: outcome.fetchState }),
         };
   await db
     .update(source)

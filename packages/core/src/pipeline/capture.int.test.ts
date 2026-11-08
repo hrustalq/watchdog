@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { closeDb, createDb, type Db, eq, item, migrate, source, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
 import { loadConfig } from "../config.ts";
 import { createEgressFetch } from "../egress/egress.ts";
-import type { SourceTypeImpl } from "../sources/types.ts";
+import { sourceTypes } from "../sources/types.ts";
 import { captureItems, pollSource, type PollSourceDeps } from "./capture.ts";
 
 const now = new Date("2026-11-03T15:00:00Z");
@@ -319,8 +319,11 @@ describe("pollSource", () => {
   });
 
   it("captures every draft a type without a Backfill pushes, however old or undated", async () => {
-    // A push type of the test's own: it takes no Backfill, as the webhook inbox doesn't.
-    const pushed: SourceTypeImpl = { config: z.object({}), backfill: null };
+    // A push type of the test's own, standing in for the webhook inbox: it takes no Backfill.
+    sourceTypes.webhook = { config: z.object({}), backfill: null };
+    onTestFinished(() => {
+      delete sourceTypes.webhook;
+    });
     const [inbox] = await db
       .insert(source)
       .values({ workspaceId, type: "webhook", name: "Inbox", config: {}, schedule: null, nextPollAt: null })
@@ -338,7 +341,7 @@ describe("pollSource", () => {
     // 60 drafts, over the cap of 50, most of them older than 7 days, and one undated.
     const drafts = [...hourly("p", 59, 24 * 30).map(({ id, published }) => draft(id, published)), draft("undated", null)];
     const push = (batch: typeof drafts) =>
-      captureItems(db, src.id, batch, { backfill: pushed.backfill, outcome: { at: now, polled: false } }, deps);
+      captureItems(db, src.id, batch, { at: now, polled: false }, deps);
 
     expect(await push(drafts)).toEqual({ captured: 60 });
     const items = await itemsOf(src.id);

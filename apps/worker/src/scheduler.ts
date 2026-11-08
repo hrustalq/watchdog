@@ -1,7 +1,7 @@
 // Polls Sources with a Schedule Trigger (docs: Sources and ingestion, "Scheduling"). One tick a
 // minute enqueues the Sources that are due, rather than one pg-boss schedule per Source.
-import { type Config, nextPollAt, pollSource, type PollSourceDeps, scheduleTypes } from "@watchdog/core";
-import { and, type Db, eq, inArray, lte, source } from "@watchdog/db";
+import { type Config, nextPollAt, pollSource, type PollSourceDeps } from "@watchdog/core";
+import { and, type Db, eq, inArray, lte, scheduleTypes, source } from "@watchdog/db";
 import type { PgBoss } from "pg-boss";
 
 const tickQueue = "schedule-tick";
