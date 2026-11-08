@@ -1289,7 +1289,7 @@ describe("deliver", () => {
           expect((await allFor(seeded.destinationId)).map((row) => row.status)).toEqual(["sent", "sent"]);
         });
 
-        it("sends a new alert alone and leaves a hold that has ended to the sweep", async () => {
+        it("sends a hold that has ended before a new alert, and the new alert on its own", async () => {
           const seeded = await seed({ severity: 4 });
           await settings(seeded.workspaceId, { ...overnight, burstWindowSeconds: 0 });
           const { deps, sent } = recording();
@@ -1299,8 +1299,11 @@ describe("deliver", () => {
           const fresh = await another(seeded);
           await deliver(db, fresh.deliveryId, { ...deps, now: clock("07:00:00") });
 
-          expect(sent.map(({ message }) => message)).toMatchObject([{ title: "Another advisory" }]);
-          expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "held" });
+          expect(sent.map(({ message }) => message)).toMatchObject([
+            { title: "A security advisory" },
+            { title: "Another advisory" },
+          ]);
+          expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent" });
         });
       });
 
