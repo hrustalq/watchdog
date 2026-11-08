@@ -1,6 +1,6 @@
 // The capture stage: one poll of a Source turns new feed entries into Items
 // (docs: Processing pipeline, "Stages").
-import { and, type Db, eq, inArray, isSourceOf, item, itemLog, source, type Tx } from "@watchdog/db";
+import { and, type Db, eq, inArray, item, itemLog, source, type Tx } from "@watchdog/db";
 import type { ItemDraft } from "../sources/item.ts";
 import { fetchFeed, type FetchFeedDeps } from "../sources/rss/fetch-feed.ts";
 import { detectLanguage } from "./language.ts";
@@ -34,7 +34,7 @@ export async function pollSource(
 ): Promise<PollResult> {
   const found = await db.query.source.findFirst({ where: eq(source.id, sourceId) });
   // Only RSS Sources poll until the other Schedule types have fetches of their own.
-  if (found === undefined || !isSourceOf(found, "rss")) return { captured: 0 };
+  if (found?.type !== "rss" || !("url" in found.config)) return { captured: 0 };
   const fetchedAt = deps.now?.() ?? new Date();
 
   let fetched;

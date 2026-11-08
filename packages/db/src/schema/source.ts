@@ -43,7 +43,7 @@ export const source = pgTable(
      */
     type: text("type", { enum: sourceTypes }).notNull(),
     name: text("name").notNull(),
-    /** The type's settings, as SourceConfigs has them. isSourceOf narrows a row to its type's. */
+    /** The type's settings, as SourceConfigs has them. */
     config: jsonb("config").$type<SourceConfigs[SourceType]>().notNull(),
     /**
      * What makes two Sources the same Source, built from config by Postgres so no writer can get it
@@ -119,14 +119,3 @@ export const source = pgTable(
     ),
   ],
 );
-
-export type SourceRow = typeof source.$inferSelect;
-/** A Source row whose config is its type's. */
-export type SourceOf<T extends SourceType> = Omit<SourceRow, "type" | "config"> & {
-  type: T;
-  config: SourceConfigs[T];
-};
-
-/** Narrows a Source row on its type, and its config with it. */
-export const isSourceOf = <T extends SourceType>(row: SourceRow, type: T): row is SourceRow & SourceOf<T> =>
-  row.type === type;

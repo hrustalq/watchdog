@@ -46,7 +46,7 @@ export async function startScheduler(
         columns: { schedule: true },
       });
       // Only Schedule types have a schedule, and only they come due.
-      if (found?.schedule == null) return;
+      if (found === undefined || found.schedule === null) return;
       await db
         .update(source)
         .set({ nextPollAt: nextPollAt(found.schedule, mode, new Date()) })
