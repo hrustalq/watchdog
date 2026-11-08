@@ -4,49 +4,13 @@ import { closeDb, createDb, type Db } from "./client.ts";
 import { migrate } from "./migrate.ts";
 import { item, itemLog, source, user, workspace } from "./schema/index.ts";
 import { migrateFirst, startPostgres, type TestPostgres } from "./testing/postgres.ts";
+import { only, rssSource, seed } from "./testing/seed.ts";
 
-/** The one row a query returned. */
-function only<T>(rows: T[]): T {
-  const [row] = rows;
-  if (row === undefined || rows.length > 1) throw new Error(`Expected one row, got ${String(rows.length)}`);
-  return row;
-}
-
-const newSource = (workspaceId: string) => ({
-  workspaceId,
-  type: "rss" as const,
-  name: "Blog",
-  config: { url: "https://example.com/feed.xml" },
-  schedule: "*/15 * * * *",
-});
-
-/** A user with a Workspace, one RSS Source, and one Item with a capture Log row. */
-async function seed(db: Db) {
-  const id = crypto.randomUUID();
-  const owner = only(
-    await db.insert(user).values({ id, name: "Owner", email: `${id}@example.com` }).returning(),
-  );
-  const ws = only(
-    await db.insert(workspace).values({ name: "Workspace", ownerUserId: owner.id }).returning(),
-  );
-  const src = only(await db.insert(source).values(newSource(ws.id)).returning());
-  const captured = only(
-    await db
-      .insert(item)
-      .values({
-        workspaceId: ws.id,
-        sourceId: src.id,
-        externalId: "guid-1",
-        title: "First post",
-        body: "Hello",
-        raw: { guid: "guid-1" },
-      })
-      .returning(),
-  );
-  await db
-    .insert(itemLog)
-    .values({ itemId: captured.id, stage: "capture", message: "Captured from Blog" });
-  return { owner, workspace: ws, source: src, item: captured };
+/** The shared seed, plus the capture Log row its Item gets when the worker captures it. */
+async function seedCaptured(db: Db) {
+  const seeded = await seed(db);
+  await db.insert(itemLog).values({ itemId: seeded.item.id, stage: "capture", message: "Captured from Blog" });
+  return seeded;
 }
 
 describe("Source, Item and Log tables", () => {
@@ -81,7 +45,7 @@ describe("Source, Item and Log tables", () => {
 
     expect(again).toEqual([]);
     const rows = await db.select().from(item).where(eq(item.sourceId, seeded.source.id));
-    expect(rows.map((row) => row.title)).toEqual(["First post"]);
+    expect(rows.map((row) => row.title)).toEqual([seeded.item.title]);
   });
 
   it("refuses an Item whose workspace_id isn't its Source's Workspace", async () => {
@@ -100,8 +64,8 @@ describe("Source, Item and Log tables", () => {
   });
 
   it("deleting a user removes their Workspace, Sources, Items and Log rows", async () => {
-    const kept = await seed(db);
-    const gone = await seed(db);
+    const kept = await seedCaptured(db);
+    const gone = await seedCaptured(db);
 
     await db.delete(user).where(eq(user.id, gone.owner.id));
 
@@ -165,7 +129,7 @@ describe("Source, Item and Log tables", () => {
   });
 
   it("allows the stages through act in the Log, and nothing else", async () => {
-    const seeded = await seed(db);
+    const seeded = await seedCaptured(db);
     const itemId = seeded.item.id;
 
     await db.insert(itemLog).values(
@@ -180,7 +144,7 @@ describe("Source, Item and Log tables", () => {
   });
 
   it("loads a Workspace's Sources with their Items and Logs through the relations", async () => {
-    const seeded = await seed(db);
+    const seeded = await seedCaptured(db);
 
     const loaded = await db.query.workspace.findFirst({
       where: eq(workspace.id, seeded.workspace.id),
@@ -208,7 +172,7 @@ describe("Source, Item and Log tables", () => {
     const upgraded = createDb(url.href);
     try {
       const ws = only(await upgraded.select().from(workspace));
-      const src = only(await upgraded.insert(source).values(newSource(ws.id)).returning());
+      const src = only(await upgraded.insert(source).values(rssSource(ws.id)).returning());
       expect(src.nextPollAt).toBeInstanceOf(Date);
     } finally {
       await closeDb(upgraded);
