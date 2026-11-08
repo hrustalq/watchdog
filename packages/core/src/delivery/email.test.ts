@@ -209,3 +209,26 @@ describe("createEmailSender", () => {
     expect(output).toContain("https://watchdog.test/items/0a1b");
   });
 });
+
+describe("a Digest mail", () => {
+  it("names the Digest, lists its Items and carries one-click unsubscribe headers", async () => {
+    const { sent, sender } = recording();
+    const items = [1, 2].map((n) => ({ id: `0a1${String(n)}`, title: `Item ${String(n)}`, severity: null, importance: null }));
+    const unsubscribe = "https://watchdog.test/unsubscribe?token=abc";
+
+    await sender.send(confirmed, { ...groupedAlert(items, "https://watchdog.test"), digest: "Morning", unsubscribeUrl: unsubscribe });
+
+    expect(sent).toEqual([
+      {
+        to: "me@example.com",
+        subject: "[Watchdog] Digest Morning · 2 Items",
+        text: [
+          "Digest Morning: 2 Items",
+          "Item 1 · unrated · https://watchdog.test/items/0a11",
+          "Item 2 · unrated · https://watchdog.test/items/0a12",
+        ].join("\n"),
+        headers: { "List-Unsubscribe": `<${unsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+      },
+    ]);
+  });
+});

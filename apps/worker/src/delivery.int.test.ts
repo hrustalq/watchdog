@@ -7,6 +7,7 @@ import {
   type Db,
   delivery,
   destination,
+  digestItem,
   eq,
   item,
   itemLog,
@@ -24,7 +25,9 @@ import {
   createCapNoticeQueue,
   deliverQueue,
   deliveryEnqueuer,
+  digestQueue,
   enqueueDueDeliveries,
+  enqueueDueDigests,
   startDelivery,
 } from "./delivery.ts";
 
@@ -124,6 +127,7 @@ describe("the deliver queue", () => {
         webhook: { send: () => Promise.reject(new Error("These tests send no webhooks")) },
       },
       appUrl: "https://watchdog.test",
+      secret: "a-better-auth-secret-of-at-least-32-chars",
     });
     return worker;
   }
@@ -295,6 +299,7 @@ describe("the deliver queue", () => {
       await startDelivery(db, worker, {
         senders: { telegram: sender, email: sender, webhook: sender },
         appUrl: "https://watchdog.test",
+        secret: "a-better-auth-secret-of-at-least-32-chars",
         sendCapNotice,
       });
       const workspaceId = crypto.randomUUID();
@@ -318,6 +323,44 @@ describe("the deliver queue", () => {
       ).rejects.toThrow("The hold failed");
 
       expect(await jobs()).toHaveLength(before);
+    });
+  });
+
+  describe("Digests", () => {
+    /** The seeded Item collected into a Digest that was saved two days ago, so its daily schedule has come. */
+    async function seedDigest() {
+      const { itemId, deliveryId } = await seed();
+      const { actionId, destinationId } = present(await rowOf(deliveryId));
+      await db.delete(delivery).where(eq(delivery.id, deliveryId));
+      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+      await db
+        .update(action)
+        .set({
+          name: "Daily",
+          kind: "digest",
+          definition: { action: "Daily", when: { field: "title", op: "is", value: "One" }, kind: "digest", schedule: "0 0 * * *", destinations: [destinationId] },
+          updatedAt: twoDaysAgo,
+        })
+        .where(eq(action.id, actionId));
+      await db.insert(digestItem).values({ actionId, itemId });
+      return { itemId, actionId };
+    }
+    const digestJobs = async (actionId: string) =>
+      (await db.$client.query("select id from pgboss.job where name = $1 and singleton_key = $2", [digestQueue, actionId])).rows;
+
+    it("queues one job for a due Digest however many sweeps run, and its job sends it once", async () => {
+      const { itemId, actionId } = await seedDigest();
+      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+      await startWorker(send);
+
+      await enqueueDueDigests(db, boss);
+      await enqueueDueDigests(db, boss);
+
+      await vi.waitFor(async () => {
+        expect(await logOf(itemId)).toEqual(["Sent in the Digest Daily to ops-chat"]);
+      }, waitLong);
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(await digestJobs(actionId)).toHaveLength(1);
     });
   });
 

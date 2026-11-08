@@ -1,5 +1,5 @@
 // One message carrying several alerts to a Destination (docs: Actions and delivery, "Grouping and rate
-// limits"). The hosted email cap sends held mail in this shape too.
+// limits"). The hosted email cap sends held mail in this shape too, and a Digest is one with its name.
 import { type AlertItem, itemHeadline } from "./content.ts";
 
 const maxLines = 50;
@@ -12,6 +12,10 @@ export interface GroupedAlert {
   lines: ReturnType<typeof itemHeadline>[];
   /** Where the Items past the last line can be read. */
   feedLink: string;
+  /** The Digest's name, when this is one. */
+  digest?: string;
+  /** Where a Digest mail to this Destination unsubscribes it. */
+  unsubscribeUrl?: string;
 }
 
 /** Takes the Items in the order they should be listed. */
@@ -31,9 +35,9 @@ export function oneLine(title: string) {
 }
 
 /** Plain text. A receiver with a length limit gets fewer whole lines, and the rest count into the link to the Feed. */
-export function groupedAlertText({ count, lines, feedLink }: GroupedAlert, maxLength = Infinity) {
+export function groupedAlertText({ count, lines, feedLink, digest }: GroupedAlert, maxLength = Infinity) {
   const more = (left: number) => (left > 0 ? `\nand ${String(left)} more: ${feedLink}` : "");
-  let text = `${String(count)} alerts`;
+  let text = digest === undefined ? `${String(count)} alerts` : `Digest ${oneLine(digest)}: ${itemCount(count)}`;
   let listed = 0;
   for (const { title, rating, link } of lines) {
     const line = `\n${oneLine(title)} · ${rating} · ${link}`;
@@ -43,3 +47,5 @@ export function groupedAlertText({ count, lines, feedLink }: GroupedAlert, maxLe
   }
   return text + more(count - listed);
 }
+
+export const itemCount = (count: number) => `${String(count)} ${count === 1 ? "Item" : "Items"}`;

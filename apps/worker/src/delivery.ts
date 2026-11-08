@@ -2,10 +2,13 @@
 import {
   deliver,
   type DeliverDeps,
+  type DigestDeps,
+  dueDigests,
   type EmailCap,
   type ProcessItemDeps,
   purgeSentMessages,
   releaseDueDeliveries,
+  sendDigest,
 } from "@watchdog/core";
 import { type Db, sql } from "@watchdog/db";
 import { fromDrizzle, type PgBoss } from "pg-boss";
@@ -13,6 +16,7 @@ import { fromDrizzle, type PgBoss } from "pg-boss";
 export const deliverQueue = "deliver";
 const sweepQueue = "deliver-sweep";
 const capNoticeQueue = "email-cap-notice";
+export const digestQueue = "send-digest";
 
 /** Queues one job per new Delivery over the Act stage's transaction, so they commit or roll back together. */
 export function deliveryEnqueuer(boss: PgBoss): ProcessItemDeps["enqueueDeliveries"] {
@@ -71,6 +75,16 @@ export async function enqueueDueDeliveries(db: Db, boss: PgBoss) {
   });
 }
 
+/** Queues a send of every Digest whose schedule has come. One is queued or sending at a time, by its id. */
+export async function enqueueDueDigests(db: Db, boss: PgBoss) {
+  const due = await dueDigests(db, new Date());
+  if (due.length === 0) return;
+  await boss.insert(
+    digestQueue,
+    due.map((actionId) => ({ data: { actionId }, singletonKey: actionId })),
+  );
+}
+
 /** Call before the pipeline starts: queueing a job fails on a queue that doesn't exist. */
 export async function startDelivery(
   db: Db,
@@ -78,7 +92,8 @@ export async function startDelivery(
   {
     sendCapNotice,
     ...deps
-  }: Pick<DeliverDeps, "senders" | "appUrl"> & {
+  }: Pick<DeliverDeps, "senders" | "appUrl"> &
+    Pick<DigestDeps, "secret"> & {
     /** Only hosted has the email cap, and so a notice about it. */
     sendCapNotice?: (workspaceId: string) => Promise<void>;
   },
@@ -100,6 +115,20 @@ export async function startDelivery(
     }
   });
 
+  // `exclusive` with the Digest's id as the singletonKey, as a Source's poll is. sendDigest records a failed
+  // send itself, so a throw is a lost database connection, and a send that ran is no longer due.
+  await boss.createQueue(digestQueue, { ...queueOptions, policy: "exclusive" });
+  await boss.work<{ actionId: string }>(digestQueue, { localConcurrency: 5 }, async ([job]) => {
+    if (job === undefined) return;
+    const { actionId } = job.data;
+    try {
+      await sendDigest(db, actionId, { ...deps, ...(sendCapNotice && { emailCap: capNoticeQueuer(boss) }) });
+    } catch (error) {
+      console.error(`Sending Digest ${actionId} failed:`, error);
+      throw error;
+    }
+  });
+
   if (sendCapNotice) {
     await createCapNoticeQueue(boss);
     await boss.work<{ workspaceId: string }>(capNoticeQueue, async ([job]) => {
@@ -117,6 +146,7 @@ export async function startDelivery(
   // for it, so what came due while no worker ran goes at once.
   await boss.work(sweepQueue, async () => {
     await enqueueDueDeliveries(db, boss);
+    await enqueueDueDigests(db, boss);
     await purgeSentMessages(db);
   });
   await boss.schedule(sweepQueue, "* * * * *");
