@@ -26,6 +26,9 @@ const update = z.object({
  */
 const startCommand = /^\/start(?:@(\w+))?\s+(\S+)\s*$/;
 
+/** How often an update may fail while the database answers, before the runner moves past it. */
+const attemptsPerUpdate = 3;
+
 async function callBot<T>(
   { botToken, fetch }: { botToken: string; fetch: BotFetch },
   method: string,
@@ -68,6 +71,8 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
  * Reads the bot's updates until the signal ends. An update counts as read only once it's handled, because
  * Telegram resends everything from the offset of the last poll on. So a failure, logged here, tries again
  * after `retryMs`, and a stop in the middle of a batch can bring a `/start` back with a reply that the code is gone.
+ * An update that fails `attemptsPerUpdate` times while the database answers is skipped, so it can't hold up
+ * the ones behind it. While the database is down every update waits, so an outage loses no `/start`.
  */
 export async function runBot(
   deps: {
@@ -75,13 +80,17 @@ export async function runBot(
     fetch: BotFetch;
     /** Spends a code on a chat, and gives the Destination's name, or undefined for an unknown or expired code. */
     linkChat: (code: string, chat: BotChat) => Promise<string | undefined>;
+    /** Rejects when the database can't be reached. */
+    pingDatabase: () => Promise<unknown>;
     retryMs?: number;
   },
   signal: AbortSignal,
 ) {
-  const { linkChat, retryMs = 15_000 } = deps;
+  const { linkChat, pingDatabase, retryMs = 15_000 } = deps;
   let username: string | undefined;
   let offset: number | undefined;
+  let failedId: number | undefined;
+  let attempts = 0;
 
   const reply = async (chatId: number, text: string) => {
     // A chat that can't be answered, such as one that blocked the bot, must not hold up everyone else's.
@@ -92,12 +101,18 @@ export async function runBot(
     );
   };
 
-  const handle = async ({ message }: z.output<typeof update>, bot: string) => {
+  const startOf = ({ message }: z.output<typeof update>, bot: string) => {
     const [, addressedTo, code] = startCommand.exec(message?.text ?? "") ?? [];
-    if (message === undefined || code === undefined) return;
-    if (addressedTo !== undefined && addressedTo.toLowerCase() !== bot.toLowerCase()) return;
-    const { id, title = "Private chat" } = message.chat;
-    const name = await linkChat(code, { id: String(id), title });
+    if (message === undefined || code === undefined) return undefined;
+    if (addressedTo !== undefined && addressedTo.toLowerCase() !== bot.toLowerCase()) return undefined;
+    return { code, chat: message.chat };
+  };
+
+  const handle = async (next: z.output<typeof update>, bot: string) => {
+    const start = startOf(next, bot);
+    if (start === undefined) return;
+    const { id, title = "Private chat" } = start.chat;
+    const name = await linkChat(start.code, { id: String(id), title });
     await reply(
       id,
       name === undefined
@@ -120,7 +135,20 @@ export async function runBot(
       );
       for (const next of updates) {
         if (stopped()) return;
-        await handle(next, bot);
+        try {
+          await handle(next, bot);
+        } catch (error) {
+          if (!(await pingDatabase().then(() => true, () => false))) throw error;
+          attempts = failedId === next.update_id ? attempts + 1 : 1;
+          failedId = next.update_id;
+          if (attempts < attemptsPerUpdate) throw error;
+          // The id and the reason only: the message's text is the user's.
+          const id = String(next.update_id);
+          process.stderr.write(`Skipped Telegram update ${id} after ${String(attempts)} failed attempts: ${messageOf(error)}\n`);
+          // A failed link spent nothing, so the same code still works until it expires.
+          const chatId = startOf(next, bot)?.chat.id;
+          if (chatId !== undefined) await reply(chatId, "Watchdog couldn't link this chat. Try the same link again.");
+        }
         offset = next.update_id + 1;
       }
     } catch (error) {
