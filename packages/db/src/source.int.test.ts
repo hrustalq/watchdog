@@ -2,8 +2,9 @@ import { sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, type Db } from "./client.ts";
 import { migrate } from "./migrate.ts";
-import { source, user, workspace } from "./schema/index.ts";
+import { source } from "./schema/index.ts";
 import { migrateFirst, startPostgres, type TestPostgres } from "./testing/postgres.ts";
+import { twoWorkspaces } from "./testing/seed.ts";
 
 const rss = (workspaceId: string, name: string, url: string) => ({
   workspaceId,
@@ -12,23 +13,6 @@ const rss = (workspaceId: string, name: string, url: string) => ({
   config: { url },
   schedule: "*/15 * * * *",
 });
-
-/** Two Workspaces, with their ids. */
-async function twoWorkspaces(db: Db) {
-  const suffix = crypto.randomUUID();
-  await db.insert(user).values([
-    { id: `a-${suffix}`, name: "A", email: `a-${suffix}@example.com` },
-    { id: `b-${suffix}`, name: "B", email: `b-${suffix}@example.com` },
-  ]);
-  const rows = await db
-    .insert(workspace)
-    .values([
-      { name: "A", ownerUserId: `a-${suffix}` },
-      { name: "B", ownerUserId: `b-${suffix}` },
-    ])
-    .returning({ id: workspace.id });
-  return rows.map((row) => row.id);
-}
 
 describe("source", () => {
   let postgres: TestPostgres;

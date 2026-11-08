@@ -10,49 +10,12 @@ import {
   digestItem,
   item,
   itemLog,
-  source,
   telegramLinkCode,
   user,
   workspace,
 } from "./schema/index.ts";
 import { migrateFirst, startPostgres, type TestPostgres } from "./testing/postgres.ts";
-
-/** The one row a query returned. */
-function only<T>(rows: T[]): T {
-  const [row] = rows;
-  if (row === undefined || rows.length > 1) throw new Error(`Expected one row, got ${String(rows.length)}`);
-  return row;
-}
-
-/** A user with a Workspace, one RSS Source and one Item. */
-async function seed(db: Db) {
-  const id = crypto.randomUUID();
-  const owner = only(
-    await db.insert(user).values({ id, name: "Owner", email: `${id}@example.com` }).returning(),
-  );
-  const ws = only(
-    await db.insert(workspace).values({ name: "Workspace", ownerUserId: owner.id }).returning(),
-  );
-  const src = only(
-    await db
-      .insert(source)
-      .values({
-        workspaceId: ws.id,
-        type: "rss",
-        name: "Blog",
-        config: { url: "https://example.com/feed.xml" },
-        schedule: "*/15 * * * *",
-      })
-      .returning(),
-  );
-  const captured = only(
-    await db
-      .insert(item)
-      .values({ workspaceId: ws.id, sourceId: src.id, externalId: "guid-1", body: "Hello", raw: {} })
-      .returning(),
-  );
-  return { owner, workspace: ws, source: src, item: captured };
-}
+import { only, seed } from "./testing/seed.ts";
 
 /** A seeded Workspace with a row in every table this issue adds. */
 async function seedEverything(db: Db) {
