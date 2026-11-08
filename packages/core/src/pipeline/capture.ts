@@ -1,11 +1,11 @@
-// The capture stage: one poll of a Source turns new feed entries into Items
-// (docs: Processing pipeline, "Stages").
+// The capture stage: drafts from any Source type become Items, whether a poll fetched them or a
+// push delivered them (docs: Processing pipeline, "Stages").
 import { and, type Db, eq, inArray, item, itemLog, source, type Tx } from "@watchdog/db";
 import type { ItemDraft } from "../sources/item.ts";
-import { fetchFeed, type FetchFeedDeps } from "../sources/rss/fetch-feed.ts";
+import { type PollDeps, sourceTypes } from "../sources/types.ts";
 import { detectLanguage } from "./language.ts";
 
-export interface PollSourceDeps extends FetchFeedDeps {
+export interface CaptureDeps {
   now?: () => Date;
   /**
    * Queues new Items' pipeline jobs over the transaction that inserts them, so a worker dying after
@@ -14,18 +14,26 @@ export interface PollSourceDeps extends FetchFeedDeps {
   enqueueItems: (tx: Tx, itemIds: string[]) => Promise<void>;
 }
 
+export interface PollSourceDeps extends PollDeps, CaptureDeps {}
+
 export type PollResult = { captured: number } | { error: string };
 
-// A new Source's first fetch captures at most this many entries from this far back.
-const backfillMax = 50;
-const backfillWindow = 7 * 24 * 60 * 60 * 1000;
+/** A successful poll or push. A poll moves last_polled_at, and stores its fetch state if it has one. */
+interface Success {
+  at: Date;
+  polled: boolean;
+  fetchState?: Record<string, string>;
+}
 
-/** When an entry was published; an undated one counts as just published. */
-const published = (entry: ItemDraft) => entry.publishedAt?.getTime() ?? Infinity;
+/** How a poll or push ended, as the Source records it. */
+type Outcome = Success | { at: Date; error: string };
+
+/** When a draft was published; an undated one counts as just published. */
+const published = (draft: ItemDraft) => draft.publishedAt?.getTime() ?? Infinity;
 
 /**
- * Fetches a Source, captures its new entries as Items, and records the outcome on the Source.
- * A failed fetch is stored as the Source's last error, not thrown, so the next poll retries.
+ * Polls a Source through its type, captures the new drafts as Items, and records the outcome on the
+ * Source. A failed fetch is stored as the Source's last error, not thrown, so the next poll retries.
  */
 export async function pollSource(
   db: Db,
@@ -33,54 +41,70 @@ export async function pollSource(
   deps: PollSourceDeps,
 ): Promise<PollResult> {
   const found = await db.query.source.findFirst({ where: eq(source.id, sourceId) });
-  // Only RSS Sources poll until the other Schedule types have fetches of their own.
-  if (found?.type !== "rss" || !("url" in found.config)) return { captured: 0 };
-  const fetchedAt = deps.now?.() ?? new Date();
+  const type = found && sourceTypes[found.type];
+  // A type with no poll of its own yet captures nothing.
+  if (found === undefined || type?.poll === undefined) return { captured: 0 };
+  const at = deps.now?.() ?? new Date();
 
-  let fetched;
+  let polled;
   try {
-    fetched = await fetchFeed(found.config.url, found.fetchState, deps);
+    polled = await type.poll(found, deps);
   } catch (error) {
     const message = describe(error);
-    await db
-      .update(source)
-      .set({ lastError: message, lastErrorAt: fetchedAt })
-      .where(eq(source.id, sourceId));
+    await recordOutcome(db, sourceId, { at, error: message });
     return { error: message };
   }
-  const succeeded = { lastPolledAt: fetchedAt, lastError: null, lastErrorAt: null };
-  if ("notModified" in fetched) {
-    await db.update(source).set(succeeded).where(eq(source.id, sourceId));
+  if ("notModified" in polled) {
+    await recordOutcome(db, sourceId, { at, polled: true });
     return { captured: 0 };
   }
+  const outcome = { at, polled: true, fetchState: polled.fetchState };
+  return captureItems(db, sourceId, polled.drafts, outcome, deps);
+}
 
-  const byId = new Map(fetched.entries.map(withoutNul).map((entry) => [entry.externalId, entry]));
-  const entries = [...byId.values()];
-  // The row lock makes concurrent polls of one Source take turns, so only one takes the Backfill.
+/**
+ * Captures drafts from any Source type as Items: the first capture takes the type's Backfill, a
+ * draft already stored is skipped, and each new Item gets a capture Log row and its pipeline job.
+ * A push type's receiver calls it with a non-poll outcome.
+ */
+export async function captureItems(
+  db: Db,
+  sourceId: string,
+  drafts: ItemDraft[],
+  outcome: Success,
+  deps: CaptureDeps,
+): Promise<{ captured: number }> {
+  const byId = new Map(drafts.map(withoutNul).map((draft) => [draft.externalId, draft]));
+  const unique = [...byId.values()];
+  const { at } = outcome;
+  // The row lock makes concurrent captures of one Source take turns, so only one takes the Backfill.
   return db.transaction(async (tx) => {
     const [locked] = await tx.select().from(source).where(eq(source.id, sourceId)).for("update");
     if (locked === undefined) return { captured: 0 };
 
+    const backfill = sourceTypes[locked.type]?.backfill ?? null;
     const { backfilledAt } = locked;
+    const isBackfill = backfill !== null && backfilledAt === null;
     let capture: ItemDraft[];
-    let backfill = {};
-    if (backfilledAt === null) {
-      const start = fetchedAt.getTime() - backfillWindow;
-      capture = entries
-        .filter((entry) => entry.publishedAt !== null && published(entry) >= start)
+    let backfillColumns = {};
+    if (isBackfill) {
+      const start = at.getTime() - backfill.window;
+      capture = unique
+        .filter((draft) => draft.publishedAt !== null && published(draft) >= start)
         .sort((a, b) => published(b) - published(a))
-        .slice(0, backfillMax);
+        .slice(0, backfill.max);
       // Remembered by ID, not by date: an old Atom entry whose <updated> moves stays out.
       const taken = new Set(capture);
-      const skipped = entries.filter((entry) => !taken.has(entry)).map((e) => e.externalId);
-      backfill = { backfilledAt: fetchedAt, backfillSkippedIds: skipped };
+      const skipped = unique.filter((draft) => !taken.has(draft)).map((d) => d.externalId);
+      backfillColumns = { backfilledAt: at, backfillSkippedIds: skipped };
     } else {
-      const start = backfilledAt.getTime() - backfillWindow;
+      // A type without a Backfill captures every new draft, however old.
+      const start = backfill && backfilledAt ? backfilledAt.getTime() - backfill.window : -Infinity;
       const skipped = new Set(locked.backfillSkippedIds ?? []);
-      const candidates = entries.filter(
-        (entry) => !skipped.has(entry.externalId) && published(entry) >= start,
+      const candidates = unique.filter(
+        (draft) => !skipped.has(draft.externalId) && published(draft) >= start,
       );
-      // Most of a feed is already captured: only new entries go on to language detection.
+      // Most of a feed is already captured: only new drafts go on to language detection.
       const stored =
         candidates.length === 0
           ? []
@@ -92,26 +116,25 @@ export async function pollSource(
                   eq(item.sourceId, sourceId),
                   inArray(
                     item.externalId,
-                    candidates.map((entry) => entry.externalId),
+                    candidates.map((draft) => draft.externalId),
                   ),
                 ),
               );
       const known = new Set(stored.map((row) => row.externalId));
-      capture = candidates.filter((entry) => !known.has(entry.externalId));
+      capture = candidates.filter((draft) => !known.has(draft.externalId));
     }
 
-    const isBackfill = backfilledAt === null;
     const inserted =
       capture.length === 0
         ? []
         : await tx
             .insert(item)
             .values(
-              capture.map((entry) => ({
-                ...entry,
+              capture.map((draft) => ({
+                ...draft,
                 workspaceId: locked.workspaceId,
                 sourceId,
-                language: detectLanguage(`${entry.title ?? ""} ${entry.body}`),
+                language: detectLanguage(`${draft.title ?? ""} ${draft.body}`),
                 isBackfill,
               })),
             )
@@ -119,7 +142,7 @@ export async function pollSource(
             .returning({ id: item.id });
     if (inserted.length > 0) {
       const message = `Captured from ${locked.name}${isBackfill ? " as part of the Backfill" : ""}`;
-      const data = { sourceId, fetchedAt: fetchedAt.toISOString() };
+      const data = { sourceId, fetchedAt: at.toISOString() };
       const stage = "capture" as const;
       const rows = inserted.map(({ id }) => ({ itemId: id, stage, message, data }));
       await tx.insert(itemLog).values(rows);
@@ -128,14 +151,34 @@ export async function pollSource(
         inserted.map(({ id }) => id),
       );
     }
-    // FetchState is an interface, so it lacks the index signature the column's type has. A copy
-    // of it has one.
-    await tx
-      .update(source)
-      .set({ ...succeeded, fetchState: { ...fetched.fetchState }, ...backfill })
-      .where(eq(source.id, sourceId));
+    await recordOutcome(tx, sourceId, outcome, backfillColumns);
     return { captured: inserted.length };
   });
+}
+
+/**
+ * Records how a poll or push of a Source ended. Every outcome comes through here, so this is where
+ * Source Health will be updated.
+ */
+async function recordOutcome(
+  db: Db | Tx,
+  sourceId: string,
+  outcome: Outcome,
+  also: { backfilledAt?: Date; backfillSkippedIds?: string[] } = {},
+) {
+  const set =
+    "error" in outcome
+      ? { lastError: outcome.error, lastErrorAt: outcome.at }
+      : {
+          lastError: null,
+          lastErrorAt: null,
+          ...(outcome.polled && { lastPolledAt: outcome.at }),
+          ...(outcome.fetchState && { fetchState: outcome.fetchState }),
+        };
+  await db
+    .update(source)
+    .set({ ...set, ...also })
+    .where(eq(source.id, sourceId));
 }
 
 /** The error for the user. fetch's TypeError says only "fetch failed"; its cause says why. */
