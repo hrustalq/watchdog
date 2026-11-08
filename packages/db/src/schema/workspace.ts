@@ -21,8 +21,8 @@ export const workspace = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     /**
      * An IANA name. Quiet hours, Digest schedules and the hosted email cap's day use it. Postgres
-     * can't check it (a check can't read pg_timezone_names), so the Settings screen validates with
-     * Intl.supportedValuesOf("timeZone") before writing.
+     * can't check it (a check can't read pg_timezone_names), so the Settings screen saves only UTC or a
+     * name from Intl.supportedValuesOf("timeZone"), to which it resolves any other name Intl knows.
      */
     timezone: text("timezone").notNull().default("UTC"),
     /** Local times in the Workspace timezone. Both null when quiet hours are off. */
