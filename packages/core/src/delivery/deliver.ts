@@ -98,7 +98,7 @@ export const failureReason = (error: unknown) =>
  * is held, grouped, finished or gone, or waiting for a retry whose job committed with that time. The
  * database's clock decides, as it does when pg-boss starts a job, so clock skew can't strand a retry.
  */
-async function loadDue(reader: Db | Tx, which: SQL) {
+async function loadDue(reader: Db | Tx, ...which: (SQL | undefined)[]) {
   return reader
     .select({
       id: delivery.id,
@@ -121,7 +121,7 @@ async function loadDue(reader: Db | Tx, which: SQL) {
     .innerJoin(action, eq(delivery.actionId, action.id))
     .where(
       and(
-        which,
+        ...which,
         eq(delivery.status, "queued"),
         or(isNull(delivery.nextAttemptAt), lte(delivery.nextAttemptAt, sql`now()`)),
       ),
@@ -403,9 +403,9 @@ async function send(
  *
  * Jobs for one Destination take turns on its row, held through the send, so two can't both send an Item
  * (ADR 0028). Finding its rows sent, a waiting job ends at once, so a burst holds the queue only for one
- * send. The lock lets a new Delivery in, because it doesn't touch the key its foreign key reads. A
- * webhook gets one request per Item with no settings to check, so it takes no lock and holds no
- * connection through its request.
+ * send, or for one send per alert when the burst window is 0. The lock lets a new Delivery in, because
+ * it doesn't touch the key its foreign key reads. A webhook gets one request per Item with no settings
+ * to check, so it takes no lock and holds no connection through its request.
  */
 export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Promise<void> {
   const now = deps.now ?? (() => new Date());
@@ -442,17 +442,35 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
 
     // Held alerts whose time has come join this send rather than wait for the sweep. If they waited, a
     // new alert would go alone and restart the burst window, and a steady stream could hold them forever.
-    await releaseDueDeliveries(tx, eq(delivery.destinationId, target.id));
-    const due = await loadDue(tx, eq(delivery.destinationId, target.id));
-    if (due.length === 0) return;
-    const sending = await applySchedule(tx, due, target, now(), deps.emailCap);
-    await send(
-      sending,
-      target,
-      deps,
-      now,
-      (write) => write(tx),
-      () => sender.send(target, alertMessage(sending, deps.appUrl)),
-    );
+    const forTarget = eq(delivery.destinationId, target.id);
+    await releaseDueDeliveries(tx, forTarget);
+    const [settings] = await tx
+      .select({ burstWindowSeconds: workspace.burstWindowSeconds })
+      .from(workspace)
+      .where(eq(workspace.id, target.workspaceId));
+    const [own] = await tx.select({ retryFrom: delivery.retryFrom }).from(delivery).where(eq(delivery.id, deliveryId));
+    // With no burst window, only alerts released from a hold go together, and they go first, so new
+    // alerts can't keep taking the rate limit's places. Then this job's own alert goes alone if it was
+    // never held. A hold sets retry_from and nothing else does, so a retry of a new alert goes alone too.
+    const batches =
+      settings?.burstWindowSeconds === 0
+        ? [
+            await loadDue(tx, forTarget, isNotNull(delivery.retryFrom)),
+            own?.retryFrom === null ? await loadDue(tx, eq(delivery.id, deliveryId)) : [],
+          ]
+        : [await loadDue(tx, forTarget)];
+    for (const due of batches) {
+      if (due.length === 0) continue;
+      // Each batch reads the messages sent before it, so the rate limit counts the one before.
+      const sending = await applySchedule(tx, due, target, now(), deps.emailCap);
+      await send(
+        sending,
+        target,
+        deps,
+        now,
+        (write) => write(tx),
+        () => sender.send(target, alertMessage(sending, deps.appUrl)),
+      );
+    }
   });
 }

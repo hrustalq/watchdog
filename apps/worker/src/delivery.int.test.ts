@@ -496,6 +496,33 @@ describe("the deliver queue", () => {
       expect(send).toHaveBeenCalledTimes(1);
       expect(send.mock.calls[0]?.[1]).toMatchObject({ count: 25 });
     });
+
+    it("sends 25 alerts queued in one minute as 25 messages when the burst window is 0", async () => {
+      const { deliveryId } = await seed();
+      const { destinationId } = present(await rowOf(deliveryId));
+      const target = present(await db.query.destination.findFirst({ where: eq(destination.id, destinationId) }));
+      await db
+        .update(workspace)
+        .set({ burstWindowSeconds: 0, alertsPerHour: 25 })
+        .where(eq(workspace.id, target.workspaceId));
+      const others = await Promise.all(
+        Array.from({ length: 24 }, (_, index) => another(deliveryId, `item-${String(index)}`)),
+      );
+      const ids = [deliveryId, ...others];
+      await db.transaction((tx) => deliveryEnqueuer(boss)(tx, ids));
+      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+
+      await startWorker(send);
+
+      await vi.waitFor(async () => {
+        const jobs = (await Promise.all(ids.map(jobsOf))).flat();
+        expect(jobs.filter((job) => job.state !== "completed")).toEqual([]);
+      }, waitLong);
+      expect(send).toHaveBeenCalledTimes(25);
+      for (const [, message] of send.mock.calls) expect(message).toHaveProperty("why");
+      const rows = await Promise.all(ids.map(rowOf));
+      expect(rows.map((row) => row?.status)).toEqual(ids.map(() => "sent"));
+    });
   });
 
   it("ends the job quietly when the Delivery is gone", async () => {
