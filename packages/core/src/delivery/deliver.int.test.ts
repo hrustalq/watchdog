@@ -1208,6 +1208,102 @@ describe("deliver", () => {
         expect(present(sent[0]).message).toMatchObject({ count: 6 });
       });
 
+      describe("with the burst window at 0", () => {
+        const allFor = (destinationId: string) =>
+          db.select().from(delivery).where(eq(delivery.destinationId, destinationId));
+
+        it("sends 25 alerts queued together as 25 messages, each with its why line", async () => {
+          const seeded = await seed();
+          await settings(seeded.workspaceId, { burstWindowSeconds: 0, alertsPerHour: 25 });
+          const others = await Promise.all(Array.from({ length: 24 }, () => another(seeded)));
+          const { deps, sent } = recording();
+
+          for (const { deliveryId } of [seeded, ...others]) {
+            await deliver(db, deliveryId, { ...deps, now: clock("12:00:00") });
+          }
+
+          expect(sent).toHaveLength(25);
+          for (const { message } of sent) expect(message).toMatchObject({ why: "Severity is at least 4" });
+          const rows = await allFor(seeded.destinationId);
+          expect(rows.map((row) => [row.status, row.groupId])).toEqual(rows.map(() => ["sent", null]));
+          expect(await db.$count(sentMessage, eq(sentMessage.destinationId, seeded.destinationId))).toBe(25);
+          for (const { itemId } of [seeded, ...others]) {
+            expect(await actLog(itemId)).toMatchObject([{ message: "Sent to ops-chat" }]);
+          }
+        });
+
+        it("sends three alerts held by quiet hours as one Grouped alert when they end", async () => {
+          const seeded = await seed({ severity: 4 });
+          await settings(seeded.workspaceId, { ...overnight, burstWindowSeconds: 0 });
+          const held = [seeded, await another(seeded), await another(seeded)];
+          const { deps, sent } = recording();
+          for (const { deliveryId } of held) await deliver(db, deliveryId, { ...deps, now: clock("23:00:00") });
+          expect(sent).toEqual([]);
+
+          // The sweep releases all three and queues a job for each.
+          for (const { deliveryId } of held) await release(deliveryId);
+          for (const { deliveryId } of held) await deliver(db, deliveryId, { ...deps, now: clock("07:00:00") });
+
+          expect(sent).toHaveLength(1);
+          expect(present(sent[0]).message).toMatchObject({ count: 3 });
+          for (const { itemId } of held) {
+            expect((await actLog(itemId)).at(-1)).toMatchObject({ message: "Sent to ops-chat in a group of 3" });
+          }
+        });
+
+        it("holds the 21st alert of an hour at the default rate limit", async () => {
+          const seeded = await seed();
+          await settings(seeded.workspaceId, { burstWindowSeconds: 0 });
+          const queued = [seeded, ...(await Promise.all(Array.from({ length: 20 }, () => another(seeded))))];
+          const { deps, sent } = recording();
+
+          for (const { deliveryId } of queued) await deliver(db, deliveryId, { ...deps, now: clock("12:00:00") });
+
+          expect(sent).toHaveLength(20);
+          const rows = await allFor(seeded.destinationId);
+          expect(rows.filter((row) => row.status === "held")).toMatchObject([{ nextAttemptAt: at("13:00:00") }]);
+        });
+
+        it("retries a failed alert that was never held on its own", async () => {
+          const seeded = await seed();
+          await settings(seeded.workspaceId, { burstWindowSeconds: 0 });
+          const other = await another(seeded);
+          let failures = 2;
+          const { deps, sent } = recording(() =>
+            failures-- > 0 ? Promise.reject(new Error("Down")) : Promise.resolve(),
+          );
+          for (const { deliveryId } of [seeded, other]) await deliver(db, deliveryId, deps);
+          expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "queued", attempts: 1, retryFrom: null });
+
+          // Both retries come due together.
+          await db
+            .update(delivery)
+            .set({ nextAttemptAt: new Date(0) })
+            .where(eq(delivery.destinationId, seeded.destinationId));
+          for (const { deliveryId } of [seeded, other]) await deliver(db, deliveryId, deps);
+
+          expect(sent.slice(2).map(({ message }) => message)).toMatchObject([
+            { title: "A security advisory" },
+            { title: "Another advisory" },
+          ]);
+          expect((await allFor(seeded.destinationId)).map((row) => row.status)).toEqual(["sent", "sent"]);
+        });
+
+        it("sends a new alert alone and leaves a hold that has ended to the sweep", async () => {
+          const seeded = await seed({ severity: 4 });
+          await settings(seeded.workspaceId, { ...overnight, burstWindowSeconds: 0 });
+          const { deps, sent } = recording();
+          await deliver(db, seeded.deliveryId, { ...deps, now: clock("23:00:00") });
+          await db.update(delivery).set({ nextAttemptAt: new Date(0) }).where(eq(delivery.id, seeded.deliveryId));
+
+          const fresh = await another(seeded);
+          await deliver(db, fresh.deliveryId, { ...deps, now: clock("07:00:00") });
+
+          expect(sent.map(({ message }) => message)).toMatchObject([{ title: "Another advisory" }]);
+          expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "held" });
+        });
+      });
+
       it("lets a new Delivery be inserted for a Destination during a send to it", async () => {
         const seeded = await seed();
         const { deps } = recording(async () => {

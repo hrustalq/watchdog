@@ -222,13 +222,12 @@ async function applySchedule(
   tx: Tx,
   due: DueDelivery[],
   target: Destination,
+  settings: typeof workspace.$inferSelect,
   now: Date,
   cap: EmailCap | undefined,
 ) {
   const emailCap = target.type === "email" ? cap : undefined;
   if (emailCap !== undefined) await takeEmailCapTurn(tx, target.workspaceId);
-  const [settings] = await tx.select().from(workspace).where(eq(workspace.id, target.workspaceId));
-  if (settings === undefined) return [];
 
   const hold = (row: DueDelivery, until: Date, reason: string, groupId: string | null) =>
     record(
@@ -410,7 +409,7 @@ async function send(
 export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Promise<void> {
   const now = deps.now ?? (() => new Date());
   const [found] = await db
-    .select({ destination })
+    .select({ destination, retryFrom: delivery.retryFrom })
     .from(delivery)
     .innerJoin(destination, eq(delivery.destinationId, destination.id))
     .where(eq(delivery.id, deliveryId));
@@ -440,12 +439,25 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
       .for("no key update");
     if (target === undefined) return;
 
+    const [settings] = await tx.select().from(workspace).where(eq(workspace.id, target.workspaceId));
+    if (settings === undefined) return;
+
+    // With no burst window, an alert that was never held goes alone, and only alerts released from a hold
+    // go together. A hold sets retry_from and nothing else does, so a retry of a fresh alert goes alone
+    // too. The sweep queues a job for each released alert, so a fresh alert's job leaves them to it.
+    const unbatched = settings.burstWindowSeconds === 0;
+    const alone = unbatched && found.retryFrom === null;
     // Held alerts whose time has come join this send rather than wait for the sweep. If they waited, a
     // new alert would go alone and restart the burst window, and a steady stream could hold them forever.
-    await releaseDueDeliveries(tx, eq(delivery.destinationId, target.id));
-    const due = await loadDue(tx, eq(delivery.destinationId, target.id));
+    if (!alone) await releaseDueDeliveries(tx, eq(delivery.destinationId, target.id));
+    const due = await loadDue(
+      tx,
+      alone
+        ? eq(delivery.id, deliveryId)
+        : and(eq(delivery.destinationId, target.id), unbatched ? isNotNull(delivery.retryFrom) : undefined),
+    );
     if (due.length === 0) return;
-    const sending = await applySchedule(tx, due, target, now(), deps.emailCap);
+    const sending = await applySchedule(tx, due, target, settings, now(), deps.emailCap);
     await send(
       sending,
       target,
