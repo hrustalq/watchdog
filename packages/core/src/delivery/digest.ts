@@ -212,7 +212,9 @@ export async function sendDigest(db: Db, actionId: string, deps: DigestDeps): Pr
       }),
     };
     try {
-      await deps.senders[send.target.type].send(send.target, message);
+      await deps.senders[send.target.type].send(send.target, message, async (secretCiphertext) => {
+        await db.update(destination).set({ secretCiphertext }).where(eq(destination.id, send.target.id));
+      });
       outcomes.push(send);
     } catch (error) {
       outcomes.push({ ...send, error });

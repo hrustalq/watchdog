@@ -502,6 +502,37 @@ describe("deliver", () => {
         expect(await rowOf(present(queued).id)).toMatchObject({ status: "sent", attempts: 1 });
       });
 
+      it("sends a second message in the same job straight to the new chat", async () => {
+        const { seeded, received, deps } = await linked(movedChat(sentAnswer));
+        // With no burst window, an alert released from a hold goes first, and the job's own alert after it.
+        await db.update(workspace).set({ burstWindowSeconds: 0 }).where(eq(workspace.id, seeded.workspaceId));
+        const [held] = await db
+          .insert(item)
+          .values({
+            workspaceId: seeded.workspaceId,
+            sourceId: seeded.sourceId,
+            externalId: "held",
+            title: "A held advisory",
+            body: "A held entry.",
+            raw: {},
+            severity: 5,
+            importance: 3,
+          })
+          .returning();
+        await db.insert(delivery).values({
+          actionId: seeded.actionId,
+          itemId: present(held).id,
+          destinationId: seeded.destinationId,
+          retryFrom: new Date(Date.now() - hour),
+        });
+
+        await deliver(db, seeded.deliveryId, deps);
+
+        expect(received.map(({ chat_id }) => chat_id)).toEqual(["-100200", newChat, newChat]);
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent" });
+        expect(await actLog(seeded.itemId)).toMatchObject([{ message: "Sent to ops-chat" }]);
+      });
+
       it("retries as any failed send when the new chat refuses too, with no third send", async () => {
         const { seeded, received, retries, deps } = await linked(
           movedChat(() =>

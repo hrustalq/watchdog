@@ -249,6 +249,17 @@ describe("createTelegramSender", () => {
       expect(failure.message).toContain("400");
     });
 
+    it("keeps Telegram's reason, and sends nothing more, when the new id isn't a whole number", async () => {
+      const telegram = fakeTelegram(() =>
+        refusal(400, "Bad Request: group chat was upgraded to a supergroup chat", { migrate_to_chat_id: "soon" }),
+      );
+
+      const failure = await failureOf(sender(telegram).send(chat(), message));
+
+      expect(telegram.requests).toHaveLength(1);
+      expect(failure.message).toContain("group chat was upgraded");
+    });
+
     it("still sends to the new chat when the caller keeps no chat id", async () => {
       const telegram = movedThenSent();
 

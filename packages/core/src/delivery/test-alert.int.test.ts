@@ -141,6 +141,22 @@ describe("sendTestAlert", () => {
     expect(new Set(ids).size).toBe(2);
   });
 
+  it("keeps a Telegram chat's new id when its group became a supergroup", async () => {
+    const target = await addDestination({
+      type: "telegram",
+      name: "ops-chat",
+      secretCiphertext: "old-chat-ciphertext",
+      confirmedAt: new Date(),
+    });
+    const telegram = { send: async (_t: Destination, _m: unknown, onChatMoved?: (c: string) => Promise<void>) =>
+      onChatMoved?.("new-chat-ciphertext") };
+
+    expect(await sendTestAlert(db, target, { senders: senders({ telegram }), appUrl, emailCapped: false })).toEqual({
+      status: "sent",
+    });
+    expect((await stored(target.id)).secretCiphertext).toBe("new-chat-ciphertext");
+  });
+
   it("sends no mail once a hosted Workspace has used the day's 50, and leaves the Destination's error alone", async () => {
     const target: Destination = await addDestination({
       type: "email",

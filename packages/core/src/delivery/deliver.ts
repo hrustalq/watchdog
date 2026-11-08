@@ -324,6 +324,8 @@ async function send(
     await recording(async (tx) => {
       await tx.update(destination).set({ secretCiphertext }).where(eq(destination.id, target.id));
     });
+    // So a later batch in this job goes straight there too, rather than be refused first.
+    target.secretCiphertext = secretCiphertext;
   };
 
   try {

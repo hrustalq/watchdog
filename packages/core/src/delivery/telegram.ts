@@ -24,7 +24,7 @@ export const refusal = z
       .object({
         retry_after: z.number().positive().optional(),
         // A group that became a supergroup has a new id, of at most 52 bits, which a number holds exactly.
-        migrate_to_chat_id: z.number().int().optional(),
+        migrate_to_chat_id: z.number().int().optional().catch(undefined),
       })
       .optional(),
   })
