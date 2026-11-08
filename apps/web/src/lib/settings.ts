@@ -52,7 +52,7 @@ export interface AlertSettings {
 }
 
 const time = /^([01]\d|2[0-3]):[0-5]\d$/;
-const timeError = "Enter a time as HH:MM on a 24-hour clock, such as 22:00.";
+
 
 function whole(text: string, { min, max }: { min: number; max: number }) {
   if (!/^\d{1,4}$/.test(text)) return undefined;
@@ -70,8 +70,9 @@ export function parseAlertSettings(
     errors.timezone = "Choose a timezone from the list, such as Europe/Berlin or UTC.";
   }
   if (form.quietHours) {
-    if (!time.test(form.quietHoursStart)) errors.quietHoursStart = timeError;
-    if (!time.test(form.quietHoursEnd)) errors.quietHoursEnd = timeError;
+    // The browser's time control posts HH:MM whatever clock it shows, so only a bad request gets here.
+    if (!time.test(form.quietHoursStart)) errors.quietHoursStart = "Choose when quiet hours start.";
+    if (!time.test(form.quietHoursEnd)) errors.quietHoursEnd = "Choose when quiet hours end.";
     else if (form.quietHoursEnd === form.quietHoursStart) {
       errors.quietHoursEnd = "End quiet hours at a different time than they start.";
     }
