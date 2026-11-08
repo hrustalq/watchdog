@@ -58,10 +58,14 @@ async function attempt(
   deps: TestAlertDeps,
   recording: (write: (tx: Tx) => Promise<void>) => Promise<void>,
 ): Promise<TestAlertResult> {
+  const onChatMoved = (secretCiphertext: string) =>
+    recording(async (tx) => {
+      await tx.update(destination).set({ secretCiphertext }).where(eq(destination.id, target.id));
+    });
   try {
     await (target.type === "webhook"
       ? deps.senders.webhook.send(target, exampleWebhook())
-      : deps.senders[target.type].send(target, exampleAlert(deps.appUrl)));
+      : deps.senders[target.type].send(target, exampleAlert(deps.appUrl), onChatMoved));
   } catch (error) {
     const reason = failureReason(error);
     await recording(async (tx) => {

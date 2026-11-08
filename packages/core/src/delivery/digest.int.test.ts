@@ -151,6 +151,17 @@ describe("Digests", () => {
     expect(await dueDigests(db, nextDay)).toContain(actionId);
   });
 
+  it("keeps a Telegram chat's new id when its group became a supergroup", async () => {
+    const { actionId, inbox, collect } = await seed();
+    await collect();
+    const moving: Sender = { send: async (_target, _message, onChatMoved) => onChatMoved?.("new-chat-ciphertext") };
+
+    await sendDigest(db, actionId, deps({ telegram: moving, email: moving }, eightInMoscow));
+
+    const [kept] = await db.select().from(destination).where(eq(destination.id, inbox));
+    expect(kept?.secretCiphertext).toBe("new-chat-ciphertext");
+  });
+
   it("isn't due while disabled", async () => {
     const { actionId } = await seed();
     await db.update(action).set({ enabled: false, updatedAt: saved }).where(eq(action.id, actionId));

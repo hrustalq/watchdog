@@ -37,9 +37,14 @@ export type Destination = typeof destination.$inferSelect;
 export interface Sender<Message = AlertMessage | GroupedAlert> {
   /**
    * Rejects when the message didn't go, with a reason the user can read in the Log. Any error is retried
-   * with the backoff, unless it's a FinalSendError or a RetryAfterSendError.
+   * with the backoff, unless it's a FinalSendError or a RetryAfterSendError. `onChatMoved` gets a
+   * Telegram chat's new id, encrypted, when its group became a supergroup, before the send there.
    */
-  send: (destination: Destination, message: Message) => Promise<void>;
+  send: (
+    destination: Destination,
+    message: Message,
+    onChatMoved?: (secretCiphertext: string) => Promise<void>,
+  ) => Promise<void>;
 }
 
 /** A refusal no later attempt can get past, so the Delivery fails at once. */
@@ -308,16 +313,27 @@ async function send(
   deps: DeliverDeps,
   now: () => Date,
   recording: (write: (tx: Tx) => Promise<void>) => Promise<void>,
-  transmit: () => Promise<void>,
+  transmit: (onChatMoved: (secretCiphertext: string) => Promise<void>) => Promise<void>,
 ) {
   if (rows.length === 0) return;
 
+  // The id stays out of the Log, where it would be readable.
+  let moved = "";
+  const onChatMoved = async (secretCiphertext: string) => {
+    moved = "The chat moved to a supergroup. ";
+    await recording(async (tx) => {
+      await tx.update(destination).set({ secretCiphertext }).where(eq(destination.id, target.id));
+    });
+    // So a later batch in this job goes straight there too, rather than be refused first.
+    target.secretCiphertext = secretCiphertext;
+  };
+
   try {
-    await transmit();
+    await transmit(onChatMoved);
   } catch (error) {
     const failed = now();
     const reason = failureReason(error);
-    const failure = `Sending to ${target.name} failed: ${reason}`;
+    const failure = `${moved}Sending to ${target.name} failed: ${reason}`;
     const final = error instanceof FinalSendError;
 
     for (const row of rows) {
@@ -372,7 +388,7 @@ async function send(
   const sentAt = now();
   // New for each message, even after waiting under an id, because a group's rows can go out in two sends.
   const groupId = rows.length === 1 ? null : crypto.randomUUID();
-  const sentTo = `Sent to ${target.name}${rows.length === 1 ? "" : ` in a group of ${String(rows.length)}`}`;
+  const sentTo = `${moved}Sent to ${target.name}${rows.length === 1 ? "" : ` in a group of ${String(rows.length)}`}`;
   for (const row of rows) {
     const attempts = row.attempts + 1;
     await recording((tx) =>
@@ -469,7 +485,7 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
         deps,
         now,
         (write) => write(tx),
-        () => sender.send(target, alertMessage(sending, deps.appUrl)),
+        (onChatMoved) => sender.send(target, alertMessage(sending, deps.appUrl), onChatMoved),
       );
     }
   });
