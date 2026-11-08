@@ -9,7 +9,7 @@ import {
   fetchFeed,
   NotAFeedError,
 } from "@watchdog/core";
-import { and, type Db, eq, source, sql } from "@watchdog/db";
+import { and, type Db, eq, source } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 export interface SourceDeps {
@@ -80,9 +80,10 @@ export async function addRssSource(
 
   const name = cleanName(input.name) || cleanName(feedTitle ?? "") || url.hostname;
   // Another add of the same URL can finish between the check above and this insert, and then the
-  // unique key on (workspace_id, url) skips this row. Its other unique keys are on a random id, so
-  // that key is the only one an insert can hit. Drizzle 0.45 takes only columns as a conflict
-  // target, which can't name an expression index.
+  // unique key on (workspace_id, type, dedup_key) skips this row. Its other unique keys are on a
+  // random id or the Inbox token hash an RSS Source doesn't have, so that key is the only one an
+  // insert can hit. Drizzle 0.45 takes only columns as a conflict target, which can't name an
+  // expression index.
   const [saved] = await db
     .insert(source)
     .values({ workspaceId, type: "rss", name, config: { url: url.href }, schedule })
@@ -116,7 +117,7 @@ export async function watchedSourceName(db: Db, workspaceId: string, url: string
   const [watched] = await db
     .select({ name: source.name })
     .from(source)
-    .where(and(eq(source.workspaceId, workspaceId), sql`${source.config}->>'url' = ${href}`));
+    .where(and(eq(source.workspaceId, workspaceId), eq(source.type, "rss"), eq(source.dedupKey, href)));
   return watched?.name;
 }
 

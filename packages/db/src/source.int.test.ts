@@ -1,10 +1,10 @@
-import { sql } from "drizzle-orm";
+import { eq, lte, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, type Db } from "./client.ts";
 import { migrate } from "./migrate.ts";
-import { source } from "./schema/index.ts";
+import { destination, healthAlertDestination, source } from "./schema/index.ts";
 import { migrateFirst, startPostgres, type TestPostgres } from "./testing/postgres.ts";
-import { twoWorkspaces } from "./testing/seed.ts";
+import { only, twoWorkspaces } from "./testing/seed.ts";
 
 const rss = (workspaceId: string, name: string, url: string) => ({
   workspaceId,
@@ -13,6 +13,12 @@ const rss = (workspaceId: string, name: string, url: string) => ({
   config: { url },
   schedule: "*/15 * * * *",
 });
+
+/** Postgres's refusal through the named constraint, and no other. */
+const refusal = (constraint: string) => ({ cause: { constraint } });
+
+const keyed = "source_workspace_id_type_dedup_key_key";
+const scheduleCheck = "source_schedule_check";
 
 describe("source", () => {
   let postgres: TestPostgres;
@@ -52,6 +58,126 @@ describe("source", () => {
     await expect(db.insert(source).values(rss(a, "Long again", url))).rejects.toThrow();
   });
 
+  it("holds one Source per type's key, and any number of inboxes or unbound bot Sources", async () => {
+    const [a = ""] = await twoWorkspaces(db);
+    const scheduled = { workspaceId: a, name: "S", schedule: "*/15 * * * *" };
+    const unscheduled = { workspaceId: a, name: "E", schedule: null, nextPollAt: null };
+    const twice = async (first: typeof source.$inferInsert, again: typeof source.$inferInsert) => {
+      await db.insert(source).values(first);
+      await expect(db.insert(source).values(again)).rejects.toMatchObject(refusal(keyed));
+    };
+
+    // GitHub names are case-insensitive.
+    await twice(
+      { ...scheduled, type: "github", config: { kind: "releases", repo: "Acme/Widget" } },
+      { ...scheduled, type: "github", config: { kind: "releases", repo: "acme/widget" } },
+    );
+    await db.insert(source).values({ ...scheduled, type: "github", config: { kind: "issues", repo: "acme/widget" } });
+    await twice(
+      { ...scheduled, type: "github", config: { kind: "mentions", term: "watchdog", within: "org:acme" } },
+      { ...scheduled, type: "github", config: { kind: "mentions", term: " watchdog ", within: "org:acme" } },
+    );
+    await db.insert(source).values({ ...scheduled, type: "github", config: { kind: "mentions", term: "watchdog" } });
+
+    const page = { url: "https://example.com/pricing", ignore: [], render: "static" as const };
+    await twice(
+      { ...scheduled, type: "website", config: { ...page, region: "#price" } },
+      { ...scheduled, type: "website", config: { ...page, region: " #price " } },
+    );
+    await twice(
+      { ...scheduled, type: "website", config: page },
+      { ...scheduled, type: "website", config: { ...page, region: "" } },
+    );
+
+    // A chat is watched once, whichever way.
+    await twice(
+      { ...unscheduled, type: "telegram", config: { via: "bot", chatId: -1001, title: "Group" } },
+      { ...unscheduled, type: "telegram", config: { via: "session", chatId: -1001, title: "Group" } },
+    );
+    await db.insert(source).values([
+      { ...unscheduled, type: "telegram", config: { via: "bot" } },
+      { ...unscheduled, type: "telegram", config: { via: "bot" } },
+      { ...unscheduled, type: "webhook", config: {} },
+      { ...unscheduled, type: "webhook", config: {} },
+    ]);
+  });
+
+  it("requires a schedule of Schedule Sources only", async () => {
+    const [a = ""] = await twoWorkspaces(db);
+    const inbox = { workspaceId: a, type: "webhook" as const, name: "Inbox", config: {} };
+
+    const noSchedule = { ...rss(a, "No schedule", "https://example.com/a.xml"), schedule: null };
+    await expect(db.insert(source).values(noSchedule)).rejects.toMatchObject(refusal(scheduleCheck));
+    const neverDue = { ...rss(a, "Never due", "https://example.com/b.xml"), nextPollAt: null };
+    await expect(db.insert(source).values(neverDue)).rejects.toMatchObject(refusal(scheduleCheck));
+    // Never polled, so the tick must not find it due.
+    await expect(db.insert(source).values(inbox)).rejects.toMatchObject(refusal(scheduleCheck));
+    const scheduledInbox = { ...inbox, schedule: "*/15 * * * *", nextPollAt: null };
+    await expect(db.insert(source).values(scheduledInbox)).rejects.toMatchObject(refusal(scheduleCheck));
+
+    const saved = only(await db.insert(source).values({ ...inbox, nextPollAt: null }).returning());
+    expect(saved).toMatchObject({ schedule: null, nextPollAt: null, health: "ok", consecutiveFailures: 0 });
+  });
+
+  it("keeps Health to its three states, and an Inbox token hash to one Source", async () => {
+    const [a = ""] = await twoWorkspaces(db);
+    const inbox = { workspaceId: a, type: "webhook" as const, name: "Inbox", config: {} };
+    const unscheduled = { ...inbox, schedule: null, nextPollAt: null };
+
+    const broken = sql`insert into source (workspace_id, type, name, config, next_poll_at, health)
+      values (${a}, 'webhook', 'Bad', '{}', null, 'broken')`;
+    await expect(db.execute(broken)).rejects.toMatchObject(refusal("source_health_check"));
+    await db.insert(source).values({ ...unscheduled, inboxTokenHash: "hash" });
+    await expect(db.insert(source).values({ ...unscheduled, inboxTokenHash: "hash" })).rejects.toMatchObject(
+      refusal("source_inbox_token_hash_key"),
+    );
+  });
+
+  it("drops a deleted Destination from the Health alerts setting", async () => {
+    const [a = ""] = await twoWorkspaces(db);
+    const target = only(
+      await db.insert(destination).values({ workspaceId: a, type: "email", name: "Me", config: {} }).returning(),
+    );
+    await db.insert(healthAlertDestination).values({ workspaceId: a, destinationId: target.id });
+
+    await db.delete(destination).where(eq(destination.id, target.id));
+
+    expect(await db.select().from(healthAlertDestination).where(eq(healthAlertDestination.workspaceId, a))).toEqual([]);
+  });
+
+  it("applies migration 0015 to a database holding M3 Sources, keying each by its URL", async () => {
+    await db.execute(sql`create database at_0014`);
+    const url = new URL(postgres.url);
+    url.pathname = "/at_0014";
+    await migrateFirst(url.href, 15);
+    const old = createDb(url.href);
+    try {
+      // Raw SQL: the Drizzle table has columns a database at 0014 doesn't.
+      await old.execute(sql`insert into "user" (id, name, email) values ('a', 'A', 'a@example.com')`);
+      await old.execute(sql`
+        with ws as (insert into workspace (name, owner_user_id) values ('A', 'a') returning id)
+        insert into source (workspace_id, type, name, config, schedule)
+        select id, 'rss', 'Blog', '{"url": "https://example.com/feed.xml"}', '*/15 * * * *' from ws`);
+    } finally {
+      await closeDb(old);
+    }
+
+    await migrate(url.href);
+
+    const upgraded = createDb(url.href);
+    try {
+      const blog = only(await upgraded.select().from(source));
+      expect(blog).toMatchObject({ dedupKey: "https://example.com/feed.xml", health: "ok", consecutiveFailures: 0 });
+      // The scheduler's query still finds it due.
+      const due = await upgraded.select({ id: source.id }).from(source).where(lte(source.nextPollAt, new Date()));
+      expect(due).toEqual([{ id: blog.id }]);
+      const again = rss(blog.workspaceId, "Again", "https://example.com/feed.xml");
+      await expect(upgraded.insert(source).values(again)).rejects.toMatchObject(refusal(keyed));
+    } finally {
+      await closeDb(upgraded);
+    }
+  }, 60_000);
+
   it("applies migration 0005 to a database with duplicate Sources, keeping the oldest copy", async () => {
     await db.execute(sql`create database at_0004`);
     const url = new URL(postgres.url);
@@ -67,17 +193,18 @@ describe("source", () => {
       );
       const [a = "", b = ""] = rows.map((row) => row.id);
       const feed = "https://example.com/feed.xml";
-      const [first] = await old
-        .insert(source)
-        .values({ ...rss(a, "Oldest", feed), createdAt: new Date("2026-01-01T00:00:00Z") })
-        .returning({ id: source.id });
-      oldest = first?.id;
-      await old.insert(source).values([
-        { ...rss(a, "Newer", feed), createdAt: new Date("2026-02-01T00:00:00Z") },
-        { ...rss(a, "Newest", feed), createdAt: new Date("2026-03-01T00:00:00Z") },
-        rss(a, "Other feed", "https://example.com/other.xml"),
-        rss(b, "Theirs", feed),
-      ]);
+      const insert = async (workspaceId: string, name: string, feedUrl: string, createdAt = "2026-04-01") => {
+        const { rows: inserted } = await old.execute<{ id: string }>(sql`
+          insert into source (workspace_id, type, name, config, schedule, created_at)
+          values (${workspaceId}, 'rss', ${name}, ${JSON.stringify({ url: feedUrl })}, '*/15 * * * *', ${createdAt})
+          returning id`);
+        return inserted[0]?.id;
+      };
+      oldest = await insert(a, "Oldest", feed, "2026-01-01");
+      await insert(a, "Newer", feed, "2026-02-01");
+      await insert(a, "Newest", feed, "2026-03-01");
+      await insert(a, "Other feed", "https://example.com/other.xml");
+      await insert(b, "Theirs", feed);
     } finally {
       await closeDb(old);
     }

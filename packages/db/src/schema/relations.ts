@@ -2,7 +2,7 @@ import { relations } from "drizzle-orm";
 import { action, actionDestination, delivery, digestItem } from "./action.ts";
 import { agentCall, modelConfig } from "./agent.ts";
 import { correction } from "./correction.ts";
-import { destination } from "./destination.ts";
+import { destination, healthAlertDestination } from "./destination.ts";
 import { item, itemLog } from "./item.ts";
 import { profile } from "./profile.ts";
 import { classifier, extractorRule, itemCategory, itemField } from "./rule.ts";
@@ -21,6 +21,7 @@ export const workspaceRelations = relations(workspace, ({ one, many }) => ({
   corrections: many(correction),
   profile: one(profile),
   modelConfigs: many(modelConfig),
+  healthAlertDestinations: many(healthAlertDestination),
 }));
 
 export const sourceRelations = relations(source, ({ one, many }) => ({
@@ -64,6 +65,15 @@ export const destinationRelations = relations(destination, ({ one, many }) => ({
   workspace: one(workspace, { fields: [destination.workspaceId], references: [workspace.id] }),
   actionDestinations: many(actionDestination),
   deliveries: many(delivery),
+  healthAlertDestinations: many(healthAlertDestination),
+}));
+
+export const healthAlertDestinationRelations = relations(healthAlertDestination, ({ one }) => ({
+  workspace: one(workspace, { fields: [healthAlertDestination.workspaceId], references: [workspace.id] }),
+  destination: one(destination, {
+    fields: [healthAlertDestination.destinationId],
+    references: [destination.id],
+  }),
 }));
 
 export const actionRelations = relations(action, ({ one, many }) => ({

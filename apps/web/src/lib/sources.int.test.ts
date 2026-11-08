@@ -132,7 +132,7 @@ describe("Sources", () => {
       lastPolledAt: null,
     });
     // The tick enqueues every Source with next_poll_at <= now().
-    expect(saved?.nextPollAt.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(saved?.nextPollAt?.getTime()).toBeLessThanOrEqual(Date.now());
     const due = await db.select({ id: source.id }).from(source).where(lte(source.nextPollAt, new Date()));
     expect(due.map((row) => row.id)).toContain(id);
     expect(saved?.createdAt.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
@@ -266,7 +266,7 @@ describe("Sources", () => {
 
     expect(results.filter((result) => "source" in result)).toHaveLength(1);
     expect(results).toContainEqual({ problem: "duplicate" });
-    const saved = (await sourcesIn(ours)).filter((row) => row.config.url === url);
+    const saved = (await sourcesIn(ours)).filter((row) => "url" in row.config && row.config.url === url);
     expect(saved).toHaveLength(1);
   });
 
