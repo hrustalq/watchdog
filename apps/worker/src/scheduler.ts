@@ -1,15 +1,21 @@
 // Polls Sources with a Schedule Trigger (docs: Sources and ingestion, "Scheduling"). One tick a
 // minute enqueues the Sources that are due, rather than one pg-boss schedule per Source.
-import { type Config, nextPollAt, pollSource, type PollSourceDeps } from "@watchdog/core";
-import { type Db, eq, lte, source } from "@watchdog/db";
+import { type Config, nextPollAt, pollSource, type PollSourceDeps, scheduleTypes } from "@watchdog/core";
+import { and, type Db, eq, inArray, lte, source } from "@watchdog/db";
 import type { PgBoss } from "pg-boss";
 
 const tickQueue = "schedule-tick";
 export const pollQueue = "poll-source";
 
-/** Enqueues a poll of every Source that is due. A Source already queued or polling is skipped. */
+/**
+ * Enqueues a poll of every due Source whose type has a Schedule Trigger. A Source already queued or
+ * polling is skipped.
+ */
 export async function enqueueDuePolls(db: Db, boss: PgBoss) {
-  const due = await db.select({ id: source.id }).from(source).where(lte(source.nextPollAt, new Date()));
+  const due = await db
+    .select({ id: source.id })
+    .from(source)
+    .where(and(lte(source.nextPollAt, new Date()), inArray(source.type, scheduleTypes)));
   if (due.length === 0) return;
   await boss.insert(
     pollQueue,

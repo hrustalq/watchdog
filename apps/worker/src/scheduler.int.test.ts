@@ -137,4 +137,15 @@ describe("scheduler", () => {
     });
     expect(fetched.filter((url) => url === src.url)).toHaveLength(1);
   });
+
+  it("never queues a poll of a webhook Source", async () => {
+    const [inbox] = await db
+      .insert(source)
+      .values({ workspaceId, type: "webhook", name: "Inbox", config: {}, schedule: null, nextPollAt: null })
+      .returning();
+    if (inbox === undefined) throw new Error("No source");
+    await enqueueDuePolls(db, boss);
+
+    expect(await pollJobs(inbox.id)).toEqual([]);
+  });
 });

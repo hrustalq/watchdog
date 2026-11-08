@@ -25,6 +25,7 @@ export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/cap
 export { runExtractorRuleByHand } from "./pipeline/manual-run.ts";
 export { processItem, type ProcessItemDeps } from "./pipeline/process-item.ts";
 export type { ItemDraft } from "./sources/item.ts";
+export { scheduleTypes } from "./sources/types.ts";
 export {
   FeedHttpError,
   fetchFeed,
