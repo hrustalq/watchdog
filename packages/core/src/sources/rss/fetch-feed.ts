@@ -1,7 +1,6 @@
 // Fetches an RSS 2.0, RSS 1.0 (RDF) or Atom 1.0 feed and maps its entries to Item drafts
 // (docs: Sources and ingestion; Processing pipeline, "Item envelope").
 import { type AtomFeed, parseFeed, type RdfFeed, type RssFeed } from "feedsmith";
-import rootPackage from "../../../../../package.json" with { type: "json" };
 import type { createEgressFetch } from "../../egress/egress.ts";
 import { capBody, htmlToText, type ItemDraft, tidyText } from "../item.ts";
 
@@ -38,15 +37,12 @@ export class NotAFeedError extends Error {
   }
 }
 
-const userAgent = `Watchdog/${rootPackage.version} (+https://github.com/hrustalq/watchdog)`;
-
 export async function fetchFeed(
   url: string,
   fetchState: FetchState,
   deps: FetchFeedDeps,
 ): Promise<FetchFeedResult> {
   const headers: Record<string, string> = {
-    "user-agent": userAgent,
     accept: [
       "application/rss+xml, application/atom+xml, application/rdf+xml",
       "application/xml;q=0.9, text/xml;q=0.9, */*;q=0.8",
