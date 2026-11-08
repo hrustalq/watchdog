@@ -1,3 +1,8 @@
+{
+	# Web and worker trust Caddy's own CA through NODE_EXTRA_CA_CERTS, so it needn't be installed here.
+	skip_install_trust
+}
+
 # The feed server of the smoke run (compose.smoke.yaml). Caddy's templates rewrite the dates in the
 # feeds on every request, so they stay relative to the run: some inside the 7-day Backfill, one
 # outside it.
@@ -7,4 +12,10 @@
 		mime text/xml
 	}
 	file_server
+}
+
+# Watchdog calls the Bot API at this fixed host, which compose.smoke.yaml makes this container's alias.
+api.telegram.org {
+	tls internal
+	reverse_proxy fake-telegram:8080
 }

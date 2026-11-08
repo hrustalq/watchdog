@@ -1,7 +1,8 @@
 // The smoke run's model, a small OpenAI-compatible server on the Compose network (compose.smoke.yaml),
 // so the real provider code runs with no model bill and no way out. An Item is rated Importance 2 unless
 // the prompt holds a Correction that raised a similar Item, and then Importance 5, which is how a
-// Correction visibly changes a later Rating.
+// Correction visibly changes a later Rating. It's rated Severity 1, or 5 when its title says "outage",
+// which is how the M3 demo gets an Item an alert fires on.
 import { createServer } from "node:http";
 import { json } from "node:stream/consumers";
 
@@ -19,7 +20,7 @@ function rate(prompt) {
   return {
     summary: `The fake model's summary of "${title}".`,
     reasoning: raised === undefined ? "No Correction raised a similar Item." : `A Correction raised "${raised.title}".`,
-    severity: 1,
+    severity: /\boutage\b/i.test(title) ? 5 : 1,
     importance: raised === undefined ? 2 : 5,
   };
 }
