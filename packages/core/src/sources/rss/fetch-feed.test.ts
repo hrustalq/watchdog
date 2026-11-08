@@ -6,8 +6,11 @@ import { createEgressFetch, EgressBlockedError } from "../../egress/egress.ts";
 import { maxBodyBytes } from "../item.ts";
 import { fetchFeed } from "./fetch-feed.ts";
 
-// Real feeds recorded on 2026-11-03 and trimmed to their first three entries, except
-// google-alerts.atom, which is constructed (see the comment in it).
+// Real feeds recorded on 2026-11-03 (google-alerts.atom on 2026-11-08) and trimmed to their first
+// three entries. In google-alerts.atom the account and alert IDs are placeholder digits, and so is
+// the alert's 16-hex hash inside each link's base64 cd= parameter. Its titles and content are HTML
+// with the matched term in <b>, links go through a google.com/url redirect, and author names are
+// empty.
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
 
 const rss = (items: string) =>
@@ -152,12 +155,16 @@ describe("fetchFeed", () => {
     },
     {
       fixture: "google-alerts.atom",
-      externalId: "tag:google.com,2013:googlealerts/feed:2222222222222222201",
-      url: "https://www.google.com/url?rct=j&sa=t&url=https://engineering.example.com/scaling-postgres&ct=ga&cd=CAIyAA&usg=AOvVaw0000000000000000000001",
-      title: "Scaling Postgres to a billion rows",
+      externalId: "tag:google.com,2013:googlealerts/feed:9342733983413074470",
+      url: "https://www.google.com/url?rct=j&sa=t&url=https://mixed-news.com/en/openai-gpt-6-cyber-firefox-flaws-linux-security/&ct=ga&cd=CAIyGjAwMDAwMDAwMDAwMDAwMDA6Y29tOmVuOlVT&usg=AOvVaw03IzQ_2KJq0IOBJYlzDZmP",
+      title:
+        "OpenAI says GPT-6 Cyber found 81 Firefox flaws, and Mozilla has started shipping fixes",
       author: null,
-      publishedAt: "2026-11-03T09:15:00.000Z",
-      bodyStart: "How we partitioned our Postgres tables & kept p99 latency under 20 ms ...",
+      publishedAt: "2026-11-08T18:50:24.000Z",
+      // The whole body: the <b> markup, the double-escaped &nbsp; and Google's trailing "...".
+      bodyStart:
+        "OpenAI says its new cybersecurity model helped researchers find 81 previously unknown " +
+        "Firefox vulnerabilities that Mozilla classified as high ...",
     },
     {
       fixture: "wordpress-news.rss",
