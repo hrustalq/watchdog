@@ -143,8 +143,9 @@ export async function runBot(
           failedId = next.update_id;
           if (attempts < attemptsPerUpdate) throw error;
           // The id and the reason only: the message's text is the user's.
-          const id = String(next.update_id);
-          process.stderr.write(`Skipped Telegram update ${id} after ${String(attempts)} failed attempts: ${messageOf(error)}\n`);
+          process.stderr.write(
+            `Skipped Telegram update ${String(next.update_id)} after ${String(attempts)} failed attempts: ${messageOf(error)}\n`,
+          );
           // A failed link spent nothing, so the same code still works until it expires.
           const chatId = startOf(next, bot)?.chat.id;
           if (chatId !== undefined) await reply(chatId, "Watchdog couldn't link this chat. Try the same link again.");
