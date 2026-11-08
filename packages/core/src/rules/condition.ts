@@ -90,11 +90,13 @@ function evaluateWithUnknown(
 ): boolean | undefined {
   if ("all" in condition) {
     const values = condition.all.map((child) => evaluateWithUnknown(child, item));
-    return values.includes(false) ? false : values.includes(undefined) ? undefined : true;
+    if (values.includes(false)) return false;
+    return values.includes(undefined) ? undefined : true;
   }
   if ("any" in condition) {
     const values = condition.any.map((child) => evaluateWithUnknown(child, item));
-    return values.includes(true) ? true : values.includes(undefined) ? undefined : false;
+    if (values.includes(true)) return true;
+    return values.includes(undefined) ? undefined : false;
   }
   if ("not" in condition) {
     const value = evaluateWithUnknown(condition.not, item);

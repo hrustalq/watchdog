@@ -227,6 +227,18 @@ describe("an Action Condition on an unrated Item", () => {
     expect(acts({ not: { field: "severity", op: "gte", value: 4 } }, rated)).toBe(true);
     expect(acts({ field: "importance", op: "gte", value: 5 }, rated)).toBe(true);
     expect(acts({ field: "severity", op: "gte", value: 4 }, rated)).toBe(false);
+    // Nested trees too, with the same answer as evaluateCondition.
+    for (const condition of [
+      { any: [lead, severe] },
+      { all: [lead, { not: severe }] },
+      { not: { all: [{ not: lead }, { not: severe }] } },
+      { any: [lead, { all: [{ not: severe }, { field: "importance", op: "gte", value: 5 }] }] },
+    ]) {
+      const parsed = conditionSchema.parse(condition);
+      expect(acts(condition, rated)).toBe(evaluateCondition(parsed, { ...envelope, ...rated }));
+    }
+    expect(acts({ not: { all: [{ not: lead }, { not: severe }] } }, rated)).toBe(false);
+    expect(acts({ any: [lead, { all: [{ not: severe }] }] }, rated)).toBe(true);
   });
 
   it("reads severity alone to decide, as the docs define unrated", () => {
