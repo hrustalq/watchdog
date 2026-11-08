@@ -8,6 +8,19 @@ const browserZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
 const unchanging = () => () => undefined;
 
 /**
+ * Whether two names are one zone to this browser. The server saves Node's name for a zone, which can be
+ * an older one than the browser's (Asia/Calcutta for Asia/Kolkata).
+ */
+function sameZone(a: string, b: string) {
+  try {
+    const resolve = (zone: string) => new Intl.DateTimeFormat("en", { timeZone: zone }).resolvedOptions().timeZone;
+    return resolve(a) === resolve(b);
+  } catch {
+    return a === b;
+  }
+}
+
+/**
  * Offers the browser's own timezone for the field, when it isn't the saved one. Without JavaScript
  * there's nothing to offer, so the server renders an empty region and the field works as it is. The
  * region is there from the first render, so what it says after a click is announced.
@@ -15,7 +28,7 @@ const unchanging = () => () => undefined;
 export function ZoneSuggestion({ inputId, saved }: { inputId: string; saved: string }) {
   const zone = useSyncExternalStore(unchanging, browserZone, () => undefined);
   const [used, setUsed] = useState(false);
-  const offered = zone !== undefined && zone !== saved;
+  const offered = zone !== undefined && !sameZone(zone, saved);
   return (
     <div role="status" className="text-xs text-muted-foreground empty:hidden">
       {offered && used ? <p className="font-medium text-foreground">Save settings to keep it.</p> : null}

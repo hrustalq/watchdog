@@ -16,9 +16,10 @@ export async function saveSettingsAction(formData: FormData) {
   const { workspace } = await requireWorkspace();
   const form = readAlertSettingsForm((name) => formData.get(name));
   const result = await saveAlertSettings(server().db, workspace.id, form);
-  // Replaced, because Back to the page before the save could save its old values over the new ones.
+  // Replaced, because Back to the page before the save could save its old values over the new ones. A
+  // refusal is replaced too, or a save after it would leave that page one Back away.
   if ("saved" in result) redirect("/settings?saved=1", RedirectType.replace);
-  redirect(`/settings?${alertSettingsQuery(form)}`);
+  redirect(`/settings?${alertSettingsQuery(form)}`, RedirectType.replace);
 }
 
 /** Opens or closes sign-up. Only the instance admin may; anyone else is sent to their Workspace. */

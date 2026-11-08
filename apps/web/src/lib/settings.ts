@@ -7,7 +7,7 @@ import { type Db, eq, workspace } from "@watchdog/db";
  * Every timezone the form offers, UTC first. Postgres can't check a name, so this list is the check.
  * Node's list leaves out UTC, the default.
  */
-export const timezones = ["UTC", ...Intl.supportedValuesOf("timeZone")];
+export const timezones = [...new Set(["UTC", ...Intl.supportedValuesOf("timeZone")])];
 const knownTimezones = new Set(timezones);
 
 /**
@@ -53,7 +53,6 @@ export interface AlertSettings {
 
 const time = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-
 function whole(text: string, { min, max }: { min: number; max: number }) {
   if (!/^\d{1,4}$/.test(text)) return undefined;
   const value = Number(text);
@@ -65,7 +64,7 @@ export function parseAlertSettings(
   form: AlertSettingsForm,
 ): { values: AlertSettings } | { errors: Partial<Record<AlertSettingsField, string>> } {
   const errors: Partial<Record<AlertSettingsField, string>> = {};
-  const timezone = listedTimezone(form.timezone);
+  const timezone = listedTimezone(form.timezone.trim());
   if (timezone === undefined) {
     errors.timezone = "Choose a timezone from the list, such as Europe/Berlin or UTC.";
   }

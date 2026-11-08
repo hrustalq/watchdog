@@ -51,13 +51,14 @@ describe("parseAlertSettings", () => {
 
   it.each([
     ["utc", "UTC"],
+    [" Europe/Moscow\n", "Europe/Moscow"],
     ["Europe/Kyiv", new Intl.DateTimeFormat("en", { timeZone: "Europe/Kyiv" }).resolvedOptions().timeZone],
   ])("saves the timezone %s by its listed name", (timezone, listed) => {
     expect(timezones).toContain(listed);
     expect(parseAlertSettings(form({ timezone }))).toMatchObject({ values: { timezone: listed } });
   });
 
-  it.each(["Mars/Olympus", "", "+03:00", "Europe/Moscow "])("refuses the timezone %j beside its field", (timezone) => {
+  it.each(["Mars/Olympus", "", " ", "+03:00"])("refuses the timezone %j beside its field", (timezone) => {
     expect(refusedOn(form({ timezone }))).toEqual(["timezone"]);
   });
 
