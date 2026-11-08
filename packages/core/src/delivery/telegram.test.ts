@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { EgressLimitError } from "../egress/egress.ts";
-import { encryptSecret } from "../secrets/secrets.ts";
+import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
 import { type Destination, FinalSendError, RetryAfterSendError } from "./deliver.ts";
 import { groupedAlert } from "./group.ts";
@@ -64,6 +64,12 @@ const sender = (telegram: ReturnType<typeof fakeTelegram>, token: string | undef
   createTelegramSender(token, { fetch: telegram.fetch, encryptionKey });
 
 const textOf = (telegram: ReturnType<typeof fakeTelegram>) => telegram.requests[0]?.body.text ?? "";
+
+/** The value, which the test expects to be there. */
+function present<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error("Expected a value");
+  return value;
+}
 
 /** The error a send rejects with, which the test expects it to. */
 async function failureOf(send: Promise<void>) {
@@ -206,6 +212,50 @@ describe("createTelegramSender", () => {
     expect(failure).not.toBeInstanceOf(FinalSendError);
     expect(failure.message).toContain("Bad Request: chat not found");
     expect(failure.message).toContain("400");
+  });
+
+  describe("a chat that moved to a supergroup", () => {
+    const moved = () =>
+      refusal(400, "Bad Request: group chat was upgraded to a supergroup chat", { migrate_to_chat_id: -1009876543210 });
+    /** Telegram refusing the old chat, then taking the message at the new one. */
+    const movedThenSent = () => {
+      const answers = [moved(), Response.json({ ok: true, result: {} })];
+      return fakeTelegram(() => answers.shift() ?? Response.error());
+    };
+    const chatIds = (telegram: ReturnType<typeof fakeTelegram>) => telegram.requests.map(({ body }) => body.chat_id);
+
+    it("sends again at once to the new chat, and hands over the new id encrypted", async () => {
+      const telegram = movedThenSent();
+      const stored: string[] = [];
+
+      await sender(telegram).send(chat(), message, (secretCiphertext) => {
+        stored.push(secretCiphertext);
+        return Promise.resolve();
+      });
+
+      expect(chatIds(telegram)).toEqual(["-100200", "-1009876543210"]);
+      expect(stored).toHaveLength(1);
+      expect(stored[0]).not.toContain("9876543210");
+      expect(decryptSecret(present(stored[0]), encryptionKey)).toBe("-1009876543210");
+    });
+
+    it("sends only once more, and fails as a plain refusal, when the new chat refuses too", async () => {
+      const telegram = fakeTelegram(moved);
+
+      const failure = await failureOf(sender(telegram).send(chat(), message, () => Promise.resolve()));
+
+      expect(telegram.requests).toHaveLength(2);
+      expect(failure).not.toBeInstanceOf(FinalSendError);
+      expect(failure.message).toContain("400");
+    });
+
+    it("still sends to the new chat when the caller keeps no chat id", async () => {
+      const telegram = movedThenSent();
+
+      await sender(telegram).send(chat(), message);
+
+      expect(chatIds(telegram)).toEqual(["-100200", "-1009876543210"]);
+    });
   });
 
   it("copes with an answer that isn't Telegram's JSON, and keeps the token out of the reason", async () => {

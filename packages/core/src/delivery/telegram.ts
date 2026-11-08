@@ -3,7 +3,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import type { createEgressFetch } from "../egress/egress.ts";
-import { decryptSecret } from "../secrets/secrets.ts";
+import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
 import { FinalSendError, RetryAfterSendError, type Sender, unreachable } from "./deliver.ts";
 import { groupedAlertText } from "./group.ts";
@@ -20,7 +20,13 @@ export const botApiUrl = (botToken: string, method: string) => `https://api.tele
 export const refusal = z
   .object({
     description: z.string().optional(),
-    parameters: z.object({ retry_after: z.number().positive().optional() }).optional(),
+    parameters: z
+      .object({
+        retry_after: z.number().positive().optional(),
+        // A group that became a supergroup has a new id, of at most 52 bits, which a number holds exactly.
+        migrate_to_chat_id: z.number().int().optional(),
+      })
+      .optional(),
   })
   .catch({});
 
@@ -79,34 +85,46 @@ export function createTelegramSender(
   const url = botApiUrl(botToken, "sendMessage");
   const nextTurn = floodLimiter();
 
+  /** Undefined when the message went, or else Telegram's refusal. */
+  const post = async (chatId: string, text: string) => {
+    await nextTurn(chatId);
+    const response = await deps
+      .fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          chat_id: chatId,
+          text,
+          // Telegram would otherwise fetch and show the first URL in the text, which an Item's text can choose.
+          link_preview_options: { is_disabled: true },
+        }),
+      })
+      .catch((error: unknown) => {
+        throw unreachable(error, "Telegram");
+      });
+    if (response.ok) {
+      // The message went, whatever happens to the rest of the answer. Reading it keeps the connection open.
+      await response.arrayBuffer().catch(() => undefined);
+      return undefined;
+    }
+    return { status: response.status, answer: refusal.parse(await response.json().catch(() => undefined)) };
+  };
+
   return {
-    send: async (destination, message) => {
+    send: async (destination, message, onChatMoved) => {
       if (destination.secretCiphertext === null) throw new Error("the Telegram chat isn't linked");
-      const chatId = decryptSecret(destination.secretCiphertext, deps.encryptionKey);
-      await nextTurn(chatId);
-
-      const response = await deps
-        .fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: "lines" in message ? groupedAlertText(message, maxLength) : alertText(message),
-            // Telegram would otherwise fetch and show the first URL in the text, which an Item's text can choose.
-            link_preview_options: { is_disabled: true },
-          }),
-        })
-        .catch((error: unknown) => {
-          throw unreachable(error, "Telegram");
-        });
-      if (response.ok) {
-        // The message went, whatever happens to the rest of the answer. Reading it keeps the connection open.
-        await response.arrayBuffer().catch(() => undefined);
-        return;
+      const text = "lines" in message ? groupedAlertText(message, maxLength) : alertText(message);
+      let refused = await post(decryptSecret(destination.secretCiphertext, deps.encryptionKey), text);
+      const movedTo = refused?.answer.parameters?.migrate_to_chat_id;
+      // Once only, so a chat that keeps moving can't hold the send in a loop.
+      if (movedTo !== undefined) {
+        const chatId = String(movedTo);
+        await onChatMoved?.(encryptSecret(chatId, deps.encryptionKey));
+        refused = await post(chatId, text);
       }
+      if (refused === undefined) return;
 
-      const { status } = response;
-      const answer = refusal.parse(await response.json().catch(() => undefined));
+      const { status, answer } = refused;
       const said = answer.description === undefined ? "" : `: ${answer.description}`;
       if (status === 403) {
         throw new FinalSendError(`the bot was removed from the chat or blocked (Telegram said ${String(status)}${said})`);

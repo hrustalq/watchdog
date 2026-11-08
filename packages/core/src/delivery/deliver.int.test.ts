@@ -22,7 +22,7 @@ import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createEgressFetch } from "../egress/egress.ts";
-import { encryptSecret } from "../secrets/secrets.ts";
+import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
 import { deliver, type Destination, FinalSendError, purgeSentMessages, RetryAfterSendError, type Sender } from "./deliver.ts";
 import type { AlertMessage, WebhookMessage } from "./content.ts";
 import type { GroupedAlert } from "./group.ts";
@@ -373,7 +373,7 @@ describe("deliver", () => {
     const telegramBody = z.object({ chat_id: z.string(), text: z.string() });
 
     /** A Delivery to a linked chat, and deps that send it through the real sender to a fake API. */
-    async function linked(answer: () => Response) {
+    async function linked(answer: (chatId: string) => Response) {
       const seeded = await seed();
       await db
         .update(destination)
@@ -382,8 +382,9 @@ describe("deliver", () => {
       const received: z.output<typeof telegramBody>[] = [];
       const telegram = createTelegramSender("123456:token", {
         fetch: (_input, init) => {
-          received.push(telegramBody.parse(JSON.parse(typeof init?.body === "string" ? init.body : "")));
-          return Promise.resolve(answer());
+          const body = telegramBody.parse(JSON.parse(typeof init?.body === "string" ? init.body : ""));
+          received.push(body);
+          return Promise.resolve(answer(body.chat_id));
         },
         encryptionKey,
       });
@@ -432,6 +433,94 @@ describe("deliver", () => {
       expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "failed", attempts: 1, nextAttemptAt: null });
       const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
       expect(shown?.lastError).toMatch(/bot was removed from the chat/);
+    });
+
+    describe("a chat that moved to a supergroup", () => {
+      const newChat = "-1009876543210";
+      /** The old chat refuses, naming the new one. The new one takes the message, or refuses it too. */
+      const movedChat = (newChatAnswer: () => Response) => (chatId: string) =>
+        chatId === newChat
+          ? newChatAnswer()
+          : Response.json(
+              {
+                ok: false,
+                error_code: 400,
+                description: "Bad Request: group chat was upgraded to a supergroup chat",
+                parameters: { migrate_to_chat_id: Number(newChat) },
+              },
+              { status: 400 },
+            );
+      const sentAnswer = () => Response.json({ ok: true, result: {} });
+      /** The Destination's chat id as stored, encrypted. */
+      const storedChat = async (destinationId: string) => {
+        const shown = await db.query.destination.findFirst({ where: eq(destination.id, destinationId) });
+        return shown?.secretCiphertext ?? "";
+      };
+
+      it("sends the alert to the new chat, keeps its id encrypted and says so in the Log", async () => {
+        const { seeded, received, deps } = await linked(movedChat(sentAnswer));
+
+        await deliver(db, seeded.deliveryId, deps);
+
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent", attempts: 1, lastError: null });
+        expect(received.map(({ chat_id }) => chat_id)).toEqual(["-100200", newChat]);
+        expect(present(received[1]).text).toContain("A security advisory");
+        const stored = await storedChat(seeded.destinationId);
+        expect(stored).not.toContain("9876543210");
+        expect(decryptSecret(stored, encryptionKey)).toBe(newChat);
+        const log = await actLog(seeded.itemId);
+        expect(log).toMatchObject([{ message: "The chat moved to a supergroup. Sent to ops-chat" }]);
+        expect(JSON.stringify(log)).not.toContain("9876543210");
+      });
+
+      it("sends the next Delivery straight to the new chat", async () => {
+        const { seeded, received, deps } = await linked(movedChat(sentAnswer));
+        // So the next alert goes at once rather than wait out the burst window.
+        await db.update(workspace).set({ burstWindowSeconds: 0 }).where(eq(workspace.id, seeded.workspaceId));
+        await deliver(db, seeded.deliveryId, deps);
+        const [next] = await db
+          .insert(item)
+          .values({
+            workspaceId: seeded.workspaceId,
+            sourceId: seeded.sourceId,
+            externalId: "two",
+            title: "Another advisory",
+            body: "Another entry.",
+            raw: {},
+            severity: 5,
+            importance: 3,
+          })
+          .returning();
+        const [queued] = await db
+          .insert(delivery)
+          .values({ actionId: seeded.actionId, itemId: present(next).id, destinationId: seeded.destinationId })
+          .returning();
+
+        await deliver(db, present(queued).id, deps);
+
+        expect(received.map(({ chat_id }) => chat_id)).toEqual(["-100200", newChat, newChat]);
+        expect(await rowOf(present(queued).id)).toMatchObject({ status: "sent", attempts: 1 });
+      });
+
+      it("retries as any failed send when the new chat refuses too, with no third send", async () => {
+        const { seeded, received, retries, deps } = await linked(
+          movedChat(() =>
+            Response.json({ ok: false, error_code: 400, description: "Bad Request: chat not found" }, { status: 400 }),
+          ),
+        );
+
+        await deliver(db, seeded.deliveryId, deps);
+
+        expect(received).toHaveLength(2);
+        const row = present(await rowOf(seeded.deliveryId));
+        expect(row).toMatchObject({ status: "queued", attempts: 1 });
+        expect(present(retries[0]).at).toEqual(row.nextAttemptAt);
+        const [logged] = await actLog(seeded.itemId);
+        expect(logged?.message).toMatch(
+          /^The chat moved to a supergroup\. Sending to ops-chat failed: .*chat not found, retrying at /,
+        );
+        expect(decryptSecret(await storedChat(seeded.destinationId), encryptionKey)).toBe(newChat);
+      });
     });
 
     it("writes a Log row saying the bot isn't set up when there's no token", async () => {
