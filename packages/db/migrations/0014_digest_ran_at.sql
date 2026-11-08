@@ -1,0 +1,1 @@
+ALTER TABLE "action" ADD COLUMN "digest_ran_at" timestamp with time zone;

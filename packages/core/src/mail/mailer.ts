@@ -9,6 +9,8 @@ export interface MailMessage {
   text: string;
   /** The sender, when it isn't SMTP_FROM. */
   from?: string | undefined;
+  /** Extra header lines, such as a Digest's unsubscribe headers. */
+  headers?: Record<string, string>;
 }
 
 export interface Mailer {
@@ -49,8 +51,8 @@ export function createMailer(
     socketTimeout: 60_000,
   });
   return {
-    send: async ({ to, subject, text, from }) => {
-      await transport.sendMail({ from: from ?? smtp.from, to, subject, text });
+    send: async ({ to, subject, text, from, headers }) => {
+      await transport.sendMail({ from: from ?? smtp.from, to, subject, text, ...(headers && { headers }) });
     },
   };
 }

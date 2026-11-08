@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultSchedule, nextPollAt, scheduleError } from "./schedule.ts";
+import { defaultSchedule, nextFiring, nextPollAt, scheduleError } from "./schedule.ts";
 
 const at = (time: string) => new Date(`2026-11-03T${time}Z`);
 
@@ -100,5 +100,38 @@ describe("nextPollAt", () => {
     expect(nextPollAt("*/5 * * * *", "hosted", at("15:07:00"), () => 0)).toEqual(at("15:15:00"));
     expect(nextPollAt(" @hourly ", "hosted", at("15:07:00"), () => 0)).toEqual(at("16:00:00"));
     expect(nextPollAt("not cron", "self-hosted", at("15:07:00"), () => 0)).toEqual(at("15:15:00"));
+  });
+});
+
+describe("nextFiring", () => {
+  it("reads the schedule in the timezone: 08:00 in Moscow is 05:00 UTC", () => {
+    expect(nextFiring("0 8 * * *", new Date("2026-11-03T04:00:00Z"), "Europe/Moscow")).toEqual(
+      new Date("2026-11-03T05:00:00Z"),
+    );
+    expect(nextFiring("0 8 * * *", new Date("2026-11-03T05:00:00Z"), "Europe/Moscow")).toEqual(
+      new Date("2026-11-04T05:00:00Z"),
+    );
+  });
+
+  it("is the schedule in UTC without a timezone", () => {
+    expect(nextFiring("*/15 * * * *", at("10:07:00"))).toEqual(at("10:15:00"));
+  });
+
+  it("moves a time in a daylight saving gap forward rather than skipping the day", () => {
+    // Havana's midnight on 8 March 2026 doesn't exist: 00:00 CST becomes 01:00 CDT, at 05:00 UTC.
+    expect(nextFiring("0 0 * * *", new Date("2026-03-07T12:00:00Z"), "America/Havana")).toEqual(
+      new Date("2026-03-08T05:00:00Z"),
+    );
+    // The day after is an ordinary midnight in CDT, UTC-4.
+    expect(nextFiring("0 0 * * *", new Date("2026-03-08T05:00:00Z"), "America/Havana")).toEqual(
+      new Date("2026-03-09T04:00:00Z"),
+    );
+  });
+
+  it("fires once on a time the clocks go back through", () => {
+    // Berlin's 02:30 on 25 October 2026 happens twice: at 00:30 and 01:30 UTC.
+    const first = nextFiring("30 2 * * *", new Date("2026-10-24T12:00:00Z"), "Europe/Berlin");
+    expect(first).toEqual(new Date("2026-10-25T00:30:00Z"));
+    expect(nextFiring("30 2 * * *", first, "Europe/Berlin")).toEqual(new Date("2026-10-26T01:30:00Z"));
   });
 });

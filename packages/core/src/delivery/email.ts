@@ -4,7 +4,7 @@ import { ratingScale } from "../agent/rating.ts";
 import type { Mailer } from "../mail/mailer.ts";
 import type { AlertMessage } from "./content.ts";
 import { FinalSendError, type Sender } from "./deliver.ts";
-import { groupedAlertText, oneLine } from "./group.ts";
+import { groupedAlertText, itemCount, oneLine } from "./group.ts";
 
 /** An email Destination's settings: one valid address, because a list would reach people who never confirmed. */
 export const emailDestinationConfig = z.object({ address: z.email() });
@@ -34,15 +34,19 @@ export function createEmailSender(mailer: Mailer, from: string | undefined): Sen
       if (!parsed.success) throw new FinalSendError("the Destination has no valid address");
 
       const grouped = "lines" in message;
-      const subject = grouped
-        ? `${String(message.count)} alerts`
-        : `${severityWord(message.severity)} · ${oneLine(message.title)}`;
+      let subject = grouped ? `${String(message.count)} alerts` : `${severityWord(message.severity)} · ${oneLine(message.title)}`;
+      if (grouped && message.digest !== undefined) subject = `Digest ${oneLine(message.digest)} · ${itemCount(message.count)}`;
+      // One-click unsubscribe (RFC 8058): a mail client POSTs to the URL, with no session.
+      const unsubscribe = grouped ? message.unsubscribeUrl : undefined;
       try {
         await mailer.send({
           to: parsed.data.address,
           subject: `[Watchdog] ${subject}`,
           text: grouped ? groupedAlertText(message) : alertText(message),
           ...(from !== undefined && { from }),
+          ...(unsubscribe !== undefined && {
+            headers: { "List-Unsubscribe": `<${unsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },
+          }),
         });
       } catch (error) {
         const answer = error instanceof Error ? error.message : String(error);

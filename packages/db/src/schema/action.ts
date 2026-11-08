@@ -23,6 +23,11 @@ export const action = pgTable(
   {
     ...ruleColumns,
     kind: text("kind", { enum: ["alert", "webhook", "digest"] }).notNull(),
+    /**
+     * When a Digest's schedule last ran, sent or not. Its next send is the schedule's first time after
+     * this or `updated_at`, whichever is later, so a save or a new timezone takes effect at once.
+     */
+    digestRanAt: timestamp("digest_ran_at", { withTimezone: true }),
   },
   (table) => [
     check("action_kind_check", sql`${table.kind} in ('alert', 'webhook', 'digest')`),

@@ -12,12 +12,14 @@ export {
   urlIpLiteral,
 } from "./egress/egress.ts";
 export { deliver, type DeliverDeps, purgeSentMessages, releaseDueDeliveries, type Sender } from "./delivery/deliver.ts";
+export { type DigestDeps, dueDigests, sendDigest } from "./delivery/digest.ts";
 export { type EmailCap, sendEmailCapNotice } from "./delivery/email-cap.ts";
 export { emailDestinationConfig } from "./delivery/email.ts";
 export { createSenders } from "./delivery/senders.ts";
 export { sendTestAlert, type TestAlertDeps, type TestAlertResult } from "./delivery/test-alert.ts";
 export { botUsername, runBot } from "./telegram/bot-runner.ts";
 export { issueLinkCode, linkChat, linkCodeMinutes, liveLinkCode } from "./telegram/link.ts";
+export { checkUnsubscribeToken, unsubscribeUrl } from "./delivery/unsubscribe.ts";
 export { verifyWebhookSignature } from "./delivery/verify-signature.ts";
 export { pollSource, type PollResult, type PollSourceDeps } from "./pipeline/capture.ts";
 export { runExtractorRuleByHand } from "./pipeline/manual-run.ts";
@@ -32,7 +34,7 @@ export {
   NotAFeedError,
 } from "./sources/rss/fetch-feed.ts";
 export { createMailer, type MailMessage, type Mailer } from "./mail/mailer.ts";
-export { defaultSchedule, minimumMinutes, nextPollAt, scheduleError } from "./schedule.ts";
+export { defaultSchedule, minimumMinutes, nextFiring, nextPollAt, scheduleError } from "./schedule.ts";
 export { decryptSecret, encryptSecret } from "./secrets/secrets.ts";
 export {
   type ConditionItem,

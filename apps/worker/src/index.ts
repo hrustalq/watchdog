@@ -51,6 +51,7 @@ const alertFrom = config.smtp?.alertFrom;
 await startDelivery(deliveryDb, boss, {
   senders: createSenders(config, { fetch: egressFetch, mailer }),
   appUrl: config.auth.url,
+  secret: config.auth.secret,
   ...(config.mode === "hosted" && {
     sendCapNotice: (workspaceId: string) => sendEmailCapNotice(deliveryDb, workspaceId, mailer, alertFrom),
   }),

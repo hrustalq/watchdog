@@ -22,10 +22,11 @@ export async function takeEmailCapTurn(tx: Tx, workspaceId: string) {
 }
 
 /**
- * When a Workspace's next mail can go, if it has reached the cap. The local day comes from Postgres,
+ * When a Workspace's next mail can go, if it has reached the cap, or when `adding` mails, such as a
+ * Digest's to each of its addresses, wouldn't fit under it. The local day comes from Postgres,
  * because a cron iterator throws on a day whose midnight doesn't exist.
  */
-export async function emailCapEnd(tx: Tx, settings: typeof workspace.$inferSelect, now: Date) {
+export async function emailCapEnd(tx: Tx, settings: typeof workspace.$inferSelect, now: Date, adding = 1) {
   const timezone = sql`${settings.timezone}::text`;
   const today = sql`(${now.toISOString()}::timestamptz at time zone ${timezone})::date`;
   const [sent] = await tx
@@ -41,7 +42,7 @@ export async function emailCapEnd(tx: Tx, settings: typeof workspace.$inferSelec
         sql`${sentMessage.sentAt} >= (${today}::timestamp at time zone ${timezone})`,
       ),
     );
-  return sent === undefined || sent.mails < mailsPerDay ? undefined : sent.dayEnd;
+  return sent === undefined || sent.mails + adding <= mailsPerDay ? undefined : sent.dayEnd;
 }
 
 /** Queues the day's notice unless it has been queued already. */
@@ -71,6 +72,7 @@ export async function sendEmailCapNotice(db: Db, workspaceId: string, mailer: Ma
       `Your Workspace has sent its ${String(mailsPerDay)} alert mails for today.`,
       `Further alert mail is held until midnight (${found.timezone}), then goes out as one message per address.`,
       "Nothing is lost, and Telegram alerts and webhooks aren't affected.",
+      "A Digest that goes to an address waits with its mail, at its Telegram chats too, and goes out as one Digest.",
     ].join("\n"),
     ...(from !== undefined && { from }),
   });

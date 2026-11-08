@@ -40,6 +40,8 @@ function start() {
     /** Encrypts a model's API key. It never leaves the server. */
     encryptionKey: config.encryptionKey,
     baseURL: config.auth.url,
+    /** BETTER_AUTH_SECRET, from which a Digest mail's unsubscribe URL is signed. It never leaves the server. */
+    authSecret: config.auth.secret,
     // On a self-hosted install without SMTP, magic links go to the web log instead.
     mailGoesToLog: config.smtp === undefined,
     /** What the Destinations screen saves and mails with. */

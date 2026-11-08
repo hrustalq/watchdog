@@ -14,6 +14,7 @@ import {
   isNotNull,
   item,
   itemCategory,
+  itemLog,
   source,
   type SQL,
   sql,
@@ -215,11 +216,13 @@ export function deliveryStatus({ status, attempts, nextAttemptAt, lastError }: D
 /**
  * Each Action that fired on an Item, oldest first, with its Destinations and how each Delivery stands,
  * read from the `delivery` table. A Digest has no Delivery per Item, so its Destinations show the Item
- * waiting in `digest_item`. Empty when nothing fired, or the Item isn't this Workspace's.
+ * waiting in `digest_item`, and once sent, the Log rows the send wrote, because it deletes those rows: each
+ * Destination it went to, and each that failed when another got it.
+ * Empty when nothing fired, or the Item isn't this Workspace's.
  */
 export async function itemActions(db: Db, workspaceId: string, itemId: string) {
   if (!isUuid(itemId)) return [];
-  const [deliveries, digests] = await Promise.all([
+  const [deliveries, digests, digestsSent] = await Promise.all([
     db
       .select({
         actionId: action.id,
@@ -251,6 +254,28 @@ export async function itemActions(db: Db, workspaceId: string, itemId: string) {
       // A Digest only sends to confirmed Destinations, as the Act stage only collects for them.
       .where(and(eq(digestItem.itemId, itemId), eq(action.workspaceId, workspaceId), isNotNull(destination.confirmedAt)))
       .orderBy(action.createdAt, action.id, destination.name),
+    db
+      .select({
+        actionId: action.id,
+        actionName: action.name,
+        createdAt: action.createdAt,
+        destination: sql<string>`${itemLog.data}->>'destination'`,
+        failed: sql<boolean>`${itemLog.data}->>'digest' = 'failed'`,
+        reason: sql<string | null>`${itemLog.data}->>'reason'`,
+        at: itemLog.at,
+      })
+      .from(itemLog)
+      .innerJoin(action, sql`${action.id} = (${itemLog.data}->>'actionId')::uuid`)
+      .where(
+        and(
+          eq(itemLog.itemId, itemId),
+          eq(itemLog.stage, "act"),
+          // A failure that waits for the next Digest has no `digest`: the Item still shows as waiting.
+          sql`${itemLog.data}->>'digest' in ('sent', 'failed')`,
+          eq(action.workspaceId, workspaceId),
+        ),
+      )
+      .orderBy(action.createdAt, action.id, itemLog.at),
   ]);
 
   interface Fired {
@@ -259,15 +284,19 @@ export async function itemActions(db: Db, workspaceId: string, itemId: string) {
     createdAt: Date;
     deliveries: typeof deliveries;
     digestTo: string[];
+    digestSent: { destination: string; at: Date; failed: boolean; reason: string | null }[];
   }
   const fired = new Map<string, Fired>();
   const entry = ({ actionId: id, actionName: name, createdAt }: { actionId: string; actionName: string; createdAt: Date }) => {
-    const found = fired.get(id) ?? { id, name, createdAt, deliveries: [], digestTo: [] };
+    const found = fired.get(id) ?? { id, name, createdAt, deliveries: [], digestTo: [], digestSent: [] };
     fired.set(id, found);
     return found;
   };
   for (const row of deliveries) entry(row).deliveries.push(row);
   for (const row of digests) entry(row).digestTo.push(row.destination);
+  for (const { destination: to, at, failed, reason, ...row } of digestsSent) {
+    entry(row).digestSent.push({ destination: to, at, failed, reason });
+  }
   return [...fired.values()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
 }
 
