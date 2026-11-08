@@ -189,10 +189,32 @@ describe("an Action Condition on an unrated Item", () => {
     expect(acts({ field: "importance", op: "lte", value: 5 })).toBe(false);
   });
 
-  it("doesn't hold when a Rating test sits anywhere in the tree", () => {
-    const advisory = { field: "category", op: "is", value: "release" };
-    expect(acts({ any: [advisory, { field: "importance", op: "gte", value: 1 }] })).toBe(false);
-    expect(acts({ all: [advisory, { not: { field: "severity", op: "exists" } }] })).toBe(false);
+  // A Rating test on an unrated Item is unknown, and unknown at the root doesn't hold.
+  const advisory = { field: "category", op: "is", value: "security-advisory" };
+  const lead = { field: "category", op: "is", value: "lead" };
+  const severe = { field: "severity", op: "gte", value: 4 };
+  const onAdvisory: Rated = { ...unrated, categories: ["security-advisory"] };
+
+  it("holds when a branch of any holds, though another tests the Rating", () => {
+    expect(acts({ any: [advisory, severe] }, onAdvisory)).toBe(true);
+    expect(acts({ any: [advisory, severe] })).toBe(false);
+    expect(acts({ any: [lead, { field: "importance", op: "gte", value: 1 }] })).toBe(false);
+  });
+
+  it("doesn't hold when all needs a Rating test", () => {
+    expect(acts({ all: [advisory, severe] }, onAdvisory)).toBe(false);
+    expect(acts({ all: [advisory, { not: { field: "severity", op: "exists" } }] }, onAdvisory)).toBe(
+      false,
+    );
+  });
+
+  it("keeps not on a Rating test unknown inside all and any", () => {
+    expect(acts({ any: [advisory, { not: severe }] }, onAdvisory)).toBe(true);
+    expect(acts({ any: [lead, { not: severe }] }, onAdvisory)).toBe(false);
+    expect(acts({ all: [advisory, { not: severe }] }, onAdvisory)).toBe(false);
+    expect(acts({ not: { any: [lead, severe] } }, onAdvisory)).toBe(false);
+    // all is false once a child is false, so not makes it true.
+    expect(acts({ not: { all: [lead, severe] } }, onAdvisory)).toBe(true);
   });
 
   it("holds when a Condition without a Rating field does, so an advisory still alerts", () => {

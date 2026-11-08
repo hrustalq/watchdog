@@ -1,6 +1,6 @@
 // Evaluating a Condition against an Item (docs: Rule model, "Condition grammar").
 import { regexMatches } from "./regex.ts";
-import { type Condition, extracted, type Predicate, predicates, ratingFields } from "./schema.ts";
+import { type Condition, extracted, type Predicate, ratingFields } from "./schema.ts";
 
 /**
  * What a Condition can read from an Item: its `item` row plus its Source's type. Forgetting one of
@@ -83,19 +83,39 @@ export function evaluateCondition(condition: Condition, item: ConditionItem): bo
     .some((value) => value !== undefined && value !== null && test(condition, value));
 }
 
+/** `undefined` is unknown: a Rating test on an unrated Item. */
+function evaluateWithUnknown(
+  condition: Condition,
+  item: ConditionItem & { severity: number | null },
+): boolean | undefined {
+  if ("all" in condition) {
+    const values = condition.all.map((child) => evaluateWithUnknown(child, item));
+    return values.includes(false) ? false : values.includes(undefined) ? undefined : true;
+  }
+  if ("any" in condition) {
+    const values = condition.any.map((child) => evaluateWithUnknown(child, item));
+    return values.includes(true) ? true : values.includes(undefined) ? undefined : false;
+  }
+  if ("not" in condition) {
+    const value = evaluateWithUnknown(condition.not, item);
+    return value === undefined ? undefined : !value;
+  }
+  if (item.severity === null && ratingFields.includes(condition.field)) return undefined;
+  return evaluateCondition(condition, item);
+}
+
 /**
  * Whether an Item that finished the pipeline meets an Action's Condition (docs: Processing
- * pipeline, "The Act stage"). A Condition that tests the Rating anywhere in its tree doesn't hold
- * on an unrated Item, `not` included: an Item nobody has rated meets neither "Severity ≥ 4" nor
- * "not Severity ≥ 4", so that check runs before `evaluateCondition`, which lets a missing field pass
- * inside `not`. Unrated means `severity` is null, so a corrected Rating counts as rated. The Rating
- * is required here, because a stage that forgot it would look unrated on every Item.
+ * pipeline, "The Act stage"). On an unrated Item a test of `severity` or `importance` is unknown,
+ * `exists` included: `not` keeps it unknown, `all` is false if a child is false and `any` true if a
+ * child is true, and unknown at the root doesn't hold. So an unrated Item meets neither "Severity ≥
+ * 4" nor "not Severity ≥ 4", while `any: [Category is security-advisory, Severity ≥ 4]` fires on an
+ * advisory. Unrated means `severity` is null, so a corrected Rating counts as rated. The Rating is
+ * required here, because a stage that forgot it would look unrated on every Item.
  */
 export function evaluateActionCondition(
   condition: Condition,
   item: ConditionItem & { severity: number | null },
 ): boolean {
-  const testsRating = [...predicates(condition)].some(({ field }) => ratingFields.includes(field));
-  if (item.severity === null && testsRating) return false;
-  return evaluateCondition(condition, item);
+  return evaluateWithUnknown(condition, item) === true;
 }
