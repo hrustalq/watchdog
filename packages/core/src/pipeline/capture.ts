@@ -33,7 +33,8 @@ export async function pollSource(
   deps: PollSourceDeps,
 ): Promise<PollResult> {
   const found = await db.query.source.findFirst({ where: eq(source.id, sourceId) });
-  if (found === undefined) return { captured: 0 };
+  // Only RSS Sources poll until the other Schedule types have fetches of their own.
+  if (found?.type !== "rss" || !("url" in found.config)) return { captured: 0 };
   const fetchedAt = deps.now?.() ?? new Date();
 
   let fetched;

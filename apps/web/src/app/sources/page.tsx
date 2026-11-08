@@ -81,7 +81,13 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
 async function SourceList() {
   const { workspace } = await requireWorkspace();
   const sources = await listSources(server().db, workspace.id);
-  const scheduleLabel = (cron: string) => schedules.find((preset) => preset.cron === cron)?.label;
+  const scheduleLabel = (cron: string | null) => schedules.find((preset) => preset.cron === cron)?.label;
+  // RSS and website Sources watch a URL; the other types have none to show.
+  const urlOf = ({ config }: (typeof sources)[number]) => ("url" in config ? config.url : null);
+  const withoutUrl = (row: (typeof sources)[number], error: string) => {
+    const url = urlOf(row);
+    return url === null ? error : error.replace(url, "the feed");
+  };
 
   return (
     <section aria-labelledby="watched" className="flex flex-col gap-3">
@@ -99,7 +105,7 @@ async function SourceList() {
               <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex min-w-0 flex-col gap-1">
                   <h3 className="text-title break-words">{row.name}</h3>
-                  <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{row.config.url}</p>
+                  <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{urlOf(row)}</p>
                   <p className="text-sm text-muted-foreground">
                     {scheduleLabel(row.schedule) ?? <span className="font-mono">{row.schedule}</span>}
                     {" · "}
@@ -124,7 +130,7 @@ async function SourceList() {
                           </>
                         )}
                         : {/* The URL is on the line above; the error needn't repeat it. */}
-                        {row.lastError.replace(row.config.url, "the feed")}
+                        {withoutUrl(row, row.lastError)}
                       </span>
                     </p>
                   )}

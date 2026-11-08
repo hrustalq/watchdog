@@ -45,7 +45,8 @@ export async function startScheduler(
         where: eq(source.id, sourceId),
         columns: { schedule: true },
       });
-      if (found === undefined) return;
+      // Only Schedule types have a schedule, and only they come due.
+      if (found === undefined || found.schedule === null) return;
       await db
         .update(source)
         .set({ nextPollAt: nextPollAt(found.schedule, mode, new Date()) })

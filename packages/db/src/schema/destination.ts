@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, jsonb, pgTable, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspace } from "./workspace.ts";
 
 /**
@@ -39,6 +39,9 @@ export const destination = pgTable(
   (table) => [
     check("destination_type_check", sql`${table.type} in ('telegram', 'email', 'webhook')`),
     unique("destination_workspace_id_name_key").on(table.workspaceId, table.name),
+    // Lets health_alert_destination reference (workspace_id, id), so a Workspace can only name its
+    // own Destinations.
+    unique("destination_workspace_id_id_key").on(table.workspaceId, table.id),
   ],
 );
 
@@ -67,3 +70,27 @@ export const telegramLinkCode = pgTable("telegram_link_code", {
     .references(() => destination.id, { onDelete: "cascade" }),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
+
+/**
+ * The Workspace's Health alerts setting: the Destinations that Source failing and Source recovered
+ * alerts go to (docs: Actions and delivery, "Source Health alerts"). None means the sign-in address.
+ * A deleted Destination leaves the setting; refusing to delete the only one is the screen's job.
+ */
+export const healthAlertDestination = pgTable(
+  "health_alert_destination",
+  {
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    destinationId: uuid("destination_id").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.destinationId] }),
+    foreignKey({
+      name: "health_alert_destination_destination_fk",
+      columns: [table.workspaceId, table.destinationId],
+      foreignColumns: [destination.workspaceId, destination.id],
+    }).onDelete("cascade"),
+    index("health_alert_destination_destination_id_idx").on(table.destinationId),
+  ],
+);

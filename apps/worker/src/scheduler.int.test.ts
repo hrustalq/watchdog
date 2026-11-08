@@ -93,14 +93,14 @@ describe("scheduler", () => {
     });
     const after = await vi.waitFor(async () => {
       const found = await reload(src.id);
-      expect(found.nextPollAt.getTime()).toBeGreaterThan(before.getTime());
+      expect(found.nextPollAt?.getTime()).toBeGreaterThan(before.getTime());
       return found;
     });
     // The next quarter hour after the poll, plus at most 60 s of jitter.
     const quarter = 15 * minute;
     const nextQuarter = Math.floor(Number(after.lastPolledAt) / quarter + 1) * quarter;
-    expect(after.nextPollAt.getTime()).toBeGreaterThanOrEqual(nextQuarter);
-    expect(after.nextPollAt.getTime()).toBeLessThanOrEqual(nextQuarter + minute);
+    expect(after.nextPollAt?.getTime()).toBeGreaterThanOrEqual(nextQuarter);
+    expect(after.nextPollAt?.getTime()).toBeLessThanOrEqual(nextQuarter + minute);
     expect(fetched.filter((url) => url === src.url)).toHaveLength(1);
   });
 

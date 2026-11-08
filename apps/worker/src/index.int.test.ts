@@ -199,7 +199,7 @@ describe("worker", () => {
       const polled = await db.query.source.findFirst({ where: eq(source.id, sourceId) });
       expect(polled?.lastError).toBeNull();
       expect(polled?.lastPolledAt?.getTime()).toBeGreaterThan(added.getTime());
-      expect(polled?.nextPollAt.getTime()).toBeGreaterThan(Date.now());
+      expect(polled?.nextPollAt?.getTime()).toBeGreaterThan(Date.now());
     } finally {
       await closeDb(db);
       server.close();
