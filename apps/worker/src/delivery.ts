@@ -43,6 +43,15 @@ const queueOptions = {
   retentionSeconds: 30 * 24 * 60 * 60,
 };
 
+// sendDigest records a failed send itself, so a throw is a lost database connection. A retry after the
+// firing was claimed finds it no longer due, and one before claims it again, so a few are enough.
+const digestQueueOptions = {
+  retryLimit: 3,
+  retryBackoff: true,
+  retryDelay: 30,
+  expireInSeconds: 15 * 60,
+};
+
 /** createQueue leaves an existing queue as it was, so an upgraded install needs updateQueue too. */
 export async function createDeliveryQueue(boss: PgBoss) {
   await boss.createQueue(deliverQueue, queueOptions);
@@ -115,9 +124,10 @@ export async function startDelivery(
     }
   });
 
-  // `exclusive` with the Digest's id as the singletonKey, as a Source's poll is. sendDigest records a failed
-  // send itself, so a throw is a lost database connection, and a send that ran is no longer due.
-  await boss.createQueue(digestQueue, { ...queueOptions, policy: "exclusive" });
+  // `exclusive` with the Digest's id as the singletonKey, as a Source's poll is.
+  // A policy is fixed when the queue is made, and updateQueue refuses one.
+  await boss.createQueue(digestQueue, { ...digestQueueOptions, policy: "exclusive" });
+  await boss.updateQueue(digestQueue, digestQueueOptions);
   await boss.work<{ actionId: string }>(digestQueue, { localConcurrency: 5 }, async ([job]) => {
     if (job === undefined) return;
     const { actionId } = job.data;

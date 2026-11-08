@@ -2,6 +2,7 @@
 // client's one-click unsubscribe POSTs to it with no session (RFC 8058). A GET changes nothing and
 // shows a button, because mail gateways fetch every link on delivery. A route handler, not a page,
 // because the POST comes from a mail client, not from a form Next rendered.
+import { checkUnsubscribeToken } from "@watchdog/core";
 import type { NextRequest } from "next/server";
 import { server } from "@/lib/server";
 import { unsubscribe, type UnsubscribeResult } from "@/lib/unsubscribe";
@@ -15,7 +16,8 @@ const style = `
 body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 4rem 1rem; box-sizing: border-box;
   background: var(--bg); color: var(--fg); font: 0.875rem/1.5 ui-sans-serif, system-ui, sans-serif; }
 main { width: 100%; max-width: 24rem; display: flex; flex-direction: column; gap: 1.5rem; }
-h1 { margin: 0; font-size: 1.5rem; font-weight: 650; line-height: 1.2; }
+h1 { margin: 0; font-size: 1.5rem; font-weight: 650; line-height: 1.2; letter-spacing: -0.02em; }
+.brand { margin: 0; color: var(--fg); font-size: 1rem; font-weight: 600; letter-spacing: -0.01em; }
 p { margin: 0.25rem 0 0; color: var(--muted); }
 button { font: inherit; font-weight: 500; height: 2.25rem; padding: 0 1rem; border: 0; border-radius: 0.5rem;
   background: var(--primary); color: var(--on-primary); cursor: pointer; }
@@ -27,7 +29,7 @@ function page(status: number, title: string, text: string, form = "") {
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex">
 <title>${title} · Watchdog</title><style>${style}</style></head>
-<body><main><div><h1>${title}</h1><p>${text}</p></div>${form}</main></body></html>`;
+<body><main><p class="brand">Watchdog</p><div><h1>${title}</h1><p>${text}</p></div>${form}</main></body></html>`;
   return new Response(html, {
     status,
     // The URL holds the token, which no other site should get in a Referer.
@@ -47,9 +49,10 @@ const outcomes: Record<Exclude<UnsubscribeResult, "invalid">, [string, string]> 
 };
 
 export function GET(request: NextRequest) {
-  const token = request.nextUrl.searchParams.get("token") ?? "";
-  // The signature is checked here only to say early that the link is broken. The POST checks it again.
-  if (!/^[\w-]+\.[\w-]+\.[\w-]+$/.test(token)) return invalid();
+  // Checked here only to say at once that a cut-off link is broken. Nothing changes until the POST.
+  if (checkUnsubscribeToken(request.nextUrl.searchParams.get("token") ?? "", server().authSecret) === undefined) {
+    return invalid();
+  }
   // With no action, the form posts back to this URL, token and all.
   return page(
     200,

@@ -94,12 +94,12 @@ describe("Digests", () => {
       })
       .returning();
     const actionId = present(digest).id;
+    const listed = [inbox];
+    /** Points the Digest at another Destination too. */
     const point = async (destinationId: string) => {
+      listed.push(destinationId);
       await db.insert(actionDestination).values({ actionId, destinationId });
-      await db
-        .update(action)
-        .set({ definition: { ...definition, destinations: [inbox, destinationId] }, updatedAt: saved })
-        .where(eq(action.id, actionId));
+      await db.update(action).set({ definition: { ...definition, destinations: listed }, updatedAt: saved }).where(eq(action.id, actionId));
     };
     await db.insert(actionDestination).values({ actionId, destinationId: inbox });
 
@@ -225,23 +225,64 @@ describe("Digests", () => {
     expect(sent[0]?.message.lines).toHaveLength(50);
   });
 
-  it("skips an unconfirmed Destination and says so, and keeps a failed one's Items only when nothing went", async () => {
+  it("keeps the Items when nothing went, and writes only the failure, with the next Digest's time", async () => {
     const { actionId, inbox, addDestination, point, collect, logOf, pending } = await seed();
-    const waiting = await addDestination("waiting", { confirmedAt: null });
-    await point(waiting);
+    await point(await addDestination("waiting", { confirmedAt: null }));
     const itemId = await collect();
     const { sent, senders } = recordingSenders(["inbox"]);
 
     await sendDigest(db, actionId, deps(senders, eightInMoscow));
 
     expect(sent).toEqual([]);
-    expect((await logOf(itemId)).map(({ message }) => message).sort()).toEqual([
-      "Sending the Digest Morning to inbox failed: the mail server can't be reached. It waits for the next Digest",
-      "Skipped waiting in the Digest Morning: not confirmed yet",
+    expect((await logOf(itemId)).map(({ message }) => message)).toEqual([
+      "Sending the Digest Morning to inbox failed: the mail server can't be reached. It waits for the next Digest, at 08:00 (Europe/Moscow)",
     ]);
     expect(await pending()).toBe(1);
     const [failed] = await db.select({ lastError: destination.lastError }).from(destination).where(eq(destination.id, inbox));
     expect(failed?.lastError).toBe("the mail server can't be reached");
+    // Its place in the hosted count is given back.
+    expect(await db.$count(sentMessage, eq(sentMessage.destinationId, inbox))).toBe(0);
+  });
+
+  it("writes a failed and a skipped Destination once when another got the Digest, and the Items leave it", async () => {
+    const { actionId, addDestination, point, collect, logOf, pending } = await seed();
+    await point(await addDestination("backup"));
+    await point(await addDestination("waiting", { confirmedAt: null }));
+    const itemId = await collect();
+    const { sent, senders } = recordingSenders(["backup"]);
+
+    await sendDigest(db, actionId, deps(senders, eightInMoscow));
+
+    expect(sent.map(({ to }) => to)).toEqual(["inbox"]);
+    expect((await logOf(itemId)).map(({ message }) => message).sort()).toEqual([
+      "Sending the Digest Morning to backup failed: the mail server can't be reached. It won't be sent again",
+      "Sent in the Digest Morning to inbox",
+      "Skipped waiting in the Digest Morning: not confirmed yet",
+    ]);
+    expect(await pending()).toBe(0);
+  });
+
+  it("is held by the hosted cap when the day has no room for a mail to each address, and sends when it has", async () => {
+    const { workspaceId, actionId, inbox, addDestination, point, collect, pending } = await seed();
+    await point(await addDestination("backup"));
+    await collect();
+    const sentToday = (count: number) =>
+      db.insert(sentMessage).values(
+        Array.from({ length: count }, () => ({ workspaceId, destinationId: inbox, type: "email" as const, sentAt: eightInMoscow })),
+      );
+    const emailCap = { queueNotice: () => Promise.resolve() };
+    const { sent, senders } = recordingSenders();
+
+    await sentToday(49);
+    await sendDigest(db, actionId, deps(senders, eightInMoscow, { emailCap }));
+    expect(sent).toEqual([]);
+    expect(await pending()).toBe(1);
+
+    await db.delete(sentMessage).where(eq(sentMessage.workspaceId, workspaceId));
+    await sentToday(48);
+    await sendDigest(db, actionId, deps(senders, eightInMoscow, { emailCap }));
+    expect(sent).toHaveLength(2);
+    expect(await db.$count(sentMessage, eq(sentMessage.workspaceId, workspaceId))).toBe(50);
   });
 
   it("holds a Digest whose mail the hosted cap would pass, and queues the notice", async () => {

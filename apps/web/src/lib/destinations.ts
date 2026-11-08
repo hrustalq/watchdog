@@ -350,6 +350,10 @@ export async function actionNames(db: Db, workspaceId: string, actionIds: string
  * Its Deliveries go with it, because their foreign key would refuse the delete. The Log keeps what was
  * sent, and gets a row for each alert that now never will be.
  */
+/** An Action's definition with a Destination taken out of its `destinations`, as an update writes it. */
+export const definitionWithout = (destinationId: string) =>
+  sql`jsonb_set(${action.definition}, '{destinations}', coalesce(${action.definition}->'destinations', '[]'::jsonb) - ${destinationId}::text)`;
+
 export async function removeDestination(db: Db, workspaceId: string, destinationId: string) {
   if (!isUuid(destinationId)) return undefined;
   return db.transaction(async (tx) => {
@@ -381,7 +385,7 @@ export async function removeDestination(db: Db, workspaceId: string, destination
       await tx
         .update(action)
         .set({
-          definition: sql`jsonb_set(${action.definition}, '{destinations}', coalesce(${action.definition}->'destinations', '[]'::jsonb) - ${destinationId}::text)`,
+          definition: definitionWithout(destinationId),
           // The Act stage only fires an Action saved before an Item's capture. This isn't a save, and moving
           // the time would silently skip Items already captured and still in the pipeline.
           updatedAt: sql`${action.updatedAt}`,

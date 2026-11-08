@@ -61,14 +61,14 @@ describe("unsubscribing from a Digest", () => {
 
   it("removes that Destination from that Digest without a session, leaving the rest and updated_at", async () => {
     const { ids, tokenFor, digestRow, pointsAt } = await seed(["work", "home"]);
-    const [work, home] = ids as [string, string];
+    const [work, home] = [present(ids[0]), present(ids[1])];
 
     expect(await unsubscribe(db, tokenFor(work), secret)).toBe("removed");
 
     expect(await pointsAt()).toEqual([home]);
     const row = await digestRow();
     expect(row).toMatchObject({ enabled: true, updatedAt: saved });
-    expect((row.definition as { destinations: string[] }).destinations).toEqual([home]);
+    expect(row.definition).toMatchObject({ destinations: [home] });
     // A second press finds nothing to do.
     expect(await unsubscribe(db, tokenFor(work), secret)).toBe("already");
   });

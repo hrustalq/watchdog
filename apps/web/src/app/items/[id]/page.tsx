@@ -375,13 +375,27 @@ function ActionsSection({
                   );
                 })}
                 {row.digestSent.map((sent) => (
-                  <li key={`${sent.destination} ${sent.at.toISOString()}`} className="flex items-start gap-2">
-                    <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor("sent", false)}`} />
+                  <li
+                    key={`${sent.destination} ${sent.at.toISOString()}`}
+                    className={`flex items-start gap-2 ${sent.failed ? "text-alarm" : ""}`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor(sent.failed ? "failed" : "sent", sent.failed)}`}
+                    />
                     <span className="min-w-0 break-words">
-                      {sent.destination}
-                      <span className="text-muted-foreground">
-                        {" · Sent in the Digest at "}
-                        <Timestamp at={sent.at} />
+                      {sent.failed ? (
+                        <Link href="/destinations" className={inlineLink}>
+                          {sent.destination}
+                        </Link>
+                      ) : (
+                        sent.destination
+                      )}
+                      <span className={sent.failed ? "" : "text-muted-foreground"}>
+                        {sent.failed
+                          ? ` · Not sent in the Digest: ${(sent.reason ?? "no reason was recorded").replace(/\.$/, "")}. No more retries`
+                          : " · Sent in the Digest at "}
+                        {sent.failed ? null : <Timestamp at={sent.at} />}
                       </span>
                     </span>
                   </li>

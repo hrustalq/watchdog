@@ -2,6 +2,7 @@
 // "The unsubscribe URL"). No session: the token's signature is the check.
 import { checkUnsubscribeToken } from "@watchdog/core";
 import { action, actionDestination, and, type Db, eq, sql } from "@watchdog/db";
+import { definitionWithout } from "./destinations.ts";
 
 export type UnsubscribeResult = "invalid" | "removed" | "disabled" | "already";
 
@@ -40,7 +41,7 @@ export async function unsubscribe(db: Db, token: string, secret: string): Promis
     await tx
       .update(action)
       .set({
-        definition: sql`jsonb_set(${action.definition}, '{destinations}', coalesce(${action.definition}->'destinations', '[]'::jsonb) - ${destinationId}::text)`,
+        definition: definitionWithout(destinationId),
         ...notASave,
       })
       .where(eq(action.id, actionId));
