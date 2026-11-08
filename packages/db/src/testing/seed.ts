@@ -8,6 +8,15 @@ export function only<T>(rows: T[]): T {
   return row;
 }
 
+/** An RSS Source row for a Workspace. */
+export const rssSource = (workspaceId: string) => ({
+  workspaceId,
+  type: "rss" as const,
+  name: "Blog",
+  config: { url: "https://example.com/feed.xml" },
+  schedule: "*/15 * * * *",
+});
+
 /**
  * A user with a Workspace, one RSS Source and one Item. Ids and emails carry a random suffix, so
  * tests sharing one database don't collide.
@@ -20,29 +29,11 @@ export async function seed(db: Db) {
   const ws = only(
     await db.insert(workspace).values({ name: "Workspace", ownerUserId: owner.id }).returning(),
   );
-  const src = only(
-    await db
-      .insert(source)
-      .values({
-        workspaceId: ws.id,
-        type: "rss",
-        name: "Blog",
-        config: { url: "https://example.com/feed.xml" },
-        schedule: "*/15 * * * *",
-      })
-      .returning(),
-  );
+  const src = only(await db.insert(source).values(rssSource(ws.id)).returning());
   const captured = only(
     await db
       .insert(item)
-      .values({
-        workspaceId: ws.id,
-        sourceId: src.id,
-        externalId: "guid-1",
-        title: "First post",
-        body: "Hello",
-        raw: { guid: "guid-1" },
-      })
+      .values({ workspaceId: ws.id, sourceId: src.id, externalId: "guid-1", body: "Hello", raw: {} })
       .returning(),
   );
   return { owner, workspace: ws, source: src, item: captured };

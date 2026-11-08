@@ -4,15 +4,7 @@ import { closeDb, createDb, type Db } from "./client.ts";
 import { migrate } from "./migrate.ts";
 import { item, itemLog, source, user, workspace } from "./schema/index.ts";
 import { migrateFirst, startPostgres, type TestPostgres } from "./testing/postgres.ts";
-import { only, seed } from "./testing/seed.ts";
-
-const newSource = (workspaceId: string) => ({
-  workspaceId,
-  type: "rss" as const,
-  name: "Blog",
-  config: { url: "https://example.com/feed.xml" },
-  schedule: "*/15 * * * *",
-});
+import { only, rssSource, seed } from "./testing/seed.ts";
 
 /** The shared seed, plus the capture Log row its Item gets when the worker captures it. */
 async function seedCaptured(db: Db) {
@@ -36,7 +28,7 @@ describe("Source, Item and Log tables", () => {
   }, 120_000);
 
   it("keeps one Item when the same (source_id, external_id) is inserted again", async () => {
-    const seeded = await seedCaptured(db);
+    const seeded = await seed(db);
 
     const again = await db
       .insert(item)
@@ -53,12 +45,12 @@ describe("Source, Item and Log tables", () => {
 
     expect(again).toEqual([]);
     const rows = await db.select().from(item).where(eq(item.sourceId, seeded.source.id));
-    expect(rows.map((row) => row.title)).toEqual(["First post"]);
+    expect(rows.map((row) => row.title)).toEqual([seeded.item.title]);
   });
 
   it("refuses an Item whose workspace_id isn't its Source's Workspace", async () => {
-    const a = await seedCaptured(db);
-    const b = await seedCaptured(db);
+    const a = await seed(db);
+    const b = await seed(db);
 
     await expect(
       db.insert(item).values({
@@ -86,7 +78,7 @@ describe("Source, Item and Log tables", () => {
   });
 
   it("serves a keyset Feed page from item_feed_idx without sorting", async () => {
-    const seeded = await seedCaptured(db);
+    const seeded = await seed(db);
 
     // Tiny tables make a seq scan cheapest, so forbid it to see which index the order can use.
     const plan = await db.transaction(async (tx) => {
@@ -111,7 +103,7 @@ describe("Source, Item and Log tables", () => {
     ["importance", 6],
     ["importance", 0],
   ])("refuses a %s of %i", async (axis, value) => {
-    const seeded = await seedCaptured(db);
+    const seeded = await seed(db);
 
     await expect(
       db.update(item).set({ [axis]: value }).where(eq(item.id, seeded.item.id)),
@@ -119,7 +111,7 @@ describe("Source, Item and Log tables", () => {
   });
 
   it("stores a Rating from 1 to 5, and an Item starts unrated", async () => {
-    const seeded = await seedCaptured(db);
+    const seeded = await seed(db);
     expect(seeded.item).toMatchObject({ severity: null, importance: null });
 
     const [low] = await db
@@ -180,7 +172,7 @@ describe("Source, Item and Log tables", () => {
     const upgraded = createDb(url.href);
     try {
       const ws = only(await upgraded.select().from(workspace));
-      const src = only(await upgraded.insert(source).values(newSource(ws.id)).returning());
+      const src = only(await upgraded.insert(source).values(rssSource(ws.id)).returning());
       expect(src.nextPollAt).toBeInstanceOf(Date);
     } finally {
       await closeDb(upgraded);
