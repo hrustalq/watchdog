@@ -11,7 +11,9 @@ import { promisify } from "node:util";
 const run = promisify(execFile);
 
 async function compose(...args: string[]) {
-  const { stdout } = await run("docker", ["compose", "--project-name", "watchdog-smoke", ...args]);
+  // The default 1 MiB would cut off a long run's whole log.
+  const options = { maxBuffer: 64 * 1024 * 1024 };
+  const { stdout } = await run("docker", ["compose", "--project-name", "watchdog-smoke", ...args], options);
   return stdout;
 }
 
@@ -32,10 +34,10 @@ async function linkFromWebLog(what: string, find: (log: string) => string | unde
 export const setupLink = () =>
   linkFromWebLog("setup link", (log) => log.match(/^https?:\/\/\S+\/setup\?token=\S+$/gm)?.at(-1));
 
-/** The last mail in `log` to `address`, up to the next mail. */
-function lastMail(log: string, address: string) {
-  const start = log.lastIndexOf(`To: ${address}\n`);
-  return start === -1 ? undefined : log.slice(start).split("SMTP is not configured")[0];
+/** Every mail in `log` to `address`, oldest first. */
+function mailsTo(log: string, address: string) {
+  const mails = log.split("SMTP is not configured, so this mail is printed instead of sent.\n");
+  return mails.filter((mail) => mail.startsWith(`To: ${address}\n`));
 }
 
 // A link works once, and Docker can take a moment to pass a new line to the log.
@@ -44,7 +46,7 @@ const returned = new Set<string>();
 /** The link to `path` in the last mail web printed to `address`, once it isn't one this returned before. */
 async function mailedLink(what: string, address: string, path: string) {
   const link = await linkFromWebLog(`${what} for ${address} (with SMTP set in .env, it was mailed instead)`, (log) => {
-    const found = new RegExp(`https?://\\S+${path}\\?\\S+`).exec(lastMail(log, address) ?? "")?.[0];
+    const found = new RegExp(`https?://\\S+${path}\\?\\S+`).exec(mailsTo(log, address).at(-1) ?? "")?.[0];
     return found === undefined || returned.has(found) ? undefined : found;
   });
   returned.add(link);
@@ -55,8 +57,8 @@ export const magicLink = (email: string) => mailedLink("magic link", email, "/si
 
 export const confirmationLink = (address: string) => mailedLink("confirmation link", address, "/destinations/confirm");
 
-/** The last mail the worker printed to `address`, which is an alert or a Digest. */
-export const lastWorkerMail = async (address: string) => lastMail(await logOf("worker"), address);
+/** Every mail the worker printed to `address`: alerts and Digests. */
+export const workerMailsTo = async (address: string) => mailsTo(await logOf("worker"), address);
 
 // The fake Bot API (fixtures/fake-telegram.mjs) publishes no port, so the test reaches it from inside.
 const fakeTelegram = (...args: string[]) =>
@@ -81,12 +83,15 @@ export async function publishEntry(name: "first" | "second") {
   await compose("exec", "-T", "fixtures", "touch", `/srv/published/${name}`);
 }
 
+/** A feed the fixtures container serves, at the address a Source is added with. */
+export const fixtureFeed = (path: string) => `http://fixtures/${path}`;
+
 /**
- * Makes the Source of `url` due, so the worker's tick polls it within a minute. Its schedule waits at
- * least 5 minutes between polls, and two such waits would use up most of the CI job's time.
+ * Makes the Source of the fixture feed at `path` due, so the worker's tick polls it within a minute. Its
+ * schedule waits at least 5 minutes between polls, and two such waits would use up most of the CI job's time.
  */
-export async function pollNow(url: string) {
-  const sql = `update source set next_poll_at = now() where config->>'url' = '${url}'`;
+export async function pollNow(path: string) {
+  const sql = `update source set next_poll_at = now() where config->>'url' = '${fixtureFeed(path)}'`;
   const said = await compose("exec", "-T", "postgres", "psql", "-U", "watchdog", "-d", "watchdog", "-c", sql);
-  if (!said.includes("UPDATE 1")) throw new Error(`No Source has the feed ${url}: psql said ${said}`);
+  if (!/^UPDATE 1$/m.test(said)) throw new Error(`Not one Source has the feed ${path}: psql said ${said}`);
 }

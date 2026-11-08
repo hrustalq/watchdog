@@ -2,12 +2,13 @@ import { expect, type Page, test } from "@playwright/test";
 import {
   botMessages,
   confirmationLink,
-  lastWorkerMail,
+  fixtureFeed,
   magicLink,
   pollNow,
   publishEntry,
   sendToBot,
   setupLink,
+  workerMailsTo,
 } from "./stack.ts";
 
 // The first test claims the install, and a test running beside it would race it for the setup link.
@@ -75,7 +76,7 @@ async function saveRule(page: Page) {
 
 /** On the Sources screen, adds a feed from the fixtures container (compose.smoke.yaml). */
 async function addRssSource(page: Page, path: string) {
-  const url = `http://fixtures/${path}`;
+  const url = fixtureFeed(path);
   // The page shows a copy of the form until the streamed one replaces it, and that drops what
   // was typed into the copy, so the browser refuses the empty field. A repeat after a submit that
   // went through says the feed is already watched, so a retry can't hide a failure.
@@ -478,7 +479,8 @@ test("a Correction changes the Rating the Agent gives a later, similar Item", as
 // (compose.smoke.yaml), and mail goes to the worker's log, because the install has no mail server. The
 // fake model rates an Item whose title says "outage" Severity 5. Backfill Items never fire Actions, so
 // the feed's alerting entries appear after the Backfill, and the test asks for each poll rather than
-// wait out the Source's schedule. It runs before the rate limit test below, which uses up the sign-in bucket.
+// wait out the Source's schedule. The model is the one the M2 test added, so it runs after that test, and
+// before the rate limit test below, which uses up the sign-in bucket.
 test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours hold the next one", async ({ page }) => {
   // Three polls, each waiting for the worker's tick, and the Feed's refresh after two of them.
   test.setTimeout(480_000);
@@ -492,6 +494,7 @@ test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours ho
   const log = itemLog(page);
   const actions = page.getByRole("region", { name: "Actions", exact: true });
   const botSent = async (text: string) => (await botMessages()).filter((sent) => sent.includes(text));
+  const mailed = async (text: string) => (await workerMailsTo(address)).filter((mail) => mail.includes(text));
 
   /** Opens the Item from the Feed at its link's address, because a click while the rows settle does nothing. */
   const openItem = async (title: string) => {
@@ -546,15 +549,15 @@ test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours ho
 
   await test.step("a Severity 5 Item sends one Telegram alert and one mail, and its Log says so", async () => {
     await publishEntry("first");
-    await pollNow(`http://fixtures/${feed}`);
+    await pollNow(feed);
     await expect.poll(() => botSent(alerted), { ...untilPolled, message: "no Telegram alert arrived" }).toHaveLength(1);
-    await expect.poll(() => lastWorkerMail(address), { message: "no alert mail arrived" }).toContain(alerted);
+    await expect.poll(() => mailed(alerted), { message: "no alert mail arrived" }).toHaveLength(1);
     await openItem(alerted);
     await untilActionsSay(`${chat} · Sent`);
     await expect(actions).toContainText(`${inbox} · Sent`);
     const link = page.url();
     expect((await botSent(alerted))[0]).toContain(link);
-    expect(await lastWorkerMail(address)).toContain(link);
+    expect((await mailed(alerted))[0]).toContain(link);
     await expect(log.filter({ hasText: "Action Outage alerts fired" })).toContainText("Severity is at least 4");
     await expect(log.filter({ hasText: `Sent to ${chat}` })).toHaveCount(1);
     await expect(log.filter({ hasText: `Sent to ${inbox}` })).toHaveCount(1);
@@ -571,13 +574,15 @@ test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours ho
     await expect(page.getByRole("status").filter({ hasText: "Settings saved." })).toBeVisible();
 
     await publishEntry("second");
-    await pollNow(`http://fixtures/${feed}`);
+    await pollNow(feed);
     await page.getByRole("link", { name: "Workspace" }).click();
     await openItem(held);
     await untilActionsSay(`${chat} · Held until`);
     await expect(actions).toContainText(`${inbox} · Held until`);
     expect(await botSent(held)).toHaveLength(0);
+    expect(await mailed(held)).toHaveLength(0);
     expect(await botSent(alerted), "the first Item's alert went more than once").toHaveLength(1);
+    expect(await mailed(alerted), "the first Item's mail went more than once").toHaveLength(1);
   });
 });
 
