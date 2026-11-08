@@ -205,6 +205,20 @@ describe("createEgressFetch", () => {
     expect(await response.text()).toBe("ok");
   });
 
+  it("names Watchdog and its version in the User-Agent when the caller sets none", async () => {
+    await open()(reach("/ok"));
+    expect(requests.at(-1)?.headers["user-agent"]).toMatch(
+      /^Watchdog\/\d+\.\d+\.\d+ \(\+https:\/\/github\.com\/hrustalq\/watchdog\)$/,
+    );
+  });
+
+  it("sends the caller's own User-Agent, across a redirect to another origin too", async () => {
+    const before = requests.length;
+    await open()(reach("/to-other"), { headers: { "User-Agent": "Custom/1" } });
+    const sent = requests.slice(before).map((r) => r.headers["user-agent"]);
+    expect(sent).toEqual(["Custom/1", "Custom/1"]);
+  });
+
   it("fetches an allowlisted address on self-hosted and refuses it on hosted", async () => {
     const response = await createEgressFetch(selfHosted("127.0.0.1"))(reach("/ok", "127.0.0.1"));
     expect(await response.text()).toBe("ok");

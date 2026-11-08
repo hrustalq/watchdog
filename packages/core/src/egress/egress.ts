@@ -5,6 +5,7 @@ import { lookup as dnsLookup } from "node:dns/promises";
 import { BlockList, isIP, type LookupFunction } from "node:net";
 import { TransformStream } from "node:stream/web";
 import { Agent, fetch, Headers, type RequestInit, Response } from "undici";
+import rootPackage from "../../../../package.json" with { type: "json" };
 import type { Config } from "../config.ts";
 
 /** One EGRESS_ALLOWLIST entry: a host name, or an IP address or CIDR as a subnet. */
@@ -34,6 +35,9 @@ export interface EgressOptions {
   timeoutMs?: number;
   maxBytes?: number;
 }
+
+/** Sent on every request whose caller sets no User-Agent, so robots.txt rules can name Watchdog. */
+const userAgent = `Watchdog/${rootPackage.version} (+https://github.com/hrustalq/watchdog)`;
 
 const maxRedirects = 5;
 const crossOriginHeaders = new Set([
@@ -166,7 +170,9 @@ export function createEgressFetch(
 
   return async function egressFetch(input: string | URL, init: RequestInit = {}) {
     let url = new URL(input);
-    let request = init;
+    const initHeaders = new Headers(init.headers);
+    if (!initHeaders.has("user-agent")) initHeaders.set("user-agent", userAgent);
+    let request: RequestInit = { ...init, headers: initHeaders };
     const timer = new AbortController();
     setTimeout(() => {
       timer.abort(new EgressLimitError(`${url.hostname} took longer than ${String(timeoutMs)} ms`));
