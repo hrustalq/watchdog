@@ -374,6 +374,18 @@ function ActionsSection({
                     </li>
                   );
                 })}
+                {row.digestSent.map((sent) => (
+                  <li key={`${sent.destination} ${sent.at.toISOString()}`} className="flex items-start gap-2">
+                    <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor("sent", false)}`} />
+                    <span className="min-w-0 break-words">
+                      {sent.destination}
+                      <span className="text-muted-foreground">
+                        {" · Sent in the Digest at "}
+                        <Timestamp at={sent.at} />
+                      </span>
+                    </span>
+                  </li>
+                ))}
                 {row.digestTo.map((name) => (
                   <li key={name} className="flex items-start gap-2">
                     <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor("queued", false)}`} />

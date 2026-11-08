@@ -53,7 +53,8 @@ describe("Digests", () => {
     const sender: Sender = {
       send: (target: Destination, message) => {
         if (failing.includes(target.name)) return Promise.reject(new Error("the mail server can't be reached"));
-        sent.push({ to: target.name, message: message as GroupedAlert });
+        if (!("lines" in message)) throw new Error("A Digest is sent as a list");
+        sent.push({ to: target.name, message });
         return Promise.resolve();
       },
     };
@@ -80,13 +81,14 @@ describe("Digests", () => {
       return present(row).id;
     };
     const inbox = await addDestination("inbox");
+    const definition = { action: "Morning", when: { field: "severity", op: "gte", value: 1 }, kind: "digest", schedule: "0 8 * * *" };
     const [digest] = await db
       .insert(action)
       .values({
         workspaceId,
         name: "Morning",
         kind: "digest",
-        definition: { action: "Morning", when: { field: "severity", op: "gte", value: 1 }, kind: "digest", schedule: "0 8 * * *", destinations: [inbox] },
+        definition: { ...definition, destinations: [inbox] },
         createdAt: saved,
         updatedAt: saved,
       })
@@ -96,7 +98,7 @@ describe("Digests", () => {
       await db.insert(actionDestination).values({ actionId, destinationId });
       await db
         .update(action)
-        .set({ definition: { ...(present(digest).definition as object), destinations: [inbox, destinationId] }, updatedAt: saved })
+        .set({ definition: { ...definition, destinations: [inbox, destinationId] }, updatedAt: saved })
         .where(eq(action.id, actionId));
     };
     await db.insert(actionDestination).values({ actionId, destinationId: inbox });
@@ -186,10 +188,7 @@ describe("Digests", () => {
       destinationId: inbox,
     });
     expect(await logOf(high)).toEqual([
-      {
-        message: "Sent in the Digest Morning to inbox",
-        data: expect.objectContaining({ actionId, destinationId: inbox, destination: "inbox", digest: "sent" }) as unknown,
-      },
+      { message: "Sent in the Digest Morning to inbox", data: { actionId, destinationId: inbox, destination: "inbox", digest: "sent" } },
     ]);
     expect(await pending()).toBe(0);
     expect(await db.$count(sentMessage, eq(sentMessage.destinationId, inbox))).toBe(1);

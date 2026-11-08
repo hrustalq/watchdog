@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { createEgressFetch, deliver, loadConfig, pollSource, processItem } from "@watchdog/core";
+import { createEgressFetch, deliver, loadConfig, pollSource, processItem, sendDigest } from "@watchdog/core";
 import { fakeLlm } from "@watchdog/core/testing";
 import {
   action,
@@ -712,6 +712,21 @@ describe("Feed", () => {
       ]);
       expect(await itemActions(db, (await seed()).workspaceId, itemId)).toEqual([]);
       expect(await itemActions(db, seeded.workspaceId, "not-a-uuid")).toEqual([]);
+    });
+
+    it("still lists a Digest after it sends, with each Destination it went to and when", async () => {
+      const { seeded, actionId } = await withAction("digest");
+      // Saved two weeks ago, so its weekly schedule has come.
+      await db.update(action).set({ updatedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) }).where(eq(action.id, actionId));
+      const [itemId = ""] = await insertItems(seeded, [{ title: "A launch" }]);
+      await processItem(db, itemId, pipelineDeps);
+      const sentAt = new Date();
+
+      await sendDigest(db, actionId, { ...deliverDeps, secret: "a-better-auth-secret-of-at-least-32-chars", now: () => sentAt });
+
+      const [fired] = await itemActions(db, seeded.workspaceId, itemId);
+      expect(fired).toMatchObject({ name: "Weekly", deliveries: [], digestTo: [], digestSent: [{ destination: "Team inbox" }] });
+      expect(present(present(fired).digestSent[0]).at.getTime()).toBeGreaterThan(sentAt.getTime() - 60_000);
     });
   });
 });

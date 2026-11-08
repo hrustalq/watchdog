@@ -346,7 +346,8 @@ describe("the deliver queue", () => {
       return { itemId, actionId };
     }
     const digestJobs = async (actionId: string) =>
-      (await db.$client.query("select id from pgboss.job where name = $1 and singleton_key = $2", [digestQueue, actionId])).rows;
+      (await db.$client.query<{ id: string }>("select id from pgboss.job where name = $1 and singleton_key = $2", [digestQueue, actionId]))
+        .rows;
 
     it("queues one job for a due Digest however many sweeps run, and its job sends it once", async () => {
       const { itemId, actionId } = await seedDigest();
