@@ -7,8 +7,10 @@ import { maxBodyBytes } from "../item.ts";
 import { fetchFeed } from "./fetch-feed.ts";
 
 // Real feeds recorded on 2026-11-03 (google-alerts.atom on 2026-11-08) and trimmed to their first
-// three entries. The Google Alerts feed's account and alert IDs are placeholders, including the
-// alert ID inside each link's cd= parameter.
+// three entries. In google-alerts.atom the account and alert IDs are placeholder digits, and so is
+// the alert's 16-hex hash inside each link's base64 cd= parameter. Its titles and content are HTML
+// with the matched term in <b>, links go through a google.com/url redirect, and author names are
+// empty.
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url));
 
 const rss = (items: string) =>
@@ -159,8 +161,10 @@ describe("fetchFeed", () => {
         "OpenAI says GPT-6 Cyber found 81 Firefox flaws, and Mozilla has started shipping fixes",
       author: null,
       publishedAt: "2026-11-08T18:50:24.000Z",
+      // The whole body: the <b> markup, the double-escaped &nbsp; and Google's trailing "...".
       bodyStart:
-        "OpenAI says its new cybersecurity model helped researchers find 81 previously unknown",
+        "OpenAI says its new cybersecurity model helped researchers find 81 previously unknown " +
+        "Firefox vulnerabilities that Mozilla classified as high ...",
     },
     {
       fixture: "wordpress-news.rss",
