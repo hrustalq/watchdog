@@ -28,7 +28,7 @@ function feedHref(latest: boolean, edit: boolean, before?: string) {
 }
 
 export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
-  const [{ user, workspace, admin }, params] = await Promise.all([requireWorkspace(), searchParams]);
+  const [{ user, workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
   const latest = params.view === "latest";
   const edit = params.edit === "1";
   // A malformed cursor is ignored, so the page is the view's first one and keeps refreshing.
@@ -61,7 +61,7 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
         {/* Below md the links would crush the name, so they and Sign out wait behind the menu. */}
         <nav aria-label="Workspace" className="shrink-0 md:hidden">
           <HeaderMenu>
-            <HeaderLinks admin={admin} />
+            <HeaderLinks />
             <form action={signOut} className="mt-1 border-t pt-1">
               <Button type="submit" variant="ghost" className="w-full justify-start">
                 Sign out
@@ -70,7 +70,7 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
           </HeaderMenu>
         </nav>
         <nav aria-label="Workspace" className="hidden shrink-0 items-center gap-3 md:flex">
-          <HeaderLinks admin={admin} />
+          <HeaderLinks />
         </nav>
         <form action={signOut} className="hidden shrink-0 md:block">
           <Button type="submit" variant="outline">
@@ -130,8 +130,8 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
   );
 }
 
-function HeaderLinks({ admin }: { admin: boolean }) {
-  const links = ["Sources", "Rules", "Destinations", "Profile", "Model", "Usage", ...(admin ? ["Settings"] : [])];
+function HeaderLinks() {
+  const links = ["Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings"];
   return links.map((label) => (
     <Link key={label} href={`/${label.toLowerCase()}`} className={buttonVariants({ variant: "ghost" })}>
       {label}

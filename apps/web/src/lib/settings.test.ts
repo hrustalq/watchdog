@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { type AlertSettingsForm, parseAlertSettings, quietHoursSentence, timezones } from "./settings.ts";
+import {
+  type AlertSettingsForm,
+  alertSettingsQuery,
+  parseAlertSettings,
+  quietHoursSentence,
+  readAlertSettingsForm,
+  timezones,
+} from "./settings.ts";
 
 const form = (values: Partial<AlertSettingsForm> = {}): AlertSettingsForm => ({
   timezone: "Europe/Moscow",
@@ -11,6 +18,12 @@ const form = (values: Partial<AlertSettingsForm> = {}): AlertSettingsForm => ({
   burstWindowSeconds: "60",
   ...values,
 });
+
+/** The fields a form was refused on, or "saved". */
+function refusedOn(posted: AlertSettingsForm) {
+  const result = parseAlertSettings(posted);
+  return "errors" in result ? Object.keys(result.errors).sort() : "saved";
+}
 
 describe("parseAlertSettings", () => {
   it("reads a valid form as the Workspace's columns", () => {
@@ -45,17 +58,15 @@ describe("parseAlertSettings", () => {
   });
 
   it.each(["Mars/Olympus", "", "+03:00", "Europe/Moscow "])("refuses the timezone %j beside its field", (timezone) => {
-    expect(parseAlertSettings(form({ timezone }))).toEqual({ errors: { timezone: expect.any(String) } });
+    expect(refusedOn(form({ timezone }))).toEqual(["timezone"]);
   });
 
   it.each(["25:00", "7:00", "07:60", "07:00:00", "", "noon"])("refuses the start time %j beside its field", (start) => {
-    expect(parseAlertSettings(form({ quietHoursStart: start }))).toEqual({
-      errors: { quietHoursStart: expect.any(String) },
-    });
+    expect(refusedOn(form({ quietHoursStart: start }))).toEqual(["quietHoursStart"]);
   });
 
   it("refuses an end time equal to the start, which would be no window at all", () => {
-    expect(parseAlertSettings(form({ quietHoursEnd: "22:00" }))).toEqual({ errors: { quietHoursEnd: expect.any(String) } });
+    expect(refusedOn(form({ quietHoursEnd: "22:00" }))).toEqual(["quietHoursEnd"]);
   });
 
   it.each([
@@ -68,7 +79,7 @@ describe("parseAlertSettings", () => {
     ["burstWindowSeconds", "601"],
     ["burstWindowSeconds", " 60"],
   ] as const)("refuses %s of %j beside its field", (name, value) => {
-    expect(parseAlertSettings(form({ [name]: value }))).toEqual({ errors: { [name]: expect.any(String) } });
+    expect(refusedOn(form({ [name]: value }))).toEqual([name]);
   });
 
   it.each([
@@ -81,9 +92,7 @@ describe("parseAlertSettings", () => {
   });
 
   it("reports every field that's wrong at once", () => {
-    const result = parseAlertSettings(form({ timezone: "Mars/Olympus", quietHoursStart: "25:00", alertsPerHour: "0" }));
-
-    expect(Object.keys("errors" in result ? result.errors : {}).sort()).toEqual([
+    expect(refusedOn(form({ timezone: "Mars/Olympus", quietHoursStart: "25:00", alertsPerHour: "0" }))).toEqual([
       "alertsPerHour",
       "quietHoursStart",
       "timezone",
@@ -126,5 +135,24 @@ describe("timezones", () => {
     expect(timezones[0]).toBe("UTC");
     expect(timezones).toContain("Europe/Moscow");
     expect(new Set(timezones).size).toBe(timezones.length);
+  });
+});
+
+describe("a refused form's round trip", () => {
+  it.each([
+    form(),
+    form({ quietHours: false, severity5Bypasses: true, timezone: "Mars/Olympus", quietHoursStart: "25:00" }),
+  ])("comes back from the query as it was posted", (posted) => {
+    const query = new URLSearchParams(alertSettingsQuery(posted));
+
+    expect(query.get("refused")).toBe("1");
+    expect(readAlertSettingsForm((name) => query.get(name) ?? undefined)).toEqual(posted);
+  });
+
+  it("reads a missing or repeated field as empty", () => {
+    expect(readAlertSettingsForm((name) => (name === "timezone" ? ["UTC", "UTC"] : undefined))).toMatchObject({
+      timezone: "",
+      quietHours: false,
+    });
   });
 });

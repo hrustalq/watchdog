@@ -129,3 +129,32 @@ export function quietHoursSentence(
   const held = `Alerts are held from ${start.slice(0, 5)} to ${end.slice(0, 5)} ${timezone}.`;
   return settings.severity5BypassesQuietHours ? `${held} Severity 5 alerts still go at once.` : held;
 }
+
+const formFields = ["timezone", "quietHoursStart", "quietHoursEnd", "alertsPerHour", "burstWindowSeconds"] as const;
+
+/** The form from what it posted, or from the query a refused save sends it back with. */
+export function readAlertSettingsForm(get: (name: string) => unknown): AlertSettingsForm {
+  const text = (name: string) => {
+    const value = get(name);
+    return typeof value === "string" ? value : "";
+  };
+  return {
+    timezone: text("timezone"),
+    quietHoursStart: text("quietHoursStart"),
+    quietHoursEnd: text("quietHoursEnd"),
+    alertsPerHour: text("alertsPerHour"),
+    burstWindowSeconds: text("burstWindowSeconds"),
+    quietHours: text("quietHours") === "on",
+    severity5Bypasses: text("severity5Bypasses") === "on",
+  };
+}
+
+/** The query that brings a refused form back as it was posted. */
+export function alertSettingsQuery(form: AlertSettingsForm) {
+  return new URLSearchParams({
+    refused: "1",
+    ...Object.fromEntries(formFields.map((name) => [name, form[name]])),
+    ...(form.quietHours ? { quietHours: "on" } : {}),
+    ...(form.severity5Bypasses ? { severity5Bypasses: "on" } : {}),
+  }).toString();
+}

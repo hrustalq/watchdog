@@ -167,7 +167,7 @@ describe("the Settings screen's alert settings", () => {
       form({ timezone: "Mars/Olympus", quietHours: true, quietHoursStart: "25:00", quietHoursEnd: "07:00" }),
     );
 
-    expect(result).toEqual({ errors: { timezone: expect.any(String), quietHoursStart: expect.any(String) } });
+    expect("errors" in result && Object.keys(result.errors).sort()).toEqual(["quietHoursStart", "timezone"]);
     expect(await loadAlertSettings(db, workspaceId)).toEqual(before);
   });
 
