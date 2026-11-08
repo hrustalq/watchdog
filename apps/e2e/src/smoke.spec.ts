@@ -1,5 +1,14 @@
 import { expect, type Page, test } from "@playwright/test";
-import { magicLink, setupLink } from "./web-log.ts";
+import {
+  botMessages,
+  confirmationLink,
+  lastWorkerMail,
+  magicLink,
+  pollNow,
+  publishEntry,
+  sendToBot,
+  setupLink,
+} from "./stack.ts";
 
 // The first test claims the install, and a test running beside it would race it for the setup link.
 test.describe.configure({ mode: "serial" });
@@ -44,15 +53,16 @@ async function openNewClassifier(page: Page, kind: "Deterministic" | "Agent-back
   await waitForEditor(page);
 }
 
-/** On the Destinations screen, adds one through the form under `opener`. */
-async function addDestination(page: Page, opener: string, name: string, field: string, value: string, submit: string) {
+/** On the Destinations screen, adds one named `name` through the form under `opener`. */
+async function addDestination(page: Page, opener: string, submit: string, name: string, fields: Record<string, string> = {}) {
   await page.goto(new URL("/destinations", page.url()).href);
   const form = page.locator("details", { has: page.locator("summary", { hasText: opener }) });
   // As on Sources, the streamed form replaces the first copy, and that drops what was typed.
   await expect(async () => {
     if ((await form.getAttribute("open")) === null) await form.locator("summary").click();
-    await form.getByLabel("Name", { exact: true }).fill(name);
-    await form.getByLabel(field, { exact: true }).fill(value);
+    for (const [label, value] of Object.entries({ Name: name, ...fields })) {
+      await form.getByLabel(label, { exact: true }).fill(value);
+    }
     await form.getByRole("button", { name: submit }).click();
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible({ timeout: 10_000 });
   }).toPass({ timeout: 30_000 });
@@ -286,9 +296,9 @@ test("the Rules editor keeps a draft only where it should, with and without Java
   const savedAction = page.getByRole("link", { name: "Severe alerts", exact: true });
 
   await test.step("an Action's form and YAML views edit one draft, and it saves", async () => {
-    await addDestination(page, "Email address", "Smoke inbox", "Address", email, "Add email address");
-    await addDestination(page, "Email address", "Other inbox", "Address", "other@example.com", "Add email address");
-    await addDestination(page, "Webhook URL", "Smoke hook", "URL", "http://fixtures/hook", "Add webhook");
+    await addDestination(page, "Email address", "Add email address", "Smoke inbox", { Address: email });
+    await addDestination(page, "Email address", "Add email address", "Other inbox", { Address: "other@example.com" });
+    await addDestination(page, "Webhook URL", "Add webhook", "Smoke hook", { URL: "http://fixtures/hook" });
     await page.goto(new URL("/rules", page.url()).href);
     await newAction.click();
     await waitForEditor(page);
@@ -461,6 +471,113 @@ test("a Correction changes the Rating the Agent gives a later, similar Item", as
     await expect(purposes.getByRole("row", { name: "Classify 4 0 40 20" })).toBeVisible();
     await expect(purposes.getByRole("row", { name: "Extract and rate 4 0 40 20" })).toBeVisible();
     await expect(page.getByRole("region", { name: "By model" })).toContainText("fake-model");
+  });
+});
+
+// The M3 demo: a high-Severity Item sends a Telegram alert. Telegram is the fake-telegram container
+// (compose.smoke.yaml), and mail goes to the worker's log, because the install has no mail server. The
+// fake model rates an Item whose title says "outage" Severity 5. Backfill Items never fire Actions, so
+// the feed's alerting entries appear after the Backfill, and the test asks for each poll rather than
+// wait out the Source's schedule. It runs before the rate limit test below, which uses up the sign-in bucket.
+test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours hold the next one", async ({ page }) => {
+  // Three polls, each waiting for the worker's tick, and the Feed's refresh after two of them.
+  test.setTimeout(480_000);
+  const chat = "Ops chat";
+  const inbox = "Alert inbox";
+  const address = "alerts@example.com";
+  const backfilled = "Acme status page moves to a new address";
+  const alerted = "Acme database outage in eu-west";
+  const held = "Acme API outage in us-east";
+  const feed = "alerts.xml";
+  const log = itemLog(page);
+  const actions = page.getByRole("region", { name: "Actions", exact: true });
+  const botSent = async (text: string) => (await botMessages()).filter((sent) => sent.includes(text));
+
+  /** Opens the Item from the Feed at its link's address, because a click while the rows settle does nothing. */
+  const openItem = async (title: string) => {
+    const link = page.getByRole("link", { name: title });
+    await expect(link).toHaveAttribute("href", /^\/items\//, untilPolled);
+    await page.goto(new URL((await link.getAttribute("href")) ?? "", page.url()).href);
+  };
+
+  /** Reloads the Item until its Actions say `text`, because the page doesn't follow its Deliveries. */
+  const untilActionsSay = (text: string) =>
+    expect(async () => {
+      await page.reload();
+      await expect(actions).toContainText(text, { timeout: 1_000 });
+    }).toPass(untilPolled);
+
+  await test.step("add a Telegram Destination, and the bot links the chat that sends it /start", async () => {
+    await signInAgain(page);
+    await addDestination(page, "Telegram chat", "Add Telegram chat", chat);
+    const command = page.getByLabel(/send this there:$/);
+    await expect(command).toHaveValue(/^\/start@watchdog_smoke_bot \S+$/);
+    await sendToBot({ id: -1001, type: "group", title: "Smoke ops" }, await command.inputValue());
+    await expect.poll(() => botSent(`Linked to ${chat} in Watchdog`)).toHaveLength(1);
+    await page.getByRole("link", { name: "Reload this page" }).click();
+    await expect(page.getByRole("status").filter({ hasText: `${chat} is linked.` })).toBeVisible();
+  });
+
+  await test.step("add an email Destination and confirm it through the mailed link", async () => {
+    await addDestination(page, "Email address", "Add email address", inbox, { Address: address });
+    await page.goto(await confirmationLink(address));
+    await page.getByRole("button", { name: "Confirm this address" }).click();
+    await expect(page.getByRole("heading", { name: "Address confirmed" })).toBeVisible();
+  });
+
+  await test.step("save an alert Action on Severity 4 or more to both", async () => {
+    await page.goto(new URL("/rules", page.url()).href);
+    await page.getByRole("link", { name: "New Action" }).click();
+    await waitForEditor(page);
+    await visibleField(page, "Name").fill("Outage alerts");
+    await visibleField(page, "Field").selectOption("severity");
+    await visibleField(page, "Value").fill("4");
+    await page.getByRole("checkbox", { name: new RegExp(`^${chat}`) }).check();
+    await page.getByRole("checkbox", { name: new RegExp(`^${inbox}`) }).check();
+    await saveRule(page);
+  });
+
+  await test.step("add a Source, and its Backfill reaches the Feed", async () => {
+    await page.goto(new URL("/sources", page.url()).href);
+    await addRssSource(page, feed);
+    await page.getByRole("link", { name: "Workspace" }).click();
+    await expect(feedRow(page, backfilled), "the Backfill never reached the Feed").toContainText("Backfill", untilPolled);
+  });
+
+  await test.step("a Severity 5 Item sends one Telegram alert and one mail, and its Log says so", async () => {
+    await publishEntry("first");
+    await pollNow(`http://fixtures/${feed}`);
+    await expect.poll(() => botSent(alerted), { ...untilPolled, message: "no Telegram alert arrived" }).toHaveLength(1);
+    await expect.poll(() => lastWorkerMail(address), { message: "no alert mail arrived" }).toContain(alerted);
+    await openItem(alerted);
+    await untilActionsSay(`${chat} · Sent`);
+    await expect(actions).toContainText(`${inbox} · Sent`);
+    const link = page.url();
+    expect((await botSent(alerted))[0]).toContain(link);
+    expect(await lastWorkerMail(address)).toContain(link);
+    await expect(log.filter({ hasText: "Action Outage alerts fired" })).toContainText("Severity is at least 4");
+    await expect(log.filter({ hasText: `Sent to ${chat}` })).toHaveCount(1);
+    await expect(log.filter({ hasText: `Sent to ${inbox}` })).toHaveCount(1);
+  });
+
+  await test.step("in quiet hours, the next Severity 5 Item is held", async () => {
+    // The Workspace timezone is UTC until someone sets it.
+    const clock = (hours: number) => new Date(Date.now() + hours * 3_600_000).toISOString().slice(11, 16);
+    await page.goto(new URL("/settings", page.url()).href);
+    await page.getByLabel("Hold alerts during quiet hours").check();
+    await visibleField(page, "From").fill(clock(-1));
+    await visibleField(page, "Until").fill(clock(1));
+    await page.getByRole("button", { name: "Save settings" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Settings saved." })).toBeVisible();
+
+    await publishEntry("second");
+    await pollNow(`http://fixtures/${feed}`);
+    await page.getByRole("link", { name: "Workspace" }).click();
+    await openItem(held);
+    await untilActionsSay(`${chat} · Held until`);
+    await expect(actions).toContainText(`${inbox} · Held until`);
+    expect(await botSent(held)).toHaveLength(0);
+    expect(await botSent(alerted), "the first Item's alert went more than once").toHaveLength(1);
   });
 });
 

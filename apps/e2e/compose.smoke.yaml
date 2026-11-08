@@ -1,14 +1,45 @@
 # What `pnpm smoke` adds to compose.yaml. smoke.sh passes it after the other Compose files, and
 # Compose resolves its paths against the first one's directory, the repo root.
+
+# Web and worker reach the fakes below. The fakes' addresses are private, so the egress guard lets them
+# through only by name. Both trust the CA the fixtures container makes, so its certificate for
+# api.telegram.org passes. With no SMTP set, mail goes to their logs, which is where the test reads it.
+x-app: &app
+  environment:
+    EGRESS_ALLOWLIST: fixtures,fake-llm,api.telegram.org
+    TELEGRAM_BOT_TOKEN: "123456:smoke-token"
+    NODE_EXTRA_CA_CERTS: /run/telegram-ca/root.crt
+  volumes:
+    - telegram-ca:/run/telegram-ca:ro
+  depends_on:
+    fixtures:
+      condition: service_healthy
+
 services:
-  # Serves the feeds the test adds as RSS Sources, so the run makes no live HTTP request.
+  # Serves the feeds the test adds as RSS Sources, so the run makes no live HTTP request. It also
+  # answers TLS for api.telegram.org, the Bot API's fixed host, and passes the requests to fake-telegram.
   fixtures:
     image: caddy:2.11.7-alpine
+    networks:
+      default:
+        aliases: [api.telegram.org]
     volumes:
       - ./apps/e2e/fixtures/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./apps/e2e/fixtures/feed.xml:/srv/feed.xml:ro
       - ./apps/e2e/fixtures/before-correction.xml:/srv/before-correction.xml:ro
       - ./apps/e2e/fixtures/after-correction.xml:/srv/after-correction.xml:ro
+      - ./apps/e2e/fixtures/alerts.xml:/srv/alerts.xml:ro
+      - telegram-ca:/data/caddy/pki/authorities/local
+    # Where the test publishes alerts.xml's later entries.
+    tmpfs: [/srv/published]
+    # Web and worker read the CA once, when they start, so they wait for it. Caddy writes it readable
+    # by root only, and they run as node, so the check also opens it to them, which passes once it exists.
+    healthcheck:
+      test: ["CMD", "chmod", "a+r", "/data/caddy/pki/authorities/local/root.crt"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      start_interval: 1s
 
   # The model the test adds, so the run makes no real model call and has no model bill.
   fake-llm:
@@ -18,20 +49,24 @@ services:
     init: true
     volumes:
       - ./apps/e2e/fixtures/fake-llm.mjs:/srv/fake-llm.mjs:ro
-    healthcheck:
+    healthcheck: &node-fake-health
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
       interval: 10s
       timeout: 5s
       start_period: 10s
       start_interval: 1s
 
-  # The fixtures' addresses are private, so the egress guard lets them through only by name.
-  web:
-    environment:
-      EGRESS_ALLOWLIST: fixtures,fake-llm
-  worker:
-    environment:
-      EGRESS_ALLOWLIST: fixtures,fake-llm
+  # The Telegram bot, so alerts and the chat link run with no real bot.
+  fake-telegram:
+    image: node:26-alpine
+    command: ["node", "/srv/fake-telegram.mjs"]
+    init: true
+    volumes:
+      - ./apps/e2e/fixtures/fake-telegram.mjs:/srv/fake-telegram.mjs:ro
+    healthcheck: *node-fake-health
+
+  web: *app
+  worker: *app
 
   # Caddy is the one container on a network with a way out, because it publishes the port the
   # test opens. Every other container is on the internal network only, so nothing leaves.
@@ -42,3 +77,6 @@ networks:
   default:
     internal: true
   published: {}
+
+volumes:
+  telegram-ca: {}

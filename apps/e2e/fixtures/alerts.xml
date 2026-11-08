@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The M3 demo's feed (smoke.spec.ts), written for it. The first entry is there from the start, so the
+     Backfill takes it. Each of the others appears once the test publishes it, by creating a file under
+     /srv/published that Caddy's templates look for on each request, so it's captured after the Backfill
+     and fires Actions. The fake model rates an Item whose title says "outage" Severity 5. -->
+<rss version="2.0">
+  <channel>
+    <title>Acme status</title>
+    <link>https://status.acme.example/</link>
+    <description>Acme status</description>
+    <language>en-us</language>
+    <item>
+      <title>Acme status page moves to a new address</title>
+      <link>https://status.acme.example/notices/moved</link>
+      <description>The status page now lives at status.acme.example.</description>
+      <pubDate>{{now | dateModify "-3h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://status.acme.example/notices/moved</guid>
+    </item>
+    {{- if fileExists "/published/first"}}
+    <item>
+      <title>Acme database outage in eu-west</title>
+      <link>https://status.acme.example/incidents/1</link>
+      <description>Writes to the eu-west database fail. We are investigating.</description>
+      <pubDate>{{now | dateModify "-1m" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://status.acme.example/incidents/1</guid>
+    </item>
+    {{- end}}
+    {{- if fileExists "/published/second"}}
+    <item>
+      <title>Acme API outage in us-east</title>
+      <link>https://status.acme.example/incidents/2</link>
+      <description>The us-east API answers with errors. We are investigating.</description>
+      <pubDate>{{now | dateModify "-1m" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://status.acme.example/incidents/2</guid>
+    </item>
+    {{- end}}
+  </channel>
+</rss>
