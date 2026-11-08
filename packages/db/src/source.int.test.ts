@@ -145,6 +145,17 @@ describe("source", () => {
     expect(await db.select().from(healthAlertDestination).where(eq(healthAlertDestination.workspaceId, a))).toEqual([]);
   });
 
+  it("keeps the Health alerts setting to the Workspace's own Destinations", async () => {
+    const [a = "", b = ""] = await twoWorkspaces(db);
+    const theirs = only(
+      await db.insert(destination).values({ workspaceId: b, type: "email", name: "Theirs", config: {} }).returning(),
+    );
+
+    await expect(
+      db.insert(healthAlertDestination).values({ workspaceId: a, destinationId: theirs.id }),
+    ).rejects.toMatchObject(refusal("health_alert_destination_destination_fk"));
+  });
+
   it("applies migration 0015 to a database holding M3 Sources, keying each by its URL", async () => {
     await db.execute(sql`create database at_0014`);
     const url = new URL(postgres.url);

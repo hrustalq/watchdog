@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { workspace } from "./workspace.ts";
 
 /**
@@ -39,6 +39,9 @@ export const destination = pgTable(
   (table) => [
     check("destination_type_check", sql`${table.type} in ('telegram', 'email', 'webhook')`),
     unique("destination_workspace_id_name_key").on(table.workspaceId, table.name),
+    // Lets health_alert_destination reference (workspace_id, id), so a Workspace can only name its
+    // own Destinations.
+    unique("destination_workspace_id_id_key").on(table.workspaceId, table.id),
   ],
 );
 
@@ -79,12 +82,15 @@ export const healthAlertDestination = pgTable(
     workspaceId: uuid("workspace_id")
       .notNull()
       .references(() => workspace.id, { onDelete: "cascade" }),
-    destinationId: uuid("destination_id")
-      .notNull()
-      .references(() => destination.id, { onDelete: "cascade" }),
+    destinationId: uuid("destination_id").notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.workspaceId, table.destinationId] }),
+    foreignKey({
+      name: "health_alert_destination_destination_fk",
+      columns: [table.workspaceId, table.destinationId],
+      foreignColumns: [destination.workspaceId, destination.id],
+    }).onDelete("cascade"),
     index("health_alert_destination_destination_id_idx").on(table.destinationId),
   ],
 );

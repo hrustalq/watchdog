@@ -1,5 +1,5 @@
 {
-  "id": "f77a605d-57a4-47eb-aee5-c16d160be81c",
+  "id": "e85308d0-086b-46ff-86cf-ab7ebc2c752d",
   "prevId": "cbd968c7-c6a4-456a-9be1-87c522993faf",
   "version": "7",
   "dialect": "postgresql",
@@ -1617,6 +1617,14 @@
             "workspace_id",
             "name"
           ]
+        },
+        "destination_workspace_id_id_key": {
+          "name": "destination_workspace_id_id_key",
+          "nullsNotDistinct": false,
+          "columns": [
+            "workspace_id",
+            "id"
+          ]
         }
       },
       "policies": {},
@@ -1729,14 +1737,16 @@
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
-        "health_alert_destination_destination_id_destination_id_fk": {
-          "name": "health_alert_destination_destination_id_destination_id_fk",
+        "health_alert_destination_destination_fk": {
+          "name": "health_alert_destination_destination_fk",
           "tableFrom": "health_alert_destination",
           "tableTo": "destination",
           "columnsFrom": [
+            "workspace_id",
             "destination_id"
           ],
           "columnsTo": [
+            "workspace_id",
             "id"
           ],
           "onDelete": "cascade",

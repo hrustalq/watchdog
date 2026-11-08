@@ -22,7 +22,8 @@ ALTER TABLE "source" ADD COLUMN "last_success_at" timestamp with time zone;--> s
 ALTER TABLE "source" ADD COLUMN "secret_ciphertext" text;--> statement-breakpoint
 ALTER TABLE "source" ADD COLUMN "inbox_token_hash" text;--> statement-breakpoint
 ALTER TABLE "health_alert_destination" ADD CONSTRAINT "health_alert_destination_workspace_id_workspace_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "public"."workspace"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
-ALTER TABLE "health_alert_destination" ADD CONSTRAINT "health_alert_destination_destination_id_destination_id_fk" FOREIGN KEY ("destination_id") REFERENCES "public"."destination"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "destination" ADD CONSTRAINT "destination_workspace_id_id_key" UNIQUE("workspace_id","id");--> statement-breakpoint
+ALTER TABLE "health_alert_destination" ADD CONSTRAINT "health_alert_destination_destination_fk" FOREIGN KEY ("workspace_id","destination_id") REFERENCES "public"."destination"("workspace_id","id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "health_alert_destination_destination_id_idx" ON "health_alert_destination" USING btree ("destination_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "source_workspace_id_type_dedup_key_key" ON "source" USING btree ("workspace_id","type",md5("dedup_key"));--> statement-breakpoint
 ALTER TABLE "source" ADD CONSTRAINT "source_inbox_token_hash_key" UNIQUE("inbox_token_hash");--> statement-breakpoint
