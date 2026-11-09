@@ -262,6 +262,8 @@ describe("deterministicExtractorRuleSchema", () => {
     ["a nested :has()", { name: "x", type: "string", css: "main :is(p, div:has(span))" }, ":has()"],
     ["a CSS selector over the cap", { name: "x", type: "string", css: `.${"a".repeat(1000)}` }, "1,000 characters"],
     ["a blank CSS attribute", { name: "x", type: "string", css: "a", attr: "" }, "attr"],
+    ["a CSS attribute with a space", { name: "x", type: "string", css: "a", attr: "href " }, "attr"],
+    ["a quoted CSS attribute", { name: "x", type: "string", css: "a", attr: "'href'" }, "attr"],
     ["an attribute on a JSONPath field", { name: "x", type: "string", jsonpath: "$.a", attr: "href" }, "attr"],
     ["a field that says neither", { name: "x", type: "string" }, "one of regex, jsonpath or css"],
     ["a field that says both", { name: "x", type: "string", from: "body", regex: "(x)", jsonpath: "$" }, "one of regex, jsonpath or css"],

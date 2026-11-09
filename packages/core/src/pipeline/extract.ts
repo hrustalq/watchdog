@@ -48,7 +48,8 @@ function read(field: Field, source: ExtractionSource): unknown[] | string {
     if (page === undefined) return "the page HTML nests too deeply to read";
     const all = field.type.endsWith("-array");
     // One past the most a field holds, so a page with too many matches is refused rather than cut.
-    return cssValues(page, field.css, { attr: field.attr, limit: all ? maxFieldValues + 1 : 1 });
+    const values = cssValues(page, field.css, { attr: field.attr, limit: all ? maxFieldValues + 1 : 1 });
+    return values ?? "its matches nest inside each other and add up to more than 1 MB of HTML";
   }
   const text = source[field.from];
   const captured = text === null ? undefined : firstCapture(field.regex, text);

@@ -1919,7 +1919,7 @@ describe("processItem", () => {
       ]);
       const html = readFileSync(new URL("fixtures/pricing-page.html", import.meta.url), "utf8");
 
-      async function captureFrom(type: string, raw: unknown) {
+      async function captureFrom(type: "rss" | "website", raw: unknown) {
         const seeded = await seed();
         await db.update(source).set({ type }).where(eq(source.id, seeded.sourceId));
         await saveRule(seeded, "pricing", pricing);

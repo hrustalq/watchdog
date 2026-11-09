@@ -283,12 +283,35 @@ describe("extractFields with a CSS selector", () => {
     ]);
   });
 
+  it("refuses nested matches whose HTML adds up to more than the page cap, without failing the Item", () => {
+    const text = "x".repeat(2000);
+    const nested = item({ sourceType: "website", raw: { html: `${"<div>".repeat(900)}${text}${"</div>".repeat(900)}` } });
+    expect(extractOne({ type: "string-array", css: "div" }, nested)).toEqual({
+      values: [],
+      empty: [],
+      problems: [{ name: "x", reason: "its matches nest inside each other and add up to more than 1 MB of HTML" }],
+    });
+    expect(extractOne({ type: "string", css: "div" }, nested).values).toEqual([{ name: "x", value: text }]);
+  });
+
+  it("skips a match with blank text or a blank attribute, and trims an attribute's value", () => {
+    const markup = '<span class="p"> </span><span class="p" data-n=" 29 ">7</span><span class="p" data-n="">8</span>';
+    const spans = item({ sourceType: "website", raw: { html: markup } });
+    expect(extractOne({ type: "integer-array", css: ".p" }, spans).values).toEqual([{ name: "x", value: [7, 8] }]);
+    expect(extractOne({ type: "integer-array", css: ".p", attr: "data-n" }, spans).values).toEqual([
+      { name: "x", value: [29] },
+    ]);
+  });
+
   it("runs a hostile selector on a large page in bounded time", () => {
-    const html = `${"<div><p>x</p>".repeat(900)}${"</div>".repeat(900)}`;
-    const large = item({ sourceType: "website", raw: { html } });
+    const nested = `${"<div><p>x</p>".repeat(900)}${"</div>".repeat(900)}`;
+    const large = item({ sourceType: "website", raw: { html: nested } });
     const started = performance.now();
     const found = extractOne({ type: "string-array", css: "div div div div div div p:not(:empty) ~ *" }, large);
-    expect(found.problems).toEqual([]);
+    // Each match is a div holding the rest of the page, so the nesting cap ends it.
+    expect(found.problems.map((problem) => problem.reason)).toEqual([
+      "its matches nest inside each other and add up to more than 1 MB of HTML",
+    ]);
     expect(performance.now() - started).toBeLessThan(2000);
   });
 });

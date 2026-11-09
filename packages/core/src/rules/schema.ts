@@ -219,6 +219,7 @@ const cssFieldSchema = z.strictObject({
   name,
   type: anyType,
   css: refusedBy(cssError),
+  // A name that can't be an attribute's would save and then match nothing on every Item.
   attr: z
     .string()
     .regex(/^[^\s"'>/=]+$/, "An attribute name is one word, without quotes, >, / or =.")

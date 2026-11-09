@@ -106,7 +106,7 @@ const patterns = {
   css: {
     label: "CSS selector",
     placeholder: ".plan-pro .price",
-    hint: "The selector reads the page HTML a website Item keeps. Without an attribute, the field takes each match's text.",
+    hint: "The selector reads the HTML of the website Source's Region, which is what a website Item keeps. Without an attribute, the field takes each match's text.",
   },
 };
 
@@ -814,7 +814,7 @@ function FieldList({ hidden }: { hidden: boolean }) {
   );
 }
 
-function FieldLabel({ text, children }: { text: string; children: React.ReactNode }) {
+function FieldLabel({ text, children }: { text: React.ReactNode; children: React.ReactNode }) {
   return (
     <label className="flex min-w-0 flex-col gap-1">
       <span className={label}>{text}</span>
@@ -885,7 +885,13 @@ function FieldRow({
               />
             </FieldLabel>
             {part === "css" ? (
-              <FieldLabel text="Attribute (optional)">
+              <FieldLabel
+                text={
+                  <>
+                    Attribute <span className="font-normal text-muted-foreground">(optional)</span>
+                  </>
+                }
+              >
                 <input
                   type="text"
                   placeholder="href"

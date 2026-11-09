@@ -44,7 +44,7 @@ export function cssError(selector: string): string | undefined {
       return `"${selector}" uses :has(), which Watchdog doesn't run: it walks every descendant of each element it tests.`;
     case "invalid":
       return `"${selector}" isn't a CSS selector Watchdog can run.`;
-    default:
+    case undefined:
       return undefined;
   }
 }
@@ -68,19 +68,27 @@ export function parseHtml(html: string) {
   return isTooDeep(document) ? undefined : document;
 }
 
+/** As much HTML as a website Item keeps. Matches that don't nest can't add up to more. */
+export const maxMatchedHtml = 1024 * 1024;
+
 /**
- * What a validated selector finds, in document order: each match's text, or its `attr` value, skipping
- * a match without it. It stops at `limit` values, so a page with thousands of matches costs no more
- * than that to convert.
+ * What a validated selector finds, in document order: each match's text, or its `attr` value, trimmed,
+ * skipping a match without one. It stops at `limit` values, so a page with thousands of matches costs
+ * no more than that to convert. Undefined when the matches add up to more than `maxMatchedHtml`, which
+ * only nested ones can, each repeating what is inside it.
  */
 export function cssValues(document: Page, selector: string, { attr, limit }: { attr: string | undefined; limit: number }) {
   const values: string[] = [];
+  let matched = 0;
   // Every match is an element, which css-select can't infer from a Document.
   for (const match of selectAll<Page | Element, Element>(selector, document)) {
     // htmlparser2 lowercases attribute names.
-    const value =
-      attr === undefined ? htmlToText(render(match, { encodeEntities: "utf8" })) : getAttributeValue(match, attr.toLowerCase());
-    if (value === undefined) continue;
+    const found = attr === undefined ? render(match, { encodeEntities: "utf8" }) : getAttributeValue(match, attr.toLowerCase());
+    if (found === undefined) continue;
+    matched += found.length;
+    if (matched > maxMatchedHtml) return undefined;
+    const value = attr === undefined ? htmlToText(found) : found.trim();
+    if (value === "") continue;
     values.push(value);
     if (values.length >= limit) break;
   }
