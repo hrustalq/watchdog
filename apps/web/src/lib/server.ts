@@ -33,8 +33,8 @@ function start() {
     db,
     auth,
     mode: config.mode,
-    /** Whether this install runs Obscura, so a website Source can be rendered. */
-    rendering: config.obscura.cdpUrl !== undefined,
+    /** Which browsers this install runs, so a website Source can be rendered. */
+    renderers: { obscura: config.obscura.cdpUrl !== undefined, chromium: config.chromium !== undefined },
     /** The egress guard's fetch, for checking a feed URL before its Source is saved. */
     fetch,
     /** The egress guard's fetch for testing a model, with the time a local model can need. */

@@ -291,14 +291,6 @@ describe("createEgressFetch", () => {
     expect(get?.headers).toMatchObject({ "x-trace": "1" });
   });
 
-  it("answers with the redirect itself when asked to, for a browser that follows it", async () => {
-    const before = requests.length;
-    const response = await open()(reach("/to-loopback"), { redirect: "manual" });
-    expect(response.status).toBe(302);
-    expect(response.headers.get("location")).toBe(`http://127.0.0.1:${String(port)}/ok`);
-    expect(requests.slice(before).map((req) => req.url)).toEqual(["/to-loopback"]);
-  });
-
   it("fails a request with no response within the timeout", async () => {
     const fetch = createEgressFetch(selfHosted("public.test"), { lookup, timeoutMs: 100 });
     await expect(fetch(reach("/never"))).rejects.toThrow(

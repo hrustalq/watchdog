@@ -73,7 +73,7 @@ describe("website Sources", () => {
 
   /** A website Source on its own origin, so robots.txt caching can't leak between tests. */
   async function newSource(
-    config: { region?: string; ignore?: string[]; ignoreRobots?: true; render?: "obscura" } = {},
+    config: { region?: string; ignore?: string[]; ignoreRobots?: true; render?: "obscura" | "chromium" } = {},
   ) {
     const origin = `https://${crypto.randomUUID()}.pages.test`;
     const url = `${origin}/pricing`;
@@ -238,6 +238,33 @@ describe("website Sources", () => {
     const captured = present((await itemsOf(src.id))[0]);
     expect(captured.title).toBe("Acme & Co pricing changed");
     expect(captured.body).toContain("+ $25 / month");
+  });
+
+  it("renders a chromium Source, and notes on the capture Log row the requests the guard blocked", async () => {
+    const src = await newSource({ render: "chromium" });
+    let body = v1;
+    const { deps } = page(src.origin, () => body);
+    // An install without the Chromium service; Obscura alone doesn't render it.
+    deps.obscura = { render: () => Promise.reject(new Error("not Obscura")) };
+    expect(await pollSource(db, src.id, deps)).toEqual({ error: "The Chromium renderer isn't running" });
+
+    const blocked = (host: string) => `Watchdog doesn't fetch ${host}: it resolves to the blocked address ${host}`;
+    deps.chromium = {
+      render: (url) =>
+        Promise.resolve({
+          html: body,
+          title: "Acme & Co pricing",
+          finalUrl: url,
+          blocked: [blocked("127.0.0.1"), blocked("169.254.169.254"), blocked("127.0.0.1")],
+        }),
+    };
+    expect(await pollSource(db, src.id, deps)).toEqual({ captured: 0 });
+    body = v2;
+    expect(await pollSource(db, src.id, deps)).toEqual({ captured: 1 });
+    const captured = present((await itemsOf(src.id))[0]);
+    expect(captured.log.map((row) => row.message)).toEqual([
+      `Captured from Acme pricing. Requests the page made were blocked: ${blocked("127.0.0.1")}; ${blocked("169.254.169.254")}.`,
+    ]);
   });
 
   it("throws a poll stopped with the worker instead of recording it as the Source's error", async () => {

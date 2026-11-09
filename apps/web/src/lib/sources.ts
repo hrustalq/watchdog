@@ -27,9 +27,19 @@ export interface SourceDeps {
   mode: Config["mode"];
   /** Encrypts a pasted GitHub token. It never leaves the server. */
   encryptionKey: Buffer;
-  /** Whether this install runs Obscura (OBSCURA_CDP_URL is set), which a rendered website needs. */
-  rendering?: boolean;
+  /** Which browsers this install runs to render a website: Obscura, and the Chromium fallback. */
+  renderers?: Renderers;
 }
+
+/** Whether this install runs Obscura (OBSCURA_CDP_URL is set) and Chromium (CHROMIUM_URL is set). */
+export interface Renderers {
+  obscura: boolean;
+  chromium: boolean;
+}
+
+/** How a website is read: fetched as served, rendered by Obscura, or rendered by the Chromium fallback. */
+export const renderModes = ["static", "obscura", "chromium"] as const;
+export type RenderMode = (typeof renderModes)[number];
 
 /** The kinds of Source the form adds. */
 export const addTypes = ["rss", "website", "github-releases", "github-issues", "github-mentions"] as const;
@@ -52,8 +62,7 @@ export interface AddValues {
   ignore: string;
   /** "on" when a self-hosted website Source skips robots.txt. */
   ignoreRobots: string;
-  /** How a website is read: fetched as served, or rendered by Obscura. */
-  render: "static" | "obscura";
+  render: RenderMode;
   name: string;
   schedule: string;
 }
@@ -72,7 +81,7 @@ export function addValues(field: (name: string) => string): AddValues {
     region: field("region"),
     ignore: field("ignore"),
     ignoreRobots: field("ignoreRobots") === "on" ? "on" : "",
-    render: field("render") === "obscura" ? "obscura" : "static",
+    render: renderModes.find((mode) => mode === field("render")) ?? "static",
     name: field("name"),
     schedule: field("schedule"),
   };
@@ -165,7 +174,7 @@ export async function addRssSource(
 }
 
 /**
- * Saves a website Source, fetched as served or rendered by Obscura. The page isn't fetched first: its
+ * Saves a website Source, fetched as served or rendered in a browser. The page isn't fetched first: its
  * first poll stores the Baseline, and a page it can't read shows as that poll's last error. Robots.txt
  * can be turned off only on self-hosted (ADR 0015).
  */
@@ -191,8 +200,8 @@ export async function addWebsiteSource(
   if (ignore.length > maxIgnore || ignore.some((pattern) => regexError(pattern) !== undefined)) {
     return { problem: "invalid-ignore" };
   }
-  const render = input.render === "obscura" ? "obscura" : "static";
-  if (render === "obscura" && deps.rendering !== true) return { problem: "render-unavailable" };
+  const render = renderModes.find((mode) => mode === input.render) ?? "static";
+  if (render !== "static" && deps.renderers?.[render] !== true) return { problem: "render-unavailable" };
   const schedule = presetSchedule(input.schedule);
   if (schedule === undefined) return { problem: "schedule" };
   if ((await watchedName(db, workspaceId, "website", `${url.href} ${region}`)) !== undefined) {
@@ -411,6 +420,7 @@ export function problemMessage(
     term = "",
     region = "",
     ignore = "",
+    render = "static",
     status,
     mode,
     source: watching,
@@ -421,6 +431,7 @@ export function problemMessage(
     term?: string;
     region?: string;
     ignore?: string;
+    render?: RenderMode;
     status: string;
     mode: Config["mode"];
     source?: string | undefined;
@@ -449,7 +460,9 @@ export function problemMessage(
       return `${line > 0 ? `Line ${String(line)}` : "A line"} isn't a regular expression Watchdog can run. Ignore patterns use RE2 syntax, such as \\d+ visitors.`;
     }
     case "render-unavailable":
-      return "This install doesn't run Obscura, the browser that renders pages, so choose Static.";
+      return render === "chromium"
+        ? "This install doesn't run the Chromium fallback, so choose another way to read the page."
+        : "This install doesn't run Obscura, the browser that renders pages, so choose Static.";
     case "invalid-repo":
       return "Enter a GitHub repo as owner/name, such as vercel/next.js, or paste its URL.";
     case "no-repo":

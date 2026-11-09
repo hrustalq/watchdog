@@ -54,7 +54,7 @@ describe("the Chromium fallback in compose.yaml", () => {
     expect(chromium?.ports).toBeUndefined();
     expect(chromium?.networks).toEqual(["chromium"]);
     expect(compose.networks?.chromium?.internal).toBe(true);
-    const sharing = Object.entries(compose.services).filter(([, other]) => other.networks?.includes("chromium"));
+    const sharing = Object.entries(compose.services).filter(([, other]) => other.networks?.includes("chromium") === true);
     expect(sharing.map(([name]) => name).sort()).toEqual(["chromium", "worker"]);
   });
 

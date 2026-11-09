@@ -134,8 +134,7 @@ export function urlIpLiteral(url: URL) {
 
 /**
  * A fetch that refuses blocked addresses. It checks the address the socket connects to, after DNS,
- * on every redirect, and limits each request's time and response size. `redirect: "manual"` answers
- * with a redirect instead of following it.
+ * on every redirect, and limits each request's time and response size.
  */
 export function createEgressFetch(
   config: Pick<Config, "mode" | "egressAllowlist">,
@@ -196,9 +195,8 @@ export function createEgressFetch(
         throw cause instanceof EgressBlockedError ? cause : error;
       }
 
-      // With `redirect: "manual"` the caller follows the redirect, through the guard again.
       const location = response.headers.get("location");
-      if (response.status < 300 || response.status > 399 || location === null || init.redirect === "manual") {
+      if (response.status < 300 || response.status > 399 || location === null) {
         return capped(response, url, maxBytes);
       }
       await response.body?.cancel();
