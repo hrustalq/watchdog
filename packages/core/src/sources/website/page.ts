@@ -1,41 +1,15 @@
 // A website Source's page: fetched statically, narrowed to its Region and read as text (docs: Sources
-// and ingestion, "Website change detection"). The HTML is parsed with htmlparser2 and the Region
-// matched with css-select, as an Extractor Rule's CSS field will be (Rule model, "CSS selectors").
-import { compile, selectAll } from "css-select";
-import { parse, type Selector, SelectorType } from "css-what";
+// and ingestion, "Website change detection"). The Region is a CSS selector, matched as an Extractor
+// Rule's CSS field is (Rule model, "CSS selectors").
+import { selectAll } from "css-select";
 import { render } from "dom-serializer";
 import { findOne, getChildren, textContent } from "domutils";
-import { parseDocument } from "htmlparser2";
 import type { createEgressFetch } from "../../egress/egress.ts";
+import { maxDepth, parseHtml } from "../../rules/css.ts";
 import { withoutMatches } from "../../rules/regex.ts";
 import { htmlToText } from "../item.ts";
 
-export const maxRegionLength = 1000;
-/** A deeper page isn't read: matching a descendant combinator walks every match's ancestors. */
-const maxDepth = 1000;
-
-/**
- * Why a website Source can't watch this Region selector: too long, using :has(), or not a selector
- * css-select can match. Undefined when it can.
- */
-export function regionError(selector: string): "too-long" | "has" | "invalid" | undefined {
-  if (selector.length > maxRegionLength) return "too-long";
-  try {
-    // css-select refuses what css-what parses but it can't match, such as ::before.
-    compile(selector);
-    return usesHas(parse(selector)) ? "has" : undefined;
-  } catch {
-    return "invalid";
-  }
-}
-
-/** :has() walks every descendant of each element it tests, and nested ones multiply. */
-const usesHas = (selectors: Selector[][]): boolean =>
-  selectors.some((tokens) =>
-    tokens.some(
-      (token) => token.type === SelectorType.Pseudo && (token.name === "has" || (Array.isArray(token.data) && usesHas(token.data))),
-    ),
-  );
+export { maxSelectorLength as maxRegionLength, selectorError as regionError } from "../../rules/css.ts";
 
 /**
  * Fetches the page through the egress guard and returns its HTML and the URL it came from after any
@@ -71,8 +45,8 @@ export function unwatchable(url: string, answer: { status: number; statusText: s
  * Source without a Region watches the whole <body>. Throws when the Region matches nothing.
  */
 export function readPage(html: string, region: string | undefined) {
-  const document = parseDocument(html);
-  if (tooDeep(document)) throw new Error(`The page is nested more than ${String(maxDepth)} elements deep, too deep to read`);
+  const document = parseHtml(html);
+  if (document === undefined) throw new Error(`The page is nested more than ${String(maxDepth)} elements deep, too deep to read`);
   const titleElement = findOne((element) => element.name === "title", document);
   const title = titleElement === null ? "" : textContent(titleElement).replace(/\s+/g, " ").trim();
   let matches: Parameters<typeof render>[0][];
@@ -102,16 +76,6 @@ export function normalise(text: string, ignore: string[]) {
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter((line) => line !== "")
     .join("\n");
-}
-
-function tooDeep(document: ReturnType<typeof parseDocument>) {
-  const stack = getChildren(document).map((node) => ({ node, depth: 1 }));
-  for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
-    if (next.depth > maxDepth) return true;
-    const depth = next.depth + 1;
-    for (const node of getChildren(next.node)) stack.push({ node, depth });
-  }
-  return false;
 }
 
 /** Decodes the body in the charset the response or a <meta> tag names, UTF-8 otherwise. */

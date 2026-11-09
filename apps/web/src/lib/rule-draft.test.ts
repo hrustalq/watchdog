@@ -9,6 +9,7 @@ import {
   conditionPart,
   destinationFits,
   fieldPart,
+  fieldReading,
   formHides,
   formShows,
   fromLines,
@@ -271,6 +272,8 @@ describe("fieldPart", () => {
   it.each([
     [{ name: "a", type: "string", from: "title", regex: "(x)" }, "deterministic", "regex"],
     [{ name: "a", type: "string", jsonpath: "$.x" }, "deterministic", "jsonpath"],
+    [{ name: "a", type: "string", css: ".price" }, "deterministic", "css"],
+    [{ name: "a", type: "string-array", css: "a", attr: "href" }, "deterministic", "css"],
     [{ name: "a", type: "string" }, "deterministic", "regex"],
     [{ name: "a", type: "string" }, "agent", "agent"],
   ] as const)("shows %j on a %s rule as %s", (field, kind, part) => {
@@ -279,12 +282,30 @@ describe("fieldPart", () => {
 
   it.each([
     [{ name: "a", regex: "(x)", jsonpath: "$" }, "deterministic"],
+    [{ name: "a", jsonpath: "$", css: "a" }, "deterministic"],
+    [{ name: "a", type: "string", css: "a", from: "title" }, "deterministic"],
     [{ name: "a", type: "string", extra: 1 }, "deterministic"],
     [{ name: "a", regex: "(x)" }, "agent"],
     [{ name: { a: 1 } }, "agent"],
     ["text", "deterministic"],
   ] as const)("leaves %j on a %s rule to the YAML view", (field, kind) => {
     expect(fieldPart(field, kind)).toBe("yaml-only");
+  });
+});
+
+describe("fieldReading", () => {
+  it("keeps a field's name and type when it switches to a CSS selector", () => {
+    expect(fieldReading({ name: "plans", type: "string-array", jsonpath: "$.x" }, "css")).toEqual({
+      name: "plans",
+      type: "string-array",
+      css: "",
+    });
+  });
+
+  it("keeps an array type for JSONPath and drops it for a regex", () => {
+    const css = { name: "plans", type: "string-array", css: "h3", attr: "title" };
+    expect(fieldReading(css, "jsonpath")).toEqual({ name: "plans", type: "string-array", jsonpath: "" });
+    expect(fieldReading(css, "regex")).toEqual({ name: "plans", type: "string", from: "title", regex: "" });
   });
 });
 
@@ -387,6 +408,8 @@ describe("formShows", () => {
     "fields",
     "fields.0",
     "fields.2.regex",
+    "fields.0.css",
+    "fields.0.attr",
     "when",
     "when.field",
     "when.value",

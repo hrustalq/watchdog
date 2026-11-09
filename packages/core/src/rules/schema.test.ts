@@ -205,10 +205,12 @@ describe("deterministicExtractorRuleSchema", () => {
       { name: "cve", type: "string", from: "title", regex: "(CVE-\\d+-\\d+)" },
       { name: "score", type: "integer", from: "body", regex: "score (\\d+)" },
       { name: "tags", type: "string-array", jsonpath: "$.tags[*].name" },
+      { name: "plans", type: "string-array", css: ".plan h3" },
+      { name: "signup", type: "string", css: "a.signup", attr: "href" },
     ],
   };
 
-  it("accepts regex fields on title or body and JSONPath fields", () => {
+  it("accepts regex fields on title or body, JSONPath fields and CSS fields", () => {
     expect(deterministicExtractorRuleSchema.parse(rule)).toEqual(rule);
   });
 
@@ -254,8 +256,16 @@ describe("deterministicExtractorRuleSchema", () => {
     ["a JSONPath regex function", { name: "x", type: "string", jsonpath: '$[?search(@.a, "b")]' }, "unknown function"],
     ["a JSONPath that fans out", { name: "x", type: "string", jsonpath: "$[*,*,*,*,*,*]" }, "selector"],
     ["a type it doesn't know", { name: "x", type: "date", jsonpath: "$.a" }, "type"],
-    ["a field that says neither", { name: "x", type: "string" }, "regex or jsonpath"],
-    ["a field that says both", { name: "x", type: "string", from: "body", regex: "(x)", jsonpath: "$" }, "regex or jsonpath"],
+    ["a CSS selector that doesn't parse", { name: "x", type: "string", css: ".price[" }, "isn't a CSS selector"],
+    ["a CSS selector css-select can't match", { name: "x", type: "string", css: "p::before" }, "isn't a CSS selector"],
+    ["a CSS selector using :has()", { name: "x", type: "string", css: "li:has(.price)" }, ":has()"],
+    ["a nested :has()", { name: "x", type: "string", css: "main :is(p, div:has(span))" }, ":has()"],
+    ["a CSS selector over the cap", { name: "x", type: "string", css: `.${"a".repeat(1000)}` }, "1,000 characters"],
+    ["a blank CSS attribute", { name: "x", type: "string", css: "a", attr: "" }, "attr"],
+    ["an attribute on a JSONPath field", { name: "x", type: "string", jsonpath: "$.a", attr: "href" }, "attr"],
+    ["a field that says neither", { name: "x", type: "string" }, "one of regex, jsonpath or css"],
+    ["a field that says both", { name: "x", type: "string", from: "body", regex: "(x)", jsonpath: "$" }, "one of regex, jsonpath or css"],
+    ["a field with JSONPath and CSS", { name: "x", type: "string", jsonpath: "$", css: "a" }, "one of regex, jsonpath or css"],
     ["a name with a dot", { name: "a.b", type: "string", jsonpath: "$.a" }, "name"],
     ["the name __proto__", { name: "__proto__", type: "string", jsonpath: "$.a" }, "name"],
   ])("refuses %s", (_, field, expected) => {

@@ -1911,6 +1911,64 @@ describe("processItem", () => {
       expect((await reload(itemId)).processedAt).not.toBeNull();
     });
 
+    describe("with CSS fields", () => {
+      const pricing = extractor("pricing", anyTitle, [
+        { name: "price", type: "integer", css: ".plan-pro .price" },
+        { name: "plans", type: "string-array", css: ".plan h3" },
+        { name: "signup", type: "string", css: ".plan-pro a", attr: "href" },
+      ]);
+      const html = readFileSync(new URL("fixtures/pricing-page.html", import.meta.url), "utf8");
+
+      async function captureFrom(type: string, raw: unknown) {
+        const seeded = await seed();
+        await db.update(source).set({ type }).where(eq(source.id, seeded.sourceId));
+        await saveRule(seeded, "pricing", pricing);
+        const [created] = await db
+          .insert(item)
+          .values({ ...seeded, externalId: crypto.randomUUID(), title: "Pricing changed", body: "", raw })
+          .returning();
+        return present(created).id;
+      }
+
+      it("stores the selected text and attribute of a website Item's page HTML", async () => {
+        const itemId = await captureFrom("website", { text: "", html });
+
+        await processItem(db, itemId, deps);
+
+        const stored = Object.fromEntries((await fieldsOf(itemId)).map((row) => [row.name, row.value]));
+        expect(stored).toEqual({
+          price: 29,
+          plans: ["Free", "Pro most popular", "Team & Enterprise"],
+          signup: "https://example.com/signup?plan=pro&trial=1",
+        });
+        expect((await extractLog(itemId)).map((row) => row.message)).toEqual([
+          "Extractor Rule pricing extracted price, plans, signup",
+        ]);
+      });
+
+      it("stores nothing on an RSS Item and logs that it has no page HTML", async () => {
+        const itemId = await captureFrom("rss", { html });
+
+        await processItem(db, itemId, deps);
+
+        expect(await fieldsOf(itemId)).toEqual([]);
+        const reason = "no page HTML on this Item";
+        expect((await extractLog(itemId)).map((row) => row.message)).toEqual([
+          `Extractor Rule pricing stored nothing for price: ${reason}; stored nothing for plans: ${reason}; stored nothing for signup: ${reason}`,
+        ]);
+        expect((await reload(itemId)).processedAt).not.toBeNull();
+      });
+
+      it("says the page HTML was too large on a website Item that kept none", async () => {
+        const itemId = await captureFrom("website", { text: "" });
+
+        await processItem(db, itemId, deps);
+
+        expect(await fieldsOf(itemId)).toEqual([]);
+        expect((await extractLog(itemId))[0]?.message).toContain("stored nothing for price: the page HTML was too large to keep");
+      });
+    });
+
     // What `raw` really holds per feed format, from feeds captured the way a poll captures them.
     it.each([
       {

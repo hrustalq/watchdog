@@ -203,20 +203,22 @@ export function conditionPart(node: unknown): ConditionPart {
   return showable ? "predicate" : "yaml-only";
 }
 
-export type FieldPart = "regex" | "jsonpath" | "agent" | "yaml-only";
+export type FieldPart = "regex" | "jsonpath" | "css" | "agent" | "yaml-only";
 
 /** How the form shows one field of an Extractor Rule. */
 export function fieldPart(field: unknown, kind: RuleKind): FieldPart {
   if (!isMap(field) || !Object.values(field).every(isScalar)) return "yaml-only";
   if (kind === "agent") return onlyHas(field, ["name", "type"]) ? "agent" : "yaml-only";
   if ("jsonpath" in field) return onlyHas(field, ["name", "type", "jsonpath"]) ? "jsonpath" : "yaml-only";
+  if ("css" in field) return onlyHas(field, ["name", "type", "css", "attr"]) ? "css" : "yaml-only";
   return onlyHas(field, ["name", "type", "from", "regex"]) ? "regex" : "yaml-only";
 }
 
-/** The field reading from a regex or a JSONPath. One capture group gives one value, so a regex can't fill an array. */
-export function fieldReading(field: Record<string, unknown>, part: "regex" | "jsonpath") {
+/** The field reading from a regex, a JSONPath or a CSS selector. One capture group gives one value, so a regex can't fill an array. */
+export function fieldReading(field: Record<string, unknown>, part: "regex" | "jsonpath" | "css") {
   const { name, type } = field;
   if (part === "jsonpath") return { name, type, jsonpath: "" };
+  if (part === "css") return { name, type, css: "" };
   return { name, type: type === "integer" ? type : "string", from: "title", regex: "" };
 }
 
@@ -325,7 +327,7 @@ export function formHides(draft: Draft) {
 }
 
 const placedInForm = [
-  /^(?:classifier|extractor|action|kind|schedule|prompt|(?:assign|categories|destinations)(?:\.\d+)?|fields(?:\.\d+(?:\.(?:name|type|from|regex|jsonpath))?)?)$/,
+  /^(?:classifier|extractor|action|kind|schedule|prompt|(?:assign|categories|destinations)(?:\.\d+)?|fields(?:\.\d+(?:\.(?:name|type|from|regex|jsonpath|css|attr))?)?)$/,
   /^when(?:\.(?:all|any)\.\d+|\.not)*(?:\.(?:all|any|field|op|value(?:\.\d+)?))?$/,
 ];
 

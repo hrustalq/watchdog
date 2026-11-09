@@ -205,6 +205,14 @@ describe("Rules", () => {
     });
 
     it.each([
+      [".price[", "isn't a CSS selector"],
+      ["li:has(.price)", ":has()"],
+    ])("refuses the CSS selector %s, beside it", async (selector, message) => {
+      const yaml = `extractor: ${unique()}\nwhen: { field: source.type, op: is, value: website }\nfields: [{ name: price, type: string, css: "${selector}" }]\n`;
+      expect(await problems(yaml)).toEqual([{ path: "fields.0.css", message: containing(message) }]);
+    });
+
+    it.each([
       ["classifier", `classifier: ${unique()}\nwhen: { field: severity, op: gte, value: 4 }\nassign: [x]\n`],
       ["extractor", `extractor: ${unique()}\nwhen: { field: severity, op: gte, value: 4 }\nfields: [{ name: a, type: string, jsonpath: "$" }]\n`],
     ])("refuses an out-of-stage field on a %s, beside the field", async (_, yaml) => {

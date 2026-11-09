@@ -150,6 +150,25 @@ describe("runExtractorRuleByHand", () => {
     });
   });
 
+  it("reads a CSS field from a website Item's page HTML, and says when an Item has none", async () => {
+    const seeded = await seed();
+    const ruleId = await saveRule(seeded, "pricing", [{ name: "price", type: "integer", css: ".price" }]);
+    await db.update(item).set({ raw: { text: "", html: '<p class="price">29</p>' } }).where(eq(item.id, seeded.itemId));
+
+    await run(seeded, ruleId);
+    expect(await fieldsOf(seeded)).toEqual([]);
+
+    const [row] = await db.select({ sourceId: item.sourceId }).from(item).where(eq(item.id, seeded.itemId));
+    await db.update(source).set({ type: "website" }).where(eq(source.id, present(row).sourceId));
+    await run(seeded, ruleId);
+
+    expect(await fieldsOf(seeded)).toEqual([{ name: "price", value: 29, ruleId }]);
+    expect((await logOf(seeded)).map((logged) => logged.message)).toEqual([
+      "Manual run: Extractor Rule pricing stored nothing for price: no page HTML on this Item",
+      "Manual run: Extractor Rule pricing extracted price",
+    ]);
+  });
+
   it("replaces the rule's earlier values, and logs every run", async () => {
     const seeded = await seed();
     const ruleId = await saveRule(seeded, "CVEs", [fromTitle("cve"), fromTitle("old", "(nothing)")]);
