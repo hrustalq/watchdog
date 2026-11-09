@@ -21,7 +21,7 @@ COPY --from=prune /repo/out/json/ ./
 # them, and this one allows none, so nothing else is skipped. The filter installs only what web
 # and its packages need, without the root's git-hook and commit tooling or the lint config.
 RUN pnpm install --frozen-lockfile --ignore-scripts \
-      --filter "@watchdog/web..." --filter "!@watchdog/eslint-config"
+      --filter "@watchdog/web..." --filter "!@watchdog/lint-config"
 COPY --from=prune /repo/out/full/ ./
 # prune copies workspace packages only, and every tsconfig.json extends this one.
 COPY tsconfig.base.json ./

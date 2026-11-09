@@ -6,7 +6,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "next typegen && tsc",
-    "lint": "next typegen && eslint . --max-warnings 0",
+    "lint": "next typegen && oxlint",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests --exclude \"**/*.int.test.ts\"",
     "test:integration": "vitest run --passWithNoTests .int.test.ts"
@@ -30,9 +30,10 @@
     "@types/node": "^26",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@watchdog/eslint-config": "workspace:*",
+    "@watchdog/lint-config": "workspace:*",
     "babel-plugin-react-compiler": "1.0.0",
-    "eslint": "^10.14.0",
+    "oxlint": "^1.92.0",
+    "oxlint-tsgolint": "^7.0.2006",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^5.0.5"

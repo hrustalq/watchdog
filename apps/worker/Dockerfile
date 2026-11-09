@@ -19,10 +19,10 @@ COPY --from=prune /repo/out/json/ ./
 # --ignore-scripts skips the root prepare script, which installs git hooks (husky) and would print
 # its output even with HUSKY=0. pnpm runs no dependency build scripts unless the workspace allows
 # them, and this one allows none, so nothing else is skipped.
-# prune keeps eslint-config, a dev-only workspace package, and --prod would still install its own
-# dependencies (ESLint, TypeScript), so the filter leaves it out.
+# prune keeps lint-config, a dev-only workspace package, and --prod would still install its own
+# dependencies (the ESLint plugins oxlint runs), so the filter leaves it out.
 RUN pnpm install --frozen-lockfile --prod --ignore-scripts \
-      --filter "@watchdog/worker..." --filter "!@watchdog/eslint-config"
+      --filter "@watchdog/worker..." --filter "!@watchdog/lint-config"
 COPY --from=prune /repo/out/full/ ./
 
 # The worker and the packages run as TypeScript, with no build step (ADR 0017).

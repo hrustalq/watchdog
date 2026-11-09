@@ -130,14 +130,14 @@ describe("Feed", () => {
   async function allPages(workspaceId: string) {
     const pages = [];
     let before: string | undefined;
-    do {
+    for (;;) {
       const page = await feedPage(db, workspaceId, parseCursor(before));
       pages.push(page.items.map((row) => row.id));
-      before = page.older ?? undefined;
+      if (page.older === null) return pages;
+      before = page.older;
       // A cursor parseCursor rejects would load the newest page again, forever.
-      if (before !== undefined) expect(parseCursor(before)).toBeDefined();
-    } while (before !== undefined);
-    return pages;
+      expect(parseCursor(before)).toBeDefined();
+    }
   }
 
   it("shows a Source's Backfill after its first poll, marked as Backfill and newest first", async () => {
@@ -409,14 +409,14 @@ describe("Feed", () => {
     async function allTopPages(workspaceId: string) {
       const pages = [];
       let before: string | undefined;
-      do {
+      for (;;) {
         const page = await topPage(db, workspaceId, parseTopCursor(before));
         pages.push(page.items.map((row) => row.id));
-        before = page.older ?? undefined;
+        if (page.older === null) return pages;
+        before = page.older;
         // A cursor parseTopCursor rejects would load the first page again, forever.
-        if (before !== undefined) expect(parseTopCursor(before)).toBeDefined();
-      } while (before !== undefined);
-      return pages;
+        expect(parseTopCursor(before)).toBeDefined();
+      }
     }
 
     it("pages through 200 rated Items with no duplicates or gaps", async () => {

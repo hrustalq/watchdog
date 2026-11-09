@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import pg from "pg";
+import { Client } from "pg";
 import { PgBoss } from "pg-boss";
 import { beforeAll, describe, expect, it } from "vitest";
 import { migrate } from "./migrate.ts";
@@ -13,7 +13,7 @@ const migrationsDir = path.join(packageDir, "migrations");
 
 /** Every column and index outside the system schemas, plus the rows of Drizzle's migrations log. */
 async function databaseState(url: string) {
-  const client = new pg.Client({ connectionString: url });
+  const client = new Client({ connectionString: url });
   await client.connect();
   try {
     const columns = await client.query<{ name: string }>(
