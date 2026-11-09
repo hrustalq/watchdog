@@ -42,6 +42,7 @@ export {
   type FetchState,
   NotAFeedError,
 } from "./sources/rss/fetch-feed.ts";
+export { maxRegionLength, regionError } from "./sources/website/page.ts";
 export { createMailer, type MailMessage, type Mailer } from "./mail/mailer.ts";
 export { defaultSchedule, minimumMinutes, nextFiring, nextPollAt, scheduleError } from "./schedule.ts";
 export { decryptSecret, encryptSecret } from "./secrets/secrets.ts";
@@ -71,5 +72,6 @@ export {
   type Rule,
   ruleSchema,
 } from "./rules/schema.ts";
+export { regexError } from "./rules/regex.ts";
 export { conditionToWords } from "./rules/words.ts";
 export { ruleFromYaml, ruleToYaml } from "./rules/yaml.ts";

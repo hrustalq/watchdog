@@ -2,11 +2,13 @@
 // ingestion, "Source types"; Processing pipeline, "Capture and the Backfill window").
 import type { Db, source, SourceType } from "@watchdog/db";
 import type { z } from "zod";
+import type { Config } from "../config.ts";
 import type { ItemDraft } from "./item.ts";
 import type { Deferred, GithubSecrets } from "./github/client.ts";
 import { github } from "./github/source-type.ts";
 import { rss } from "./rss/source-type.ts";
 import type { FetchFeedDeps } from "./rss/fetch-feed.ts";
+import { website } from "./website/source-type.ts";
 
 /** A first capture's limits: the newest dated drafts within `window` ms, at most `max` of them. */
 export interface Backfill {
@@ -17,6 +19,11 @@ export interface Backfill {
 export interface PollDeps extends FetchFeedDeps {
   /** What decrypts a GitHub Source's token. */
   secrets: GithubSecrets;
+  /**
+   * Hosted always checks a website's robots.txt; self-hosted lets a Source turn that off. Without
+   * it, robots.txt is checked as on hosted.
+   */
+  mode?: Config["mode"];
 }
 
 /**
@@ -47,4 +54,4 @@ export interface SourceTypeImpl {
 }
 
 /** The types implemented so far. A Source of any other type polls nothing and takes no Backfill. */
-export const sourceTypes: Partial<Record<SourceType, SourceTypeImpl>> = { rss, github };
+export const sourceTypes: Partial<Record<SourceType, SourceTypeImpl>> = { rss, github, website };

@@ -34,3 +34,8 @@ export function firstCapture(pattern: string, text: string) {
   const matcher = RE2JS.compile(pattern).matcher(text);
   return matcher.find() ? (matcher.group(1) ?? undefined) : undefined;
 }
+
+/** The text with every match of a validated pattern removed. */
+export function withoutMatches(pattern: string, text: string) {
+  return RE2JS.compile(pattern).matcher(text).replaceAll("");
+}

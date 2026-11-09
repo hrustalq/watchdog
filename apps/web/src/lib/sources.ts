@@ -13,6 +13,9 @@ import {
   NotAFeedError,
   parseRepo,
   parseWithin,
+  maxRegionLength,
+  regexError,
+  regionError,
   signInToken,
 } from "@watchdog/core";
 import { and, type Db, eq, source } from "@watchdog/db";
@@ -27,12 +30,13 @@ export interface SourceDeps {
 }
 
 /** The kinds of Source the form adds. */
-export const addTypes = ["rss", "github-releases", "github-issues", "github-mentions"] as const;
+export const addTypes = ["rss", "website", "github-releases", "github-issues", "github-mentions"] as const;
 export type AddType = (typeof addTypes)[number];
 
 /**
  * What the form posts, apart from a pasted token. Each type reads its own fields: `url` for RSS,
- * `repo` for GitHub releases and issues, `term` and `within` for GitHub mentions.
+ * `url`, `region`, `ignore` and `ignoreRobots` for a website, `repo` for GitHub releases and issues,
+ * `term` and `within` for GitHub mentions.
  */
 export interface AddValues {
   type: AddType;
@@ -40,6 +44,12 @@ export interface AddValues {
   repo: string;
   term: string;
   within: string;
+  /** A website's Region selector, empty for the whole page. */
+  region: string;
+  /** A website's ignore patterns, one a line. */
+  ignore: string;
+  /** "on" when a self-hosted website Source skips robots.txt. */
+  ignoreRobots: string;
   name: string;
   schedule: string;
 }
@@ -55,6 +65,9 @@ export function addValues(field: (name: string) => string): AddValues {
     repo: field("repo"),
     term: field("term"),
     within: field("within"),
+    region: field("region"),
+    ignore: field("ignore"),
+    ignoreRobots: field("ignoreRobots") === "on" ? "on" : "",
     name: field("name"),
     schedule: field("schedule"),
   };
@@ -66,6 +79,8 @@ export function addValues(field: (name: string) => string): AddValues {
  */
 export const addProblems = [
   "invalid-url",
+  "invalid-region",
+  "invalid-ignore",
   "invalid-repo",
   "no-repo",
   "invalid-term",
@@ -103,6 +118,8 @@ export function addFormSource(db: Db, deps: SourceDeps, workspaceId: string, val
   switch (values.type) {
     case "rss":
       return addRssSource(db, deps, workspaceId, values);
+    case "website":
+      return addWebsiteSource(db, deps, workspaceId, values);
     case "github-releases":
       return addGithubReleasesSource(db, deps, workspaceId, values);
     case "github-issues":
@@ -122,10 +139,8 @@ export async function addRssSource(
   workspaceId: string,
   input: { url: string; name: string; schedule: string },
 ): Promise<AddSourceResult> {
-  const url = URL.parse(input.url.trim());
-  if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) {
-    return { problem: "invalid-url" };
-  }
+  const url = webUrl(input.url);
+  if (url === null) return { problem: "invalid-url" };
   const schedule = presetSchedule(input.schedule);
   if (schedule === undefined) return { problem: "schedule" };
   if ((await watchedName(db, workspaceId, "rss", url.href)) !== undefined) return { problem: "duplicate" };
@@ -141,6 +156,58 @@ export async function addRssSource(
 
   const name = cleanName(input.name) || cleanName(feedTitle ?? "") || url.hostname;
   return save(db, { workspaceId, type: "rss", name, config: { url: url.href }, schedule });
+}
+
+/**
+ * Saves a website Source for its static fetch. The page isn't fetched first: its first poll stores the
+ * Baseline, and a page it can't read shows as that poll's last error. Robots.txt can be turned off
+ * only on self-hosted (ADR 0015).
+ */
+export async function addWebsiteSource(
+  db: Db,
+  deps: SourceDeps,
+  workspaceId: string,
+  input: { url: string; region: string; ignore: string; ignoreRobots: string; name: string; schedule: string },
+): Promise<AddSourceResult> {
+  const url = webUrl(input.url);
+  if (url === null) return { problem: "invalid-url" };
+  const region = cleanRegion(input.region);
+  if (region !== "" && regionError(region) !== undefined) return { problem: "invalid-region" };
+  const ignore = ignoreLines(input.ignore);
+  if (ignore.length > maxIgnore || ignore.some((pattern) => regexError(pattern) !== undefined)) {
+    return { problem: "invalid-ignore" };
+  }
+  const schedule = presetSchedule(input.schedule);
+  if (schedule === undefined) return { problem: "schedule" };
+  if ((await watchedName(db, workspaceId, "website", `${url.href} ${region}`)) !== undefined) {
+    return { problem: "duplicate" };
+  }
+  const config = {
+    url: url.href,
+    ...(region !== "" && { region }),
+    ignore,
+    render: "static" as const,
+    ...(deps.mode === "self-hosted" && input.ignoreRobots === "on" && { ignoreRobots: true as const }),
+  };
+  const name = cleanName(input.name) || cleanName(`${url.hostname}${url.pathname === "/" ? "" : url.pathname}`);
+  return save(db, { workspaceId, type: "website", name, config, schedule });
+}
+
+/** At most this many ignore patterns a Source (docs: Sources and ingestion, "Website change detection"). */
+const maxIgnore = 20;
+const cleanRegion = (region: string) => region.replaceAll("\0", "").trim();
+/** One pattern a line, trimmed, blank lines dropped. */
+const ignoreLines = (ignore: string) =>
+  ignore
+    .replaceAll("\0", "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+
+/** An absolute http or https URL, or null. */
+function webUrl(posted: string) {
+  const url = URL.parse(posted.trim());
+  return url !== null && (url.protocol === "http:" || url.protocol === "https:") ? url : null;
 }
 
 /**
@@ -285,8 +352,13 @@ function fetchProblem(error: unknown): { problem: AddProblem; status?: string } 
 export async function watchedSourceName(
   db: Db,
   workspaceId: string,
-  values: Pick<AddValues, "type" | "url" | "repo"> & Partial<Pick<AddValues, "term" | "within">>,
+  values: Pick<AddValues, "type" | "url" | "repo"> & Partial<Pick<AddValues, "term" | "within" | "region">>,
 ) {
+  if (values.type === "website") {
+    const href = URL.parse(values.url.trim())?.href;
+    const key = `${href ?? ""} ${cleanRegion(values.region ?? "")}`;
+    return href === undefined ? undefined : watchedName(db, workspaceId, "website", key);
+  }
   if (values.type === "rss") {
     const href = URL.parse(values.url.trim())?.href;
     return href === undefined ? undefined : watchedName(db, workspaceId, "rss", href);
@@ -302,7 +374,7 @@ export async function watchedSourceName(
   return repo === null ? undefined : watchedName(db, workspaceId, "github", githubKey({ kind, repo }));
 }
 
-async function watchedName(db: Db, workspaceId: string, type: "rss" | "github", dedupKey: string) {
+async function watchedName(db: Db, workspaceId: string, type: "rss" | "website" | "github", dedupKey: string) {
   const [watched] = await db
     .select({ name: source.name })
     .from(source)
@@ -321,6 +393,8 @@ export function problemMessage(
     url,
     repo: typed = "",
     term = "",
+    region = "",
+    ignore = "",
     status,
     mode,
     source: watching,
@@ -329,19 +403,35 @@ export function problemMessage(
     url: string;
     repo?: string;
     term?: string;
+    region?: string;
+    ignore?: string;
     status: string;
     mode: Config["mode"];
     source?: string | undefined;
   },
 ) {
-  const github = type !== "rss";
+  const github = type !== "rss" && type !== "website";
   // Only a repo parseRepo accepts is shown, so a crafted link can't put words on the page.
   const repo = parseRepo(typed) ?? "that repo";
   const hostname = github ? "github.com" : (URL.parse(url.trim())?.hostname ?? "");
   const host = hostname === "" ? "that address" : hostname;
   switch (problem) {
     case "invalid-url":
-      return "Enter the full RSS feed URL, starting with https://.";
+      return `Enter the full ${type === "website" ? "page" : "RSS feed"} URL, starting with https://.`;
+    case "invalid-region": {
+      // Only which rule the posted region breaks is said, never the region itself.
+      const why = regionError(cleanRegion(region));
+      if (why === "has") return "The region can't use :has(). Select the element itself, such as #pricing .plan.";
+      if (why === "too-long") return `Keep the region to ${maxRegionLength.toLocaleString("en")} characters or fewer.`;
+      return "That isn't a CSS selector Watchdog can match. Enter one such as main or #pricing .plan, or leave it empty to watch the whole page.";
+    }
+    case "invalid-ignore": {
+      if (ignoreLines(ignore).length > maxIgnore) return `Enter at most ${String(maxIgnore)} ignore patterns, one a line.`;
+      // Counted as the textarea shows them, blank lines included.
+      const line =
+        ignore.split(/\r?\n/).findIndex((text) => text.trim() !== "" && regexError(text.replaceAll("\0", "").trim()) !== undefined) + 1;
+      return `${line > 0 ? `Line ${String(line)}` : "A line"} isn't a regular expression Watchdog can run. Ignore patterns use RE2 syntax, such as \\d+ visitors.`;
+    }
     case "invalid-repo":
       return "Enter a GitHub repo as owner/name, such as vercel/next.js, or paste its URL.";
     case "no-repo":
@@ -362,6 +452,7 @@ export function problemMessage(
       const shownTerm = search !== "" && search.length <= maxTermLength ? `“${search}”` : "that term";
       const what = {
         rss: "watches that feed",
+        website: cleanRegion(region) === "" ? "watches that page" : "watches that part of that page",
         "github-releases": `watches the releases of ${repo}`,
         "github-issues": `watches the issues of ${repo}`,
         "github-mentions": `searches GitHub for ${shownTerm}`,
@@ -396,8 +487,10 @@ export const problemField = (problem: AddProblem, type: AddType = "rss") => {
   if (problem === "schedule") return "schedule";
   if (problem === "no-token" || problem === "invalid-token") return "token";
   if (problem === "invalid-within") return "within";
+  if (problem === "invalid-region") return "region";
+  if (problem === "invalid-ignore") return "ignore";
   if (type === "github-mentions") return "term";
-  return type === "rss" ? "url" : "repo";
+  return type === "rss" || type === "website" ? "url" : "repo";
 };
 
 /** The Workspace's Sources, newest first. */
@@ -406,6 +499,7 @@ export function listSources(db: Db, workspaceId: string) {
     where: eq(source.workspaceId, workspaceId),
     columns: {
       id: true,
+      type: true,
       name: true,
       config: true,
       schedule: true,
