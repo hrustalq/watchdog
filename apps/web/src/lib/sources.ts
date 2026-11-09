@@ -206,7 +206,7 @@ export async function addGithubMentionsSource(
 
 /** GitHub caps a search query at 256 characters, which the term shares with its qualifiers. */
 const maxTermLength = 100;
-const cleanTerm = (term: string) => term.replace(/\s+/g, " ").trim();
+const cleanTerm = (term: string) => term.replaceAll("\0", "").replace(/\s+/g, " ").trim();
 
 /** A pasted token as GitHub shows it: printable ASCII, no spaces. */
 const tokenPattern = /^[\x21-\x7e]{1,255}$/;

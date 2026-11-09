@@ -19,7 +19,8 @@ type FieldName = "url" | "repo" | "term" | "within" | "token" | "schedule";
 // JavaScript. No field is `required`, and the URL isn't `type="url"`: a hidden field the browser
 // finds invalid would block the submit. Tailwind needs each class written out whole.
 const shownFor = {
-  url: "[form:has(#type-rss:checked)_&]:flex",
+  // Shown unless another type is checked, so RSS still works in a browser without :has().
+  url: "flex [form:has(#type-github-releases:checked)_&]:hidden [form:has(#type-github-issues:checked)_&]:hidden [form:has(#type-github-mentions:checked)_&]:hidden",
   repo: "[form:has(#type-github-releases:checked)_&]:flex [form:has(#type-github-issues:checked)_&]:flex",
   search: "[form:has(#type-github-mentions:checked)_&]:flex",
   token: "[form:has(#type-github-issues:checked)_&]:flex [form:has(#type-github-mentions:checked)_&]:flex",

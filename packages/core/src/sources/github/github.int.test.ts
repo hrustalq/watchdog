@@ -120,27 +120,20 @@ describe("GitHub issues and mentions Sources", () => {
       .sort();
 
   describe("issues", () => {
-    it("captures new issues, not PRs, from every page, and a second poll's 304 inserts nothing", async () => {
+    const repo = "microsoft/vscode";
+    const newestCreated = `${api}/repos/${repo}/issues?state=all&sort=created&direction=desc&per_page=100`;
+
+    it("takes the Backfill from the newest issues created, leaving PRs and older issues out", async () => {
       const ws = await newWorkspace();
-      const src = await newSource(ws, { kind: "issues", repo: "microsoft/vscode" }, "github_pat_issues");
-      const since = new Date(recordedAt.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const first = github(recordedAt, ({ url }) => {
-        if (url === issuesUrl("microsoft/vscode", since)) return answer(page1);
-        return url === page2Url ? answer(page2) : undefined;
-      });
+      const src = await newSource(ws, { kind: "issues", repo }, "github_pat_backfill");
+      const { asked, deps } = github(recordedAt, ({ url }) => (url === newestCreated ? answer(page1) : undefined));
 
-      expect(await pollSource(db, src.id, first.deps)).toEqual({ captured: 2 });
+      expect(await pollSource(db, src.id, deps)).toEqual({ captured: 1 });
 
-      // The Backfill keeps issues created in the 7 days before the poll: older issues that were
-      // only edited lately, and the PRs, stay out.
-      expect(await capturedIds(src.id)).toEqual(["345911", "346911"]);
-      expect(first.asked.map((request) => request.url)).toEqual([issuesUrl("microsoft/vscode", since), page2Url]);
-      for (const { headers } of first.asked) {
-        expect(headers.get("authorization")).toBe("Bearer github_pat_issues");
-        expect(headers.get("x-github-api-version")).toBe("2022-11-28");
-        expect(headers.get("accept")).toBe("application/vnd.github+json");
-      }
-      const [captured] = await db.select().from(item).where(eq(item.externalId, "346911"));
+      expect(asked.map((request) => request.url)).toEqual([newestCreated]);
+      // On the page: an issue opened that morning, two from August edited lately, and a PR.
+      expect(await capturedIds(src.id)).toEqual(["346911"]);
+      const [captured] = await db.select().from(item).where(eq(item.sourceId, src.id));
       expect(captured).toMatchObject({
         url: "https://github.com/microsoft/vscode/issues/346911",
         title: "Switching back to `required` did not block sending in the existing chat",
@@ -148,31 +141,51 @@ describe("GitHub issues and mentions Sources", () => {
         publishedAt: new Date("2026-11-09T08:44:49Z"),
         isBackfill: true,
       });
-      const afterFirst = await reload(src.id);
-      expect(afterFirst.fetchState).toEqual({ since: "2026-11-09T08:53:52Z", etag: page1.headers.etag });
+      // Later polls start 5 minutes before this one, for GitHub's clock.
+      const start = "2026-11-09T10:39:40.000Z";
+      expect((await reload(src.id)).fetchState).toEqual({ since: start, from: start });
+    });
 
-      const second = github(recordedAt, ({ url, headers }) =>
-        url === issuesUrl("microsoft/vscode", "2026-11-09T08:53:52Z") &&
-        headers.get("if-none-match") === page1.headers.etag
+    it("captures issues opened since the first poll from every page, once, and a 304 inserts nothing", async () => {
+      const ws = await newWorkspace();
+      const src = await newSource(ws, { kind: "issues", repo }, "github_pat_issues");
+      // As the Backfill left it, at 08:30, before the recorded pages' issues were updated.
+      const start = "2026-11-09T08:25:00.000Z";
+      await db
+        .update(source)
+        .set({ fetchState: { since: start, from: start }, backfilledAt: new Date("2026-11-09T08:30:00Z") })
+        .where(eq(source.id, src.id));
+      const pages = github(recordedAt, ({ url }) => {
+        if (url === issuesUrl(repo, start) || url === issuesUrl(repo, "2026-11-09T08:53:52Z")) return answer(page1);
+        return url === page2Url ? answer(page2) : undefined;
+      });
+
+      expect(await pollSource(db, src.id, pages.deps)).toEqual({ captured: 1 });
+
+      // Only 346911 was opened after 08:25: the rest are older issues someone edited, and PRs.
+      expect(await capturedIds(src.id)).toEqual(["346911"]);
+      expect(pages.asked.map((request) => request.url)).toEqual([issuesUrl(repo, start), page2Url]);
+      for (const { headers } of pages.asked) {
+        expect(headers.get("authorization")).toBe("Bearer github_pat_issues");
+        expect(headers.get("x-github-api-version")).toBe("2022-11-28");
+        expect(headers.get("accept")).toBe("application/vnd.github+json");
+      }
+      const polled = await reload(src.id);
+      expect(polled.fetchState).toEqual({ since: "2026-11-09T08:53:52Z", from: start, etag: page1.headers.etag });
+
+      // The same issues again, edited since: nothing new.
+      expect(await pollSource(db, src.id, pages.deps)).toEqual({ captured: 0 });
+
+      const unchanged = github(recordedAt, ({ url, headers }) =>
+        url === issuesUrl(repo, "2026-11-09T08:53:52Z") && headers.get("if-none-match") === page1.headers.etag
           ? answer(notModified)
           : undefined,
       );
-      expect(await pollSource(db, src.id, second.deps)).toEqual({ captured: 0 });
-      expect(second.asked).toHaveLength(1);
-      expect(second.asked.some((request) => request.url.startsWith(`${api}/search/`))).toBe(false);
-      expect(await capturedIds(src.id)).toEqual(["345911", "346911"]);
-      expect(await reload(src.id)).toMatchObject({ lastError: null, fetchState: afterFirst.fetchState });
-    });
-
-    it("never captures an edited issue again", async () => {
-      const ws = await newWorkspace();
-      const src = await newSource(ws, { kind: "issues", repo: "microsoft/vscode" }, "github_pat_edits");
-      const both = github(recordedAt, ({ url }) => (url === page2Url ? answer(page2) : answer(page1)));
-      await pollSource(db, src.id, both.deps);
-
-      // The same issues come back with a new updated_at.
-      expect(await pollSource(db, src.id, both.deps)).toEqual({ captured: 0 });
-      expect(await capturedIds(src.id)).toEqual(["345911", "346911"]);
+      expect(await pollSource(db, src.id, unchanged.deps)).toEqual({ captured: 0 });
+      expect(unchanged.asked).toHaveLength(1);
+      expect(unchanged.asked.some((request) => request.url.startsWith(`${api}/search/`))).toBe(false);
+      expect(await capturedIds(src.id)).toEqual(["346911"]);
+      expect(await reload(src.id)).toMatchObject({ lastError: null, fetchState: polled.fetchState });
     });
 
     it("says to paste a new token when GitHub refuses a pasted one", async () => {
@@ -232,7 +245,7 @@ describe("GitHub issues and mentions Sources", () => {
     const searchUrl =
       `${api}/search/issues?` +
       new URLSearchParams({
-        q: `${term} (is:issue OR is:pr) ${within}`,
+        q: `(${term}) (is:issue OR is:pr) ${within}`,
         sort: "created",
         order: "desc",
         per_page: "100",
@@ -304,6 +317,26 @@ describe("GitHub issues and mentions Sources", () => {
       const waiting = github(new Date(reset.getTime() - 5000), () => answer(search));
       expect(await pollSource(db, sibling.id, waiting.deps)).toEqual({ deferredUntil: new Date(reset.getTime() + 1000) });
       expect(waiting.asked).toEqual([]);
+    });
+
+    it("waits a minute after a secondary rate limit that names no time", async () => {
+      const ws = await newWorkspace("gho_secondary");
+      const src = await newSource(ws, { kind: "mentions", term: "secondary" });
+      const message = "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.";
+      const { deps } = github(recordedAt, () => answer({ status: 403, headers: {}, body: { message } }));
+
+      expect(await pollSource(db, src.id, deps)).toEqual({ deferredUntil: new Date(recordedAt.getTime() + 60_000) });
+    });
+
+    it("fails the poll on a 403 that isn't a rate limit", async () => {
+      const ws = await newWorkspace("gho_forbidden");
+      const src = await newSource(ws, { kind: "issues", repo: "octo-org/locked" });
+      const body = { message: "Resource not accessible by personal access token" };
+      const { deps } = github(recordedAt, () => answer({ status: 403, headers: { "x-ratelimit-remaining": "4999" }, body }));
+
+      expect(await pollSource(db, src.id, deps)).toEqual({
+        error: "GitHub answered 403: Resource not accessible by personal access token",
+      });
     });
 
     it("waits out a retry-after", async () => {

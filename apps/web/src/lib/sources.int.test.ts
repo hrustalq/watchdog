@@ -545,7 +545,7 @@ describe("Sources", () => {
       const anywhere = await saved(await mentions(signedIn, "watchdog"));
       expect(anywhere).toMatchObject({ name: "watchdog on GitHub", config: { kind: "mentions", term: "watchdog" } });
 
-      expect(await mentions(signedIn, "hydration mismatch", "vercel/next.js")).toEqual({ problem: "duplicate" });
+      expect(await mentions(signedIn, "hydration mismatch", "Vercel/Next.js")).toEqual({ problem: "duplicate" });
       const values = { type: "github-mentions" as const, url: "", repo: "", term: "hydration mismatch", within: "vercel/next.js" };
       const watching = await watchedSourceName(db, signedIn, values);
       expect(watching).toBe("hydration mismatch in vercel/next.js");
@@ -565,6 +565,11 @@ describe("Sources", () => {
     ] as const)("refuses the term %j", async (term, problem) => {
       expect(await mentions(signedIn, term)).toEqual({ problem });
       expect(problemField(problem, "github-mentions")).toBe("term");
+    });
+
+    it("drops a NUL from the term, which Postgres can't store", async () => {
+      const row = await saved(await mentions(signedIn, "nul\0term"));
+      expect(row?.config).toEqual({ kind: "mentions", term: "nulterm" });
     });
 
     it("refuses a limit that is neither an org nor a repo", async () => {

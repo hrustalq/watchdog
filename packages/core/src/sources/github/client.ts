@@ -137,11 +137,18 @@ export async function githubGet(
   });
 
   const header = (name: string) => Number.parseInt(response.headers.get(name) ?? "", 10) || 0;
-  // Just past the reset when none remain, or the retry-after time.
+  const limited = response.status === 403 || response.status === 429;
+  // A refused request's message; the status alone doesn't tell a rate limit from no access.
+  const body: unknown = response.ok || response.status === 304 ? null : await response.json().catch(() => null);
+  const message = typeof body === "object" && body !== null && "message" in body ? String(body.message) : "";
+  // Just past the reset when none remain, or the retry-after time. A secondary rate limit can come
+  // with neither, and GitHub asks for a wait of at least a minute then.
   const spent = response.headers.get("x-ratelimit-remaining") === "0";
   const resetAt = spent ? header("x-ratelimit-reset") * 1000 + 1000 : 0;
   const retryAt = header("retry-after") > 0 ? now.getTime() + header("retry-after") * 1000 : 0;
-  const pausedUntil = new Date(Math.max(resetAt, retryAt));
+  const named = Math.max(resetAt, retryAt) > now.getTime();
+  const secondary = limited && !named && /rate limit/i.test(message) ? now.getTime() + 60_000 : 0;
+  const pausedUntil = new Date(Math.max(resetAt, retryAt, secondary));
   if (pausedUntil > now) {
     // Kept per token, so its other Sources wait too. A later answer never shortens the pause.
     await db
@@ -154,15 +161,7 @@ export async function githubGet(
   }
 
   if (response.ok || response.status === 304) return response;
-  if ((response.status === 403 || response.status === 429) && pausedUntil > now) {
-    await response.body?.cancel();
-    return { deferUntil: pausedUntil };
-  }
-  if (response.status === 401) {
-    await response.body?.cancel();
-    throw new GithubTokenError(token.pasted);
-  }
-  const body: unknown = await response.json().catch(() => null);
-  const message = typeof body === "object" && body !== null && "message" in body ? String(body.message) : "";
+  if (limited && pausedUntil > now) return { deferUntil: pausedUntil };
+  if (response.status === 401) throw new GithubTokenError(token.pasted);
   throw new GithubHttpError(response.status, message);
 }
