@@ -98,12 +98,8 @@ export function AddSourceForm({
       </fieldset>
       <TextField
         id="url"
-        label={
-          <>
-            <span className="[form:has(#type-website:checked)_&]:hidden">RSS feed URL</span>
-            <span className="hidden [form:has(#type-website:checked)_&]:inline">Page URL</span>
-          </>
-        }
+        label="RSS feed URL"
+        websiteLabel="Page URL"
         className={shownFor.url}
         error={errorFor("url")}
         help={
@@ -331,10 +327,15 @@ function addedNotice(type: AddType) {
   return "Source added. The worker fetches it within a minute, and its recent entries show up in the Feed as the Backfill.";
 }
 
-/** A labelled text field, hidden unless `className` shows it, with its help or its error below. */
+/**
+ * A labelled text field, hidden unless `className` shows it, with its help or its error below. With
+ * `websiteLabel`, a second label takes over while Website is chosen. Each is its own <label>, so
+ * each one's text is exactly its name, not both run together.
+ */
 function TextField({
   id,
   label: text,
+  websiteLabel,
   optional = false,
   help,
   error,
@@ -343,7 +344,8 @@ function TextField({
   ...input
 }: {
   id: FieldName;
-  label: ReactNode;
+  label: string;
+  websiteLabel?: string;
   optional?: boolean;
   help: ReactNode;
   error: string | undefined;
@@ -353,10 +355,18 @@ function TextField({
   const invalid = error !== undefined;
   return (
     <div className={cn("hidden flex-col gap-2", className)}>
-      <label htmlFor={id} className={label}>
+      <label
+        htmlFor={id}
+        className={cn(label, websiteLabel !== undefined && "[form:has(#type-website:checked)_&]:hidden")}
+      >
         {text}
         {optional ? <span className="font-normal text-muted-foreground"> (optional)</span> : null}
       </label>
+      {websiteLabel === undefined ? null : (
+        <label htmlFor={id} className={cn(label, "hidden [form:has(#type-website:checked)_&]:block")}>
+          {websiteLabel}
+        </label>
+      )}
       <input
         type="text"
         spellCheck={false}
