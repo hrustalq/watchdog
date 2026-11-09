@@ -61,6 +61,8 @@ const rules: [string, Rule][] = [
         { name: "cve", type: "string", from: "title", regex: "(CVE-\\d+-\\d+)" },
         { name: "score", type: "integer", from: "body", regex: "score: (\\d+)" },
         { name: "tags", type: "string-array", jsonpath: "$.tags[*].name" },
+        { name: "plans", type: "string-array", css: ".plan > h3:first-child" },
+        { name: "signup", type: "string", css: "a[href^='https://']", attr: "href" },
       ],
     },
   ],

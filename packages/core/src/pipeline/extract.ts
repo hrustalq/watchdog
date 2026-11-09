@@ -2,6 +2,7 @@
 import { and, type Db, eq, extractorRule, inArray, itemCategory, itemField, sql, type Tx } from "@watchdog/db";
 import type { z } from "zod";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
+import { cssValues, parseHtml } from "../rules/css.ts";
 import { jsonPathValues, maxFieldValues } from "../rules/jsonpath.ts";
 import { firstCapture } from "../rules/regex.ts";
 import { type DeterministicExtractorRule, deterministicExtractorRuleSchema } from "../rules/schema.ts";
@@ -12,6 +13,8 @@ type Value = string | number;
 
 /** What a field can read from an Item. */
 export interface ExtractionSource {
+  /** Its Source's type, which says why an Item has no page HTML. */
+  sourceType: string | null;
   title: string | null;
   body: string | null;
   raw: unknown;
@@ -25,9 +28,29 @@ export interface Extraction {
   problems: { name: string; reason: string }[];
 }
 
-/** What the field finds, or undefined when `raw` nests too deeply to read. */
-function read(field: Field, source: ExtractionSource): unknown[] | undefined {
-  if ("jsonpath" in field) return jsonPathValues(field.jsonpath, source.raw);
+// One parse per Item serves every CSS field of every rule, while the stage holds the Item.
+const pages = new WeakMap<ExtractionSource, ReturnType<typeof parseHtml>>();
+
+function pageOf(source: ExtractionSource, html: string) {
+  if (!pages.has(source)) pages.set(source, parseHtml(html));
+  return pages.get(source);
+}
+
+/** What the field finds, or why it can't read anything. */
+function read(field: Field, source: ExtractionSource): unknown[] | string {
+  if ("jsonpath" in field) return jsonPathValues(field.jsonpath, source.raw) ?? "the Item's raw payload nests too deeply to read";
+  if ("css" in field) {
+    // Only a website Item keeps page HTML, and another Source's payload can have an `html` key too.
+    if (source.sourceType !== "website") return "no page HTML on this Item";
+    const html: unknown = typeof source.raw === "object" && source.raw !== null && "html" in source.raw ? source.raw.html : undefined;
+    if (typeof html !== "string") return "the page HTML was too large to keep";
+    const page = pageOf(source, html);
+    if (page === undefined) return "the page HTML nests too deeply to read";
+    const all = field.type.endsWith("-array");
+    // One past the most a field holds, so a page with too many matches is refused rather than cut.
+    const values = cssValues(page, field.css, { attr: field.attr, limit: all ? maxFieldValues + 1 : 1 });
+    return values ?? "its matches nest inside each other and add up to more than 1 MB of HTML";
+  }
   const text = source[field.from];
   const captured = text === null ? undefined : firstCapture(field.regex, text);
   return captured === undefined ? [] : [captured];
@@ -51,18 +74,18 @@ function kindOf(value: unknown) {
 
 /**
  * Converts what each field of a rule found to the type the rule declares. `find` gives the field's
- * values, or undefined when they can't be read.
+ * values, or why it can't read any.
  */
 export function toExtraction<Declared extends { name: string; type: Field["type"] }>(
   fields: readonly Declared[],
-  find: (field: Declared) => unknown[] | undefined,
+  find: (field: Declared) => unknown[] | string,
 ): Extraction {
   const extraction: Extraction = { values: [], empty: [], problems: [] };
   for (const field of fields) {
     const { name } = field;
     const found = find(field);
-    if (found === undefined) {
-      extraction.problems.push({ name, reason: "the Item's raw payload nests too deeply to read" });
+    if (typeof found === "string") {
+      extraction.problems.push({ name, reason: found });
       continue;
     }
     // A path that lands on one array means its values, so `$.tags` and `$.tags[*]` read alike. A

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { DeterministicExtractorRule } from "../rules/schema.ts";
 import { extractFields } from "./extract.ts";
@@ -5,7 +6,10 @@ import { extractFields } from "./extract.ts";
 type Field = DeterministicExtractorRule["fields"][number];
 type Unnamed<F = Field> = F extends unknown ? Omit<F, "name"> : never;
 
-const item = (overrides: { title?: string | null; body?: string | null; raw?: unknown } = {}) => ({
+const item = (
+  overrides: { title?: string | null; body?: string | null; raw?: unknown; sourceType?: string | null } = {},
+) => ({
+  sourceType: "rss",
   title: null,
   body: null,
   raw: {},
@@ -209,5 +213,105 @@ describe("extractFields on a rule", () => {
       empty: ["missing"],
       problems: [{ name: "bad", reason: "it holds a string, which can't convert to integer" }],
     });
+  });
+});
+
+describe("extractFields with a CSS selector", () => {
+  const html = readFileSync(new URL("fixtures/pricing-page.html", import.meta.url), "utf8");
+  const page = item({ sourceType: "website", raw: { text: "", html } });
+
+  it("stores the text of the first match for a single type", () => {
+    expect(extractOne({ type: "string", css: ".plan h3" }, page)).toEqual({
+      values: [{ name: "x", value: "Free" }],
+      empty: [],
+      problems: [],
+    });
+  });
+
+  it("reads a match's text through htmlToText, trimmed and with entities decoded", () => {
+    expect(extractOne({ type: "integer", css: ".plan-pro .price" }, page).values).toEqual([{ name: "x", value: 29 }]);
+    expect(extractOne({ type: "string-array", css: ".plan h3" }, page).values).toEqual([
+      { name: "x", value: ["Free", "Pro most popular", "Team & Enterprise"] },
+    ]);
+  });
+
+  it("stores an attribute with attr, and a match without it adds nothing", () => {
+    expect(extractOne({ type: "string", css: ".plan-pro a", attr: "href" }, page).values).toEqual([
+      { name: "x", value: "https://example.com/signup?plan=pro&trial=1" },
+    ]);
+    expect(extractOne({ type: "string-array", css: ".plan a", attr: "href" }, page).values).toEqual([
+      {
+        name: "x",
+        value: ["https://example.com/signup?plan=free", "https://example.com/signup?plan=pro&trial=1"],
+      },
+    ]);
+  });
+
+  it("finds nothing, which is no error, when nothing matches", () => {
+    expect(extractOne({ type: "string", css: ".discount" }, page)).toEqual({ values: [], empty: ["x"], problems: [] });
+    expect(extractOne({ type: "string", css: ".plan-team a", attr: "href" }, page).empty).toEqual(["x"]);
+  });
+
+  it("stores nothing on an Item from another Source and says it has no page HTML", () => {
+    expect(extractOne({ type: "string", css: "h3" }, item({ raw: { html } }))).toEqual({
+      values: [],
+      empty: [],
+      problems: [{ name: "x", reason: "no page HTML on this Item" }],
+    });
+  });
+
+  it("stores nothing on a website Item whose HTML was too large to keep, and says so", () => {
+    expect(extractOne({ type: "string", css: "h3" }, item({ sourceType: "website", raw: { text: "" } })).problems).toEqual([
+      { name: "x", reason: "the page HTML was too large to keep" },
+    ]);
+  });
+
+  it("refuses a document with more matches than a field can hold, without failing the Item", () => {
+    const many = item({ sourceType: "website", raw: { html: "<li>1</li>".repeat(5000) } });
+    expect(extractOne({ type: "integer-array", css: "li" }, many)).toEqual({
+      values: [],
+      empty: [],
+      problems: [{ name: "x", reason: "it found more than 1000 values" }],
+    });
+    expect(extractOne({ type: "integer", css: "li" }, many).values).toEqual([{ name: "x", value: 1 }]);
+  });
+
+  it("doesn't match a document nested too deeply, and says so", () => {
+    const deep = item({ sourceType: "website", raw: { html: `${"<div>".repeat(1001)}x` } });
+    expect(extractOne({ type: "string", css: "div div div" }, deep).problems).toEqual([
+      { name: "x", reason: "the page HTML nests too deeply to read" },
+    ]);
+  });
+
+  it("refuses nested matches whose HTML adds up to more than the page cap, without failing the Item", () => {
+    const text = "x".repeat(2000);
+    const nested = item({ sourceType: "website", raw: { html: `${"<div>".repeat(900)}${text}${"</div>".repeat(900)}` } });
+    expect(extractOne({ type: "string-array", css: "div" }, nested)).toEqual({
+      values: [],
+      empty: [],
+      problems: [{ name: "x", reason: "its matches nest inside each other and add up to more than 1 MB of HTML" }],
+    });
+    expect(extractOne({ type: "string", css: "div" }, nested).values).toEqual([{ name: "x", value: text }]);
+  });
+
+  it("skips a match with blank text or a blank attribute, and trims an attribute's value", () => {
+    const markup = '<span class="p"> </span><span class="p" data-n=" 29 ">7</span><span class="p" data-n="">8</span>';
+    const spans = item({ sourceType: "website", raw: { html: markup } });
+    expect(extractOne({ type: "integer-array", css: ".p" }, spans).values).toEqual([{ name: "x", value: [7, 8] }]);
+    expect(extractOne({ type: "integer-array", css: ".p", attr: "data-n" }, spans).values).toEqual([
+      { name: "x", value: [29] },
+    ]);
+  });
+
+  it("runs a hostile selector on a large page in bounded time", () => {
+    const nested = `${"<div><p>x</p>".repeat(900)}${"</div>".repeat(900)}`;
+    const large = item({ sourceType: "website", raw: { html: nested } });
+    const started = performance.now();
+    const found = extractOne({ type: "string-array", css: "div div div div div div p:not(:empty) ~ *" }, large);
+    // Each match is a div holding the rest of the page, so the nesting cap ends it.
+    expect(found.problems.map((problem) => problem.reason)).toEqual([
+      "its matches nest inside each other and add up to more than 1 MB of HTML",
+    ]);
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 });

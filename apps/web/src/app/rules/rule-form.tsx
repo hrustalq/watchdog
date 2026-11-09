@@ -98,7 +98,17 @@ const readsFrom: Options = [
   ["title", "Title, by regex"],
   ["body", "Body, by regex"],
   ["jsonpath", "Source payload, by JSONPath"],
+  ["css", "Page HTML, by CSS selector"],
 ];
+const patterns = {
+  regex: { label: "Regular expression", placeholder: "(CVE-\\d+-\\d+)", hint: "The field takes the first capture group, so the regex needs one." },
+  jsonpath: { label: "JSONPath", placeholder: "$.categories[*].name", hint: "The path reads the Source's own payload for this Item." },
+  css: {
+    label: "CSS selector",
+    placeholder: ".plan-pro .price",
+    hint: "The selector reads the HTML of the website Source's Region, which is what a website Item keeps. Without an attribute, the field takes each match's text.",
+  },
+};
 
 const sourcesList = "rule-form-sources";
 
@@ -804,7 +814,7 @@ function FieldList({ hidden }: { hidden: boolean }) {
   );
 }
 
-function FieldLabel({ text, children }: { text: string; children: React.ReactNode }) {
+function FieldLabel({ text, children }: { text: React.ReactNode; children: React.ReactNode }) {
   return (
     <label className="flex min-w-0 flex-col gap-1">
       <span className={label}>{text}</span>
@@ -821,19 +831,22 @@ function FieldRow({
 }: {
   path: Path;
   entry: Record<string, unknown>;
-  part: "regex" | "jsonpath" | "agent";
+  part: "regex" | "jsonpath" | "css" | "agent";
   onRemove: () => void;
 }) {
-  const { edit, reshape } = useEditing();
+  const { edit, reshape, remove } = useEditing();
   const nameInvalid = useInvalid([...path, "name"], path);
   const typeInvalid = useInvalid([...path, "type"], path);
   const fromInvalid = useInvalid([...path, "from"], path);
-  const patternKey = part === "jsonpath" ? "jsonpath" : "regex";
+  const patternKey = part === "agent" ? "regex" : part;
+  const pattern = patterns[patternKey];
   const patternPath = [...path, patternKey];
   const patternInvalid = useInvalid(patternPath, path);
+  const attrPath = [...path, "attr"];
+  const attrInvalid = useInvalid(attrPath, path);
 
   function readFrom(next: string) {
-    if (next === "jsonpath") reshape(path, fieldReading(entry, "jsonpath"));
+    if (next === "jsonpath" || next === "css") reshape(path, fieldReading(entry, next));
     else if (part === "regex") edit([...path, "from"], next);
     else reshape(path, { ...fieldReading(entry, "regex"), from: next });
   }
@@ -858,12 +871,12 @@ function FieldRow({
         {part === "agent" ? null : (
           <>
             <FieldLabel text="Reads from">
-              <Choice labelText="Reads from" value={part === "jsonpath" ? "jsonpath" : entry.from} options={readsFrom} invalid={fromInvalid} onChange={readFrom} />
+              <Choice labelText="Reads from" value={part === "regex" ? entry.from : part} options={readsFrom} invalid={fromInvalid} onChange={readFrom} />
             </FieldLabel>
-            <FieldLabel text={part === "jsonpath" ? "JSONPath" : "Regular expression"}>
+            <FieldLabel text={pattern.label}>
               <input
                 type="text"
-                placeholder={part === "jsonpath" ? "$.categories[*].name" : "(CVE-\\d+-\\d+)"}
+                placeholder={pattern.placeholder}
                 spellCheck={false}
                 value={textOf(entry[patternKey])}
                 onChange={(event) => { edit(patternPath, event.target.value); }}
@@ -871,16 +884,33 @@ function FieldRow({
                 {...patternInvalid}
               />
             </FieldLabel>
+            {part === "css" ? (
+              <FieldLabel
+                text={
+                  <>
+                    Attribute <span className="font-normal text-muted-foreground">(optional)</span>
+                  </>
+                }
+              >
+                <input
+                  type="text"
+                  placeholder="href"
+                  spellCheck={false}
+                  value={textOf(entry.attr)}
+                  onChange={(event) => {
+                    // An empty attribute isn't one: the field reads each match's text.
+                    if (event.target.value === "") remove(attrPath);
+                    else edit(attrPath, event.target.value);
+                  }}
+                  className={cn(fieldClass, dataBox)}
+                  {...attrInvalid}
+                />
+              </FieldLabel>
+            ) : null}
           </>
         )}
       </div>
-      {part === "agent" ? null : (
-        <p className="text-xs text-muted-foreground">
-          {part === "regex"
-            ? "The field takes the first capture group, so the regex needs one."
-            : "The path reads the Source's own payload for this Item."}
-        </p>
-      )}
+      {part === "agent" ? null : <p className="text-xs text-muted-foreground">{pattern.hint}</p>}
       <Problems at={path} />
       <div>
         <SmallButton onClick={onRemove}>Remove</SmallButton>

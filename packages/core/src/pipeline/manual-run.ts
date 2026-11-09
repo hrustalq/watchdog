@@ -61,13 +61,13 @@ export async function runExtractorRuleByHand(
   deps: AgentDeps,
 ): Promise<number | undefined> {
   const [found] = await db
-    .select({ item, sourceName: source.name, rule: extractorRule })
+    .select({ item, sourceName: source.name, sourceType: source.type, rule: extractorRule })
     .from(item)
     .innerJoin(source, eq(item.sourceId, source.id))
     .innerJoin(extractorRule, and(eq(extractorRule.id, ruleId), eq(extractorRule.workspaceId, workspaceId)))
     .where(and(eq(item.id, itemId), eq(item.workspaceId, workspaceId)));
   if (found === undefined) return undefined;
-  const { item: target, sourceName, rule } = found;
+  const { item: target, sourceName, sourceType, rule } = found;
   const named = { extractorRuleId: rule.id, extractor: rule.name };
 
   const failure = (tx: Tx, reason: string, data: Record<string, unknown> = {}) =>
@@ -109,7 +109,7 @@ export async function runExtractorRuleByHand(
 
   if (rule.kind === "deterministic") {
     const parsed = deterministicExtractorRuleSchema.safeParse(rule.definition);
-    return parsed.success ? store(extractFields(parsed.data.fields, target)) : unreadable(parsed.error);
+    return parsed.success ? store(extractFields(parsed.data.fields, { ...target, sourceType })) : unreadable(parsed.error);
   }
 
   const parsed = agentExtractorRuleSchema.safeParse(rule.definition);

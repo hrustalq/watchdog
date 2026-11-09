@@ -1,6 +1,7 @@
 // The canonical rule model (docs: Rule model; ADR 0007). The form and YAML are views of these shapes,
 // so the schemas are strict: a key they don't know would otherwise vanish on the way through.
 import { z } from "zod";
+import { cssError } from "./css.ts";
 import { jsonPathError } from "./jsonpath.ts";
 import { scheduleError } from "../schedule.ts";
 import { captureRegexError, regexError } from "./regex.ts";
@@ -201,7 +202,7 @@ function fieldList<T extends { name: string }>(fieldSchema: z.ZodType<T>) {
 const singleType = z.enum(["string", "integer"]);
 const anyType = z.enum(["string", "integer", "string-array", "integer-array"]);
 
-// One capture group gives one value, so only JSONPath can fill an array.
+// One capture group gives one value, so only JSONPath and CSS can fill an array.
 const regexFieldSchema = z.strictObject({
   name,
   type: singleType,
@@ -214,14 +215,28 @@ const jsonPathFieldSchema = z.strictObject({
   jsonpath: refusedBy(jsonPathError),
 });
 
-type RegexField = z.infer<typeof regexFieldSchema>;
-type JsonPathField = z.infer<typeof jsonPathFieldSchema>;
+const cssFieldSchema = z.strictObject({
+  name,
+  type: anyType,
+  css: refusedBy(cssError),
+  // A name that can't be an attribute's would save and then match nothing on every Item.
+  attr: z
+    .string()
+    .regex(/^[^\s"'>/=]+$/, "An attribute name is one word, without quotes, >, / or =.")
+    .optional(),
+});
 
-const notRegexOrJsonPath = refused("A field reads from either regex or jsonpath.");
+type DeterministicField =
+  | z.infer<typeof regexFieldSchema>
+  | z.infer<typeof jsonPathFieldSchema>
+  | z.infer<typeof cssFieldSchema>;
 
-const deterministicFieldSchema = byShape<RegexField | JsonPathField>((value) => {
-  if (has(value, "regex") === has(value, "jsonpath")) return notRegexOrJsonPath;
-  return has(value, "regex") ? regexFieldSchema : jsonPathFieldSchema;
+const readings = { regex: regexFieldSchema, jsonpath: jsonPathFieldSchema, css: cssFieldSchema };
+const notOneReading = refused("A field reads from exactly one of regex, jsonpath or css.");
+
+const deterministicFieldSchema = byShape<DeterministicField>((value) => {
+  const [reading, ...others] = Object.entries(readings).filter(([key]) => has(value, key));
+  return reading === undefined || others.length > 0 ? notOneReading : reading[1];
 });
 
 export const deterministicClassifierSchema = z.strictObject({
