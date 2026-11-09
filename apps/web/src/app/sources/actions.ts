@@ -23,8 +23,8 @@ export async function addSource(formData: FormData) {
   const values = addValues((name) => text(formData, name));
   // Read apart from the values, which go into the URL: the token never leaves the server.
   const token = text(formData, "token");
-  const { db, fetch, mode, encryptionKey, rendering } = server();
-  const result = await addFormSource(db, { fetch, mode, encryptionKey, rendering }, workspace.id, { ...values, token });
+  const { db, fetch, mode, encryptionKey, renderers } = server();
+  const result = await addFormSource(db, { fetch, mode, encryptionKey, renderers }, workspace.id, { ...values, token });
   // The type stays chosen, so a second repo or feed can follow without choosing it again.
   if ("source" in result) redirect(`/sources?${new URLSearchParams({ added: "1", type: values.type })}`);
   const back = new URLSearchParams({ error: result.problem, ...values });

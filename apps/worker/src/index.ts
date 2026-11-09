@@ -10,7 +10,7 @@ import {
   sendEmailCapNotice,
 } from "@watchdog/core";
 // Apart from the main entry, which web imports too, so only the worker loads playwright-core.
-import { createObscuraRenderer } from "@watchdog/core/render";
+import { createChromiumRenderer, createObscuraRenderer } from "@watchdog/core/render";
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { startDelivery } from "./delivery.ts";
@@ -68,6 +68,7 @@ await startScheduler(db, boss, config.mode, {
   enqueueItems: itemEnqueuer(boss),
   secrets: { encryptionKey: config.encryptionKey, authSecret: config.auth.secret },
   ...(cdpUrl !== undefined && { obscura: createObscuraRenderer({ cdpUrl, cdpToken }) }),
+  ...(config.chromium && { chromium: createChromiumRenderer(config.chromium, egressFetch) }),
 });
 const { botToken } = config.telegram;
 const stopTelegramBot =

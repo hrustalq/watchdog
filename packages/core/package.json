@@ -5,7 +5,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./rules/draft": "./src/rules/draft.ts",
-    "./render": "./src/render/obscura.ts",
+    "./render": "./src/render/index.ts",
     "./testing": "./src/agent/fake-llm.ts"
   },
   "scripts": {

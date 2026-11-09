@@ -9,6 +9,8 @@ export interface Rendered {
   title: string;
   /** The URL the page ended on, after any redirects. */
   finalUrl: string;
+  /** Why the egress guard refused requests the page made, which the render went on without. */
+  blocked?: string[];
 }
 
 export interface Renderer {

@@ -647,27 +647,37 @@ describe("Sources", () => {
       expect(dropped?.config).not.toHaveProperty("ignoreRobots");
     });
 
-    it("renders the page through Obscura only on an install that runs it", async () => {
-      const rendering = { ...selfHosted, rendering: true };
-      const rendered = await savedSource(await website(ours, { url: newPage(), render: "obscura" }, rendering));
+    it("renders the page through Obscura or Chromium only on an install that runs it", async () => {
+      const both = { ...selfHosted, renderers: { obscura: true, chromium: true } };
+      const rendered = await savedSource(await website(ours, { url: newPage(), render: "obscura" }, both));
       expect(rendered?.config).toMatchObject({ render: "obscura" });
+      const fallback = await savedSource(await website(ours, { url: newPage(), render: "chromium" }, both));
+      expect(fallback?.config).toMatchObject({ render: "chromium" });
       // Anything else posted is the static fetch.
-      const other = await savedSource(await website(ours, { url: newPage(), render: "chromium" }, rendering));
+      const other = await savedSource(await website(ours, { url: newPage(), render: "firefox" }, both));
       expect(other?.config).toMatchObject({ render: "static" });
 
       const before = (await sourcesIn(ours)).length;
       expect(await website(ours, { url: newPage(), render: "obscura" })).toEqual({ problem: "render-unavailable" });
+      const obscuraOnly = { ...selfHosted, renderers: { obscura: true, chromium: false } };
+      expect(await website(ours, { url: newPage(), render: "chromium" }, obscuraOnly)).toEqual({
+        problem: "render-unavailable",
+      });
       expect((await sourcesIn(ours)).length).toBe(before);
       expect(problemField("render-unavailable", "website")).toBe("render");
       const values = { ...addValues(() => ""), type: "website" as const, url: newPage() };
-      expect(problemMessage("render-unavailable", { ...values, status: "", mode: "self-hosted" })).toBe(
+      expect(problemMessage("render-unavailable", { ...values, render: "obscura", status: "", mode: "self-hosted" })).toBe(
         "This install doesn't run Obscura, the browser that renders pages, so choose Static.",
+      );
+      expect(problemMessage("render-unavailable", { ...values, render: "chromium", status: "", mode: "self-hosted" })).toBe(
+        "This install doesn't run the Chromium fallback, so choose another way to read the page.",
       );
     });
 
-    it("carries the render mode back in the form's values, and nothing but obscura counts", () => {
+    it("carries the render mode back in the form's values, and nothing but a renderer counts", () => {
       expect(addValues((name) => (name === "render" ? "obscura" : "")).render).toBe("obscura");
-      expect(addValues((name) => (name === "render" ? "chromium" : "")).render).toBe("static");
+      expect(addValues((name) => (name === "render" ? "chromium" : "")).render).toBe("chromium");
+      expect(addValues((name) => (name === "render" ? "firefox" : "")).render).toBe("static");
     });
 
     it("refuses the same page and Region twice, but watches another Region of it", async () => {

@@ -13,6 +13,7 @@ const groups = {
   smtp: ["SMTP_HOST", "SMTP_USER", "SMTP_PASSWORD", "SMTP_FROM"],
   google: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
   github: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"],
+  chromium: ["CHROMIUM_URL", "CHROMIUM_TOKEN"],
 } as const;
 
 const oauth = (id: string, secret: string) => ({ clientId: id, clientSecret: secret });
@@ -57,6 +58,13 @@ const schema = z
     TELEGRAM_API_HASH: z.string().optional(),
     OBSCURA_CDP_URL: z.url({ protocol: /^(wss?|https?)$/ }).optional(),
     OBSCURA_CDP_TOKEN: z.string().optional(),
+    // The worker sends the token as a Bearer header. The message can't repeat it.
+    chromium: z
+      .object({
+        CHROMIUM_URL: z.url({ protocol: /^wss?$/, error: invalid("must be a ws:// or wss:// URL") }),
+        CHROMIUM_TOKEN: z.string().min(32, "must be at least 32 characters"),
+      })
+      .optional(),
     // Comma-separated hosts, IP addresses and CIDRs, e.g. `ollama.local,192.168.1.0/24`.
     EGRESS_ALLOWLIST: z
       .string()
@@ -116,6 +124,7 @@ const schema = z
       apiHash: env.TELEGRAM_API_HASH,
     },
     obscura: { cdpUrl: env.OBSCURA_CDP_URL, cdpToken: env.OBSCURA_CDP_TOKEN },
+    chromium: env.chromium && { url: env.chromium.CHROMIUM_URL, token: env.chromium.CHROMIUM_TOKEN },
     egressAllowlist: env.EGRESS_ALLOWLIST,
     glitchtipDsn: env.GLITCHTIP_DSN,
   }));

@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { dataBox, field, fieldError, label, textBox } from "@/components/field-classes";
 import { type Config, maxRegionLength } from "@watchdog/core";
-import { type AddType, type AddValues, schedules } from "@/lib/sources";
+import { type AddType, type AddValues, type Renderers, schedules } from "@/lib/sources";
 import { cn } from "@/lib/utils";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
@@ -18,6 +18,7 @@ const types: { value: AddType; title: string }[] = [
 const renders: { value: AddValues["render"]; title: string }[] = [
   { value: "static", title: "Static" },
   { value: "obscura", title: "Rendered" },
+  { value: "chromium", title: "Rendered in Chromium" },
 ];
 
 type FieldName = "url" | "region" | "ignore" | "render" | "repo" | "term" | "within" | "token" | "schedule";
@@ -68,7 +69,7 @@ export function AddSourceForm({
   tokenDropped = false,
   githubSignIn,
   mode,
-  rendering,
+  renderers,
 }: {
   values?: AddValues;
   error?: { field: FieldName; message: string };
@@ -79,10 +80,11 @@ export function AddSourceForm({
   githubSignIn?: boolean;
   /** Only self-hosted offers to skip robots.txt (ADR 0015); unknown in the static shell. */
   mode?: Config["mode"];
-  /** Whether this install runs Obscura, so a page can be rendered; unknown in the static shell. */
-  rendering?: boolean;
+  /** Which browsers this install runs to render a page; unknown in the static shell. */
+  renderers?: Renderers;
 }) {
   const errorFor = (name: FieldName) => (error?.field === name ? error.message : undefined);
+  const offered = (render: AddValues["render"]) => render === "static" || renderers?.[render] !== false;
   return (
     <form action={addSource} className="flex flex-col gap-4">
       {added ? (
@@ -142,10 +144,10 @@ export function AddSourceForm({
                 id={`render-${render.value}`}
                 name="render"
                 value={render.value}
-                // A rendered page sent back to an install without Obscura comes back as Static, the
+                // A page sent back with a browser this install doesn't run comes back as Static, the
                 // choice that can be sent.
-                defaultChecked={(rendering === false ? "static" : values.render) === render.value}
-                disabled={render.value === "obscura" && rendering === false}
+                defaultChecked={(offered(values.render) ? values.render : "static") === render.value}
+                disabled={!offered(render.value)}
                 // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
                 autoFocus={error?.field === "render" && render.value === "static"}
                 className="sr-only"
@@ -161,8 +163,10 @@ export function AddSourceForm({
         ) : (
           <p id="render-help" className="text-xs text-muted-foreground">
             Static reads the page&apos;s HTML as served, in one quick fetch. Rendered runs the page&apos;s scripts
-            first, for a page that builds its content with them, and takes longer.
-            {rendering === false ? " Rendering is unavailable: this install doesn't run Obscura." : null}
+            first, for a page that builds its content with them, and takes longer. Rendered in Chromium is a
+            slower fallback for a page that Rendered gets wrong.
+            {offered("obscura") ? null : " Rendered is unavailable: this install doesn't run Obscura."}
+            {offered("chromium") ? null : " Rendered in Chromium is unavailable: this install doesn't run Chromium."}
           </p>
         )}
       </fieldset>

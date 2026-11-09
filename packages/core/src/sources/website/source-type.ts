@@ -3,20 +3,25 @@
 import { createHash } from "node:crypto";
 import { diffLines } from "diff";
 import { z } from "zod";
-import { renderTimeout } from "../../render/renderer.ts";
+import { type Rendered, renderTimeout } from "../../render/renderer.ts";
 import { capBody } from "../item.ts";
 import type { SourceTypeImpl } from "../types.ts";
 import { fetchPage, normalise, readPage } from "./page.ts";
 import { checkRobots } from "./robots.ts";
 
+/** How a website is read: fetched as served, rendered by Obscura, or rendered by the Chromium fallback. */
+export const renderModes = ["static", "obscura", "chromium"] as const;
+
 const config = z.object({
   url: z.string(),
   region: z.string().optional(),
   ignore: z.array(z.string()),
-  render: z.enum(["static", "obscura", "chromium"]),
+  render: z.enum(renderModes),
   /** Self-hosted only: skip robots.txt, which the user turned on behind ADR 0015's warning. */
   ignoreRobots: z.literal(true).optional(),
 });
+
+const rendererNames = { obscura: "Obscura", chromium: "Chromium" } as const;
 
 /** The most HTML an Item keeps in `raw.html`. Over it, none is kept: a cut document misleads selectors. */
 export const maxHtmlBytes = 1024 * 1024;
@@ -29,14 +34,14 @@ export const website: SourceTypeImpl = {
     const parsed = config.safeParse(source.config);
     if (!parsed.success) throw new Error("The Source's config has no page URL");
     const { url, region, ignore, render, ignoreRobots } = parsed.data;
-    if (render === "chromium") throw new Error("The chromium renderer isn't available yet");
-    if (render === "obscura" && deps.obscura === undefined) throw new Error("The Obscura renderer isn't running");
+    const renderer = render === "static" ? undefined : deps[render];
+    if (render !== "static" && renderer === undefined) throw new Error(`The ${rendererNames[render]} renderer isn't running`);
     const robots = deps.mode !== "self-hosted" || ignoreRobots !== true;
     if (robots) await checkRobots(url, deps);
-    const { html, finalUrl } =
-      render === "obscura" && deps.obscura !== undefined
-        ? await deps.obscura.render(url, { timeout: renderTimeout, ...(deps.signal && { signal: deps.signal }) })
-        : await fetchPage(url, deps);
+    const { html, finalUrl, blocked = [] }: Omit<Rendered, "title"> =
+      renderer === undefined
+        ? await fetchPage(url, deps)
+        : await renderer.render(url, { timeout: renderTimeout, ...(deps.signal && { signal: deps.signal }) });
     // A redirect leads to a page robots.txt hasn't been asked about. It was fetched, but isn't read.
     if (robots && finalUrl !== url) await checkRobots(finalUrl, deps);
 
@@ -50,6 +55,10 @@ export const website: SourceTypeImpl = {
     if (baseline.hash === undefined) return { drafts: [], fetchState };
 
     const keepHtml = Buffer.byteLength(page.html) <= maxHtmlBytes;
+    const notes = [
+      ...(keepHtml ? [] : ["The page HTML was too large to keep: it is over 1 MB."]),
+      ...(blocked.length === 0 ? [] : [`Requests the page made were blocked: ${[...new Set(blocked)].join("; ")}.`]),
+    ];
     const draft = {
       // The fetch time keeps a page that returns to an earlier state a new change.
       externalId: `${hash}:${deps.now.toISOString()}`,
@@ -59,7 +68,7 @@ export const website: SourceTypeImpl = {
       body: capBody(lineDiff(baseline.text ?? "", text)),
       publishedAt: deps.now,
       raw: keepHtml ? { text, html: page.html } : { text },
-      ...(!keepHtml && { captureNote: "The page HTML was too large to keep: it is over 1 MB." }),
+      ...(notes.length > 0 && { captureNote: notes.join(" ") }),
     };
     return { drafts: [draft], fetchState };
   },

@@ -1,5 +1,6 @@
-# The five containers of a standard install. See "Run locally with Docker Compose" in README.md.
-# Only Caddy publishes a port. The others are reachable only on this project's Compose network.
+# The five containers of a standard install, and the optional Chromium fallback on the chromium
+# profile. See "Run locally with Docker Compose" in README.md. Only Caddy publishes a port. The others
+# are reachable only on this project's Compose networks.
 name: watchdog
 
 # Web and worker read .env, and these override what must point inside the Compose network. The
@@ -63,6 +64,8 @@ services:
     init: true
     # On SIGTERM pg-boss waits up to 30 s for running polls, so Compose mustn't SIGKILL at 10 s.
     stop_grace_period: 40s
+    # The chromium network has no route out, and only the worker shares it with Chromium.
+    networks: [default, chromium]
     depends_on:
       postgres:
         condition: service_healthy
@@ -112,6 +115,30 @@ services:
       start_period: 30s
       start_interval: 1s
     restart: unless-stopped
+
+  chromium:
+    # The Chromium fallback renderer (ADR 0031), started by `docker compose --profile chromium up`.
+    # Every request its pages make is caught in the worker and fetched through the egress guard.
+    # Anything that escapes that meets a network with no route out, so the port is never published.
+    profiles: [chromium]
+    build: docker/chromium
+    environment:
+      CHROMIUM_TOKEN: ${CHROMIUM_TOKEN:-}
+    networks: [chromium]
+    # A browser needs more shared memory than Docker's default 64 MB.
+    shm_size: 1gb
+    # The browser server behind the gate answers on loopback once it is up.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/').then((r) => r.ok || process.exit(1), () => process.exit(1))"]
+      timeout: 5s
+      start_period: 30s
+      start_interval: 1s
+    restart: unless-stopped
+
+networks:
+  # Internal: no route out of it, so Chromium reaches only the worker.
+  chromium:
+    internal: true
 
 volumes:
   postgres:
