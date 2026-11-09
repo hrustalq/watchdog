@@ -349,11 +349,11 @@ export function problemMessage(
     case "invalid-term":
       return `Enter what to search GitHub for, at most ${String(maxTermLength)} characters.`;
     case "invalid-within":
-      return "Enter an org as its name, such as vercel, or a repo as owner/name, or leave it empty to search all of GitHub.";
+      return "Enter an org as its name, such as vercel, or a repo as owner/name, or leave it empty to search all of public GitHub.";
     case "invalid-token":
       return "Paste the token as GitHub showed it, without spaces.";
     case "no-token":
-      return "Sign in with GitHub, or paste a fine-grained personal access token, so Watchdog can read GitHub's API.";
+      return "Paste a fine-grained personal access token: this Workspace has no GitHub sign-in to read GitHub's API with.";
     case "schedule":
       return "Choose one of the schedules in the list.";
     case "duplicate": {

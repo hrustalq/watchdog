@@ -525,7 +525,7 @@ describe("Sources", () => {
       expect(problemField("no-token", "github-issues")).toBe("token");
       const shown = { type: "github-issues" as const, url: "", status: "", mode: "hosted" as const };
       expect(problemMessage("no-token", shown)).toBe(
-        "Sign in with GitHub, or paste a fine-grained personal access token, so Watchdog can read GitHub's API.",
+        "Paste a fine-grained personal access token: this Workspace has no GitHub sign-in to read GitHub's API with.",
       );
     });
 

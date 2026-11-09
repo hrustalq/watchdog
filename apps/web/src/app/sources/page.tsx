@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
-import { releasesFeedUrl } from "@watchdog/core";
+import { releasesFeedUrl, signInToken } from "@watchdog/core";
 import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
 import {
@@ -61,22 +61,24 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
     return typeof value === "string" ? value : "";
   };
   const values = addValues(param);
+  const { db, mode } = server();
+  const { workspace } = await requireWorkspace();
+  // The token field says whether it's needed, which depends on a GitHub sign-in.
+  const githubSignIn = (await signInToken(db, workspace.id)) !== undefined;
   if (param("added") !== "") {
-    return <AddSourceForm added values={{ ...addValues(() => ""), type: values.type }} />;
+    return <AddSourceForm added githubSignIn={githubSignIn} values={{ ...addValues(() => ""), type: values.type }} />;
   }
   // The code comes from the URL, so only a known one counts.
   const problem = addProblems.find((known) => known === param("error"));
-  if (problem === undefined) return <AddSourceForm />;
-  const { db, mode } = server();
+  if (problem === undefined) return <AddSourceForm githubSignIn={githubSignIn} />;
   // Only the code travels in the URL, so the Source it's already watched as is looked up.
-  const watching =
-    problem === "duplicate"
-      ? await watchedSourceName(db, (await requireWorkspace()).workspace.id, values)
-      : undefined;
+  const watching = problem === "duplicate" ? await watchedSourceName(db, workspace.id, values) : undefined;
   const shown = { ...values, status: param("status"), mode, source: watching };
   return (
     <AddSourceForm
       values={values}
+      githubSignIn={githubSignIn}
+      tokenDropped={param("pasted") !== ""}
       error={{ field: problemField(problem, values.type), message: problemMessage(problem, shown) }}
     />
   );
@@ -90,7 +92,11 @@ async function SourceList() {
   const urlOf = ({ config }: (typeof sources)[number]) => {
     if ("url" in config) return config.url;
     if (!("kind" in config)) return null;
-    if (config.kind === "mentions") return [config.term, config.within].filter(Boolean).join(" ");
+    if (config.kind === "mentions") {
+      // The same search on github.com, which the user can open to check it.
+      const q = `(${config.term}) (is:issue OR is:pr)${config.within === undefined ? "" : ` ${config.within}`}`;
+      return `https://github.com/search?${new URLSearchParams({ q, type: "issues" }).toString()}`;
+    }
     return `https://github.com/${config.repo}/${config.kind}`;
   };
   // The URL is on the line above, so the error needn't repeat the URL it fetched.

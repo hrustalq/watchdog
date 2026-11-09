@@ -29,6 +29,8 @@ export async function addSource(formData: FormData) {
   if ("source" in result) redirect(`/sources?${new URLSearchParams({ added: "1", type: values.type })}`);
   const back = new URLSearchParams({ error: result.problem, ...values });
   if (result.status !== undefined) back.set("status", result.status);
+  // Only that a token was pasted, so the form can ask for it again.
+  if (token.trim() !== "") back.set("pasted", "1");
   redirect(`/sources?${back}`);
 }
 

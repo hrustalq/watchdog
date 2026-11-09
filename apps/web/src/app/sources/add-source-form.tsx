@@ -35,18 +35,26 @@ export function AddSourceForm({
   values = { type: "rss", url: "", repo: "", term: "", within: "", name: "", schedule: "" },
   error,
   added = false,
+  tokenDropped = false,
+  githubSignIn,
 }: {
   values?: AddValues;
   error?: { field: FieldName; message: string };
   added?: boolean;
+  /** A token was pasted with a submit that came back with a problem; it is never sent back. */
+  tokenDropped?: boolean;
+  /** Whether the Workspace's owner signed in with GitHub; unknown in the static shell. */
+  githubSignIn?: boolean;
 }) {
   const errorFor = (name: FieldName) => (error?.field === name ? error.message : undefined);
+  const viaApi = values.type === "github-issues" || values.type === "github-mentions";
   return (
     <form action={addSource} className="flex flex-col gap-4">
       {added ? (
         <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
-          Source added. The worker fetches it within a minute, and its recent entries show up in the
-          Feed as the Backfill.
+          {viaApi
+            ? "Source added. Its first poll runs within a minute, and its recent entries show up in the Feed as the Backfill. If none do, its row below says why."
+            : "Source added. The worker fetches it within a minute, and its recent entries show up in the Feed as the Backfill."}
         </Notice>
       ) : null}
       <fieldset className="flex flex-col gap-2">
@@ -111,7 +119,7 @@ export function AddSourceForm({
         label="Search for"
         className={shownFor.search}
         error={errorFor("term")}
-        help="Words or a phrase, as GitHub's issue search reads them. Each poll reads the newest 100 issues and pull requests that match, so a busy term can miss some: narrow it, or limit where it searches."
+        help="Words or a phrase, as GitHub's search reads them. Each poll reads only the newest 100 matching issues and pull requests, so narrow a busy term."
         autoComplete="off"
         placeholder="hydration mismatch"
         defaultValue={values.term}
@@ -133,13 +141,34 @@ export function AddSourceForm({
       <TextField
         id="token"
         label="GitHub token"
-        optional
+        optional={githubSignIn !== false}
         className={shownFor.token}
         error={errorFor("token")}
-        help="A fine-grained personal access token that can read the repo's issues. Without one, Watchdog uses your GitHub sign-in, which reads public repos only. A pasted token is stored encrypted and never shown again."
+        help={
+          tokenDropped ? (
+            "Paste the token again: Watchdog never sends it back to the page."
+          ) : (
+            <>
+              {githubSignIn === false
+                ? "Required: this Workspace has no GitHub sign-in to read the API with. "
+                : null}
+              <span className="[form:has(#type-github-mentions:checked)_&]:hidden">
+                A fine-grained personal access token that can read the repo&apos;s issues, needed for a
+                private repo.
+              </span>
+              <span className="hidden [form:has(#type-github-mentions:checked)_&]:inline">
+                A fine-grained personal access token, which also searches the private repos it can read.
+              </span>{" "}
+              Stored encrypted and never shown again.
+            </>
+          )
+        }
         // A password field: the browser doesn't show it or keep it in form history.
         type="password"
         autoComplete="off"
+        // Password managers ignore autocomplete="off" on a password field; these ask them to stay out.
+        data-1p-ignore
+        data-lpignore="true"
         inputClassName={dataBox}
       />
       <div className="grid gap-4 sm:grid-cols-2">
