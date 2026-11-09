@@ -33,7 +33,7 @@ Lint is strict on purpose, and a warning fails it just like an error. These are 
 - Reading `process.env` outside the config loader (`packages/core/src/config.ts`, which arrives with #3), tests and tool configs.
 - `.only`, `.skip` and tests without assertions.
 
-A rule relaxed for some files goes in that package's `eslint.config.mjs`, scoped to a glob, with a comment saying why. Shared rules live in `packages/eslint-config`.
+Lint runs on oxlint, with its type-aware rules on. A rule relaxed for some files goes in that package's `oxlint.config.ts` (`.mts` in `apps/web`), scoped to a glob, with a comment saying why. Shared rules live in `packages/lint-config`: `base.ts` and `web.ts` hold the project's own rules, and `presets.ts` holds the rule sets carried over from the ESLint config.
 
 ## Commits and pushes
 

@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc",
-    "lint": "eslint . --max-warnings 0",
+    "lint": "oxlint",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests --exclude \"**/*.int.test.ts\"",
     "test:integration": "vitest run --passWithNoTests .int.test.ts"
@@ -17,8 +17,9 @@
   "devDependencies": {
     "@types/node": "^26",
     "@types/nodemailer": "^8.0.2",
-    "@watchdog/eslint-config": "workspace:*",
-    "eslint": "^10.14.0",
+    "@watchdog/lint-config": "workspace:*",
+    "oxlint": "^1.92.0",
+    "oxlint-tsgolint": "^7.0.2006",
     "testcontainers": "^12.2.1",
     "typescript": "^5",
     "vitest": "^5.0.5"

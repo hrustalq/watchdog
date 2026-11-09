@@ -9,7 +9,7 @@ A pnpm + Turborepo monorepo (ADR 0011).
 | `apps/e2e` | The Playwright smoke test (`pnpm smoke`) |
 | `packages/core` | The pipeline, the rule model and the Agent interface (`@watchdog/core`) |
 | `packages/db` | The database layer (`@watchdog/db`) |
-| `packages/eslint-config` | The shared lint rules each package's `eslint.config.mjs` builds on |
+| `packages/lint-config` | The shared lint rules each package's `oxlint.config.ts` builds on |
 | `docs/` | The Knowledge platform docs, as a git submodule (see `AGENTS.md`) |
 
 ## Getting started
@@ -57,7 +57,7 @@ Never use `drizzle-kit push`. drizzle-kit 0.31 misreads the column order of a mu
 ## Running checks locally
 
 ```bash
-pnpm lint                # ESLint, warnings fail too
+pnpm lint                # oxlint with type-aware rules, warnings fail too
 pnpm typecheck
 pnpm test                # unit and integration tests; integration tests need Docker
 pnpm turbo run test:unit # unit tests only, no Docker

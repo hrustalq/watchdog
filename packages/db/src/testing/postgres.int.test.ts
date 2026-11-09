@@ -1,4 +1,4 @@
-import pg from "pg";
+import { Client } from "pg";
 import { beforeAll, describe, expect, it } from "vitest";
 import { startPostgres, type TestPostgres } from "./postgres.ts";
 
@@ -12,7 +12,7 @@ describe("startPostgres", () => {
   }, 120_000);
 
   it("serves queries on the returned URL", async () => {
-    const client = new pg.Client({ connectionString: postgres.url });
+    const client = new Client({ connectionString: postgres.url });
     await client.connect();
     try {
       const result = await client.query<{ one: number }>("select 1 as one");

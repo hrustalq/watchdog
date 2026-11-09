@@ -52,10 +52,11 @@ export async function startScheduler(
         columns: { schedule: true },
       });
       // Only Schedule types have a schedule, and only they come due.
-      if (found === undefined || found.schedule === null) return;
+      const schedule = found?.schedule ?? null;
+      if (schedule === null) return;
       await db
         .update(source)
-        .set({ nextPollAt: nextPollAt(found.schedule, mode, new Date()) })
+        .set({ nextPollAt: nextPollAt(schedule, mode, new Date()) })
         .where(eq(source.id, sourceId));
       await pollSource(db, sourceId, deps);
     } catch (error) {

@@ -10,7 +10,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "typecheck": "tsc",
-    "lint": "eslint . --max-warnings 0",
+    "lint": "oxlint",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests --exclude \"**/*.int.test.ts\"",
     "test:integration": "vitest run --passWithNoTests .int.test.ts"
@@ -19,9 +19,10 @@
     "@testcontainers/postgresql": "^12.2.1",
     "@types/node": "^26",
     "@types/pg": "^8.23.1",
-    "@watchdog/eslint-config": "workspace:*",
+    "@watchdog/lint-config": "workspace:*",
     "drizzle-kit": "^0.31.11",
-    "eslint": "^10.14.0",
+    "oxlint": "^1.92.0",
+    "oxlint-tsgolint": "^7.0.2006",
     "pg-boss": "^12.38.0",
     "typescript": "^5",
     "vitest": "^5.0.5"

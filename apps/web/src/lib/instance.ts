@@ -50,10 +50,10 @@ export async function claimInstance(db: Db, token: string, email: string) {
  */
 export async function signupRefusal(db: Db, email: string) {
   const settings = await settingsOf(db);
-  if (settings === undefined || settings.adminUserId === null) {
-    return email !== "" && settings?.claimedEmail === email.toLowerCase() ? undefined : "setup_pending";
+  if (settings !== undefined && settings.adminUserId !== null) {
+    return settings.signupOpen ? undefined : "signup_closed";
   }
-  return settings.signupOpen ? undefined : "signup_closed";
+  return email !== "" && settings?.claimedEmail === email.toLowerCase() ? undefined : "setup_pending";
 }
 
 /**
