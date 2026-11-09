@@ -46,6 +46,8 @@ Then open http://localhost:3000. The containers start in this order:
 
 **Obscura** starts beside them. Web, Postgres and Obscura's CDP port are reachable only on the Compose network. Compose sets `DATABASE_URL` and `OBSCURA_CDP_URL` to its own containers, and the rest of `.env` is passed to web and worker as is.
 
+**Chromium**, the fallback renderer for pages Obscura gets wrong, is optional and on the `chromium` profile, so `docker compose up` leaves it out. To use it, set `CHROMIUM_URL=ws://chromium:3000` and a `CHROMIUM_TOKEN` of at least 32 characters in `.env`, then run `docker compose --profile chromium up -d --build --wait`. It sits on an internal network that only the worker shares, with no route out, and the worker fetches every request its pages make through the egress guard (ADR 0031).
+
 The packages share `tsconfig.base.json`. `apps/worker`, `packages/core` and `packages/db` are ES modules that Node runs as TypeScript directly, without a build step. Mark type-only imports with `import type`, and give relative imports their `.ts` extension.
 
 ## Changing the database schema
