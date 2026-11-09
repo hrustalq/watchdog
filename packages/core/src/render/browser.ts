@@ -68,7 +68,7 @@ export function createBrowserRenderer({
       if (problem !== undefined) throw new Error(problem);
       if (Buffer.byteLength(answer.html) > maxHtmlBytes) throw new Error(`${url} rendered more than 10 MB of HTML`);
       const { html, title, finalUrl, blocked } = answer;
-      return { html, title, finalUrl, ...(blocked.length > 0 && { blocked }) };
+      return { html, title, finalUrl, blocked };
     },
   };
 }
@@ -86,7 +86,7 @@ async function visit({ context, url, blocked }: Opened) {
     html: await page.content(),
     title: await page.title(),
     finalUrl: page.url(),
-    blocked: [...blocked],
+    blocked,
   };
 }
 
