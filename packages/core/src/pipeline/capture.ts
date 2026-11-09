@@ -50,6 +50,8 @@ export async function pollSource(
   try {
     polled = await type.poll(found, { ...deps, db, now: at });
   } catch (error) {
+    // A poll stopped with the worker isn't the Source's failure: pg-boss retries the job.
+    if (deps.signal?.aborted === true) throw error;
     const message = describe(error);
     await recordOutcome(db, sourceId, { at, error: message });
     return { error: message };

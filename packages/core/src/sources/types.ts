@@ -27,7 +27,10 @@ export interface PollDeps extends FetchFeedDeps {
   mode?: Config["mode"];
   /** Renders a website Source set to `obscura`. Without it, such a Source's polls fail. */
   obscura?: Renderer;
-  /** Stops a poll that is still running when the worker stops. */
+  /**
+   * Fires when the worker stops or loses the job. A render still running then stops, and the poll
+   * throws rather than recording an error on the Source.
+   */
   signal?: AbortSignal;
 }
 

@@ -1,9 +1,15 @@
 // The Obscura Renderer: playwright-core drives Obscura over CDP, one connection a render (ADR 0010;
 // docs: Sources and ingestion, "Obscura"). Obscura blocks private addresses itself, so its requests
 // don't go through the egress guard.
-import { type Browser, chromium } from "playwright-core";
+import { setTimeout as sleep } from "node:timers/promises";
+import { type Browser, chromium, errors } from "playwright-core";
 import { unwatchable } from "../sources/website/page.ts";
 import type { Renderer } from "./renderer.ts";
+
+/** The most HTML a render may return, the egress guard's cap on a static fetch. */
+const maxHtmlBytes = 10 * 1024 * 1024;
+/** How long a render waits for a stuck browser to close before it gives up on it. */
+const closeWait = 5000;
 
 export function createObscuraRenderer(obscura: { cdpUrl: string; cdpToken: string | undefined }): Renderer {
   const headers = obscura.cdpToken === undefined ? {} : { authorization: `Bearer ${obscura.cdpToken}` };
@@ -11,9 +17,10 @@ export function createObscuraRenderer(obscura: { cdpUrl: string; cdpToken: strin
     render: async (url, { timeout, signal }) => {
       const deadline = AbortSignal.timeout(timeout);
       const stop = signal === undefined ? deadline : AbortSignal.any([signal, deadline]);
+      const timedOut = () => new Error(`${url} didn't finish rendering within ${String(timeout / 1000)} s`);
       // Why the render stopped, if it was stopped, rather than what the browser said about it.
       const stopped = () => {
-        if (deadline.aborted) return new Error(`${url} didn't finish rendering within ${String(timeout / 1000)} s`);
+        if (deadline.aborted) return timedOut();
         return signal?.aborted === true ? new Error(`Rendering ${url} was stopped`) : undefined;
       };
 
@@ -21,6 +28,8 @@ export function createObscuraRenderer(obscura: { cdpUrl: string; cdpToken: strin
       try {
         browser = await chromium.connectOverCDP(obscura.cdpUrl, { headers, timeout });
       } catch (error) {
+        // Playwright's own connect timeout can fire just before the deadline does.
+        if (error instanceof errors.TimeoutError) throw timedOut();
         throw stopped() ?? new Error(`Couldn't reach the Obscura renderer: ${firstLine(error)}`);
       }
       // Closing the browser closes the context and page this render opened, and ends its CDP session.
@@ -37,10 +46,12 @@ export function createObscuraRenderer(obscura: { cdpUrl: string; cdpToken: strin
         throw stopped() ?? new Error(`${url} couldn't be rendered: ${firstLine(error)}`);
       } finally {
         stop.removeEventListener("abort", onStop);
-        await close();
+        // A stuck browser may never answer the close, and the deadline still holds.
+        await Promise.race([close(), sleep(closeWait, undefined, { ref: false })]);
       }
       const problem = unwatchable(url, answer);
       if (problem !== undefined) throw new Error(problem);
+      if (Buffer.byteLength(answer.html) > maxHtmlBytes) throw new Error(`${url} rendered more than 10 MB of HTML`);
       return { html: answer.html, title: answer.title, finalUrl: answer.finalUrl };
     },
   };

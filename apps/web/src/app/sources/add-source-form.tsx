@@ -142,7 +142,9 @@ export function AddSourceForm({
                 id={`render-${render.value}`}
                 name="render"
                 value={render.value}
-                defaultChecked={values.render === render.value}
+                // A rendered page sent back to an install without Obscura comes back as Static, the
+                // choice that can be sent.
+                defaultChecked={(rendering === false ? "static" : values.render) === render.value}
                 disabled={render.value === "obscura" && rendering === false}
                 // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
                 autoFocus={error?.field === "render" && render.value === "static"}

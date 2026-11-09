@@ -3,13 +3,14 @@ import {
   createAgentFetch,
   createEgressFetch,
   createMailer,
-  createObscuraRenderer,
   createSenders,
   linkChat,
   loadConfig,
   runBot,
   sendEmailCapNotice,
 } from "@watchdog/core";
+// Apart from the main entry, which web imports too, so only the worker loads playwright-core.
+import { createObscuraRenderer } from "@watchdog/core/render";
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { startDelivery } from "./delivery.ts";

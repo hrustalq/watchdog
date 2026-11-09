@@ -240,6 +240,23 @@ describe("website Sources", () => {
     expect(captured.body).toContain("+ $25 / month");
   });
 
+  it("throws a poll stopped with the worker instead of recording it as the Source's error", async () => {
+    const src = await newSource({ render: "obscura" });
+    const { deps } = page(src.origin, () => v1);
+    const stop = new AbortController();
+    deps.signal = stop.signal;
+    deps.obscura = {
+      render: (url, { signal }) => {
+        stop.abort();
+        return Promise.reject(new Error(signal?.aborted === true ? `Rendering ${url} was stopped` : "not stopped"));
+      },
+    };
+    await expect(pollSource(db, src.id, deps)).rejects.toThrow(`Rendering ${src.url} was stopped`);
+    const after = await reload(src.id);
+    expect(after.lastError).toBeNull();
+    expect(after.lastPolledAt).toBeNull();
+  });
+
   it("refuses on hosted a page that robots.txt disallows for Watchdog, without fetching it", async () => {
     const src = await newSource();
     const { asked, deps } = site((url) =>
