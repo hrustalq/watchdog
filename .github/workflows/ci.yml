@@ -8,13 +8,18 @@ on:
 permissions:
   contents: read
 
+# Jobs run on the homelab's self-hosted runners (`runs-on: homelab`: ephemeral pods on
+# the k3s cluster, hrustalq/homelab docs/ci-runners.md), except pull requests from forks:
+# a runner pod has a privileged Docker daemon on a homelab node, so untrusted code stays
+# on GitHub-hosted runners.
+
 env:
   # CI is the gate that counts; it never installs the local git hooks.
   HUSKY: 0
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'homelab' }}
     timeout-minutes: 15
     steps:
       # The docs submodule needs a Knowledge API key, and nothing here reads it.
@@ -41,7 +46,7 @@ jobs:
   # request. The workflow runs on pushes to main only, so this job does too.
   smoke:
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event.pull_request.head.repo.fork && 'ubuntu-latest' || 'homelab' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7

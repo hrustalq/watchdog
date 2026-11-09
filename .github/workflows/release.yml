@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   release-please:
-    runs-on: ubuntu-latest
+    runs-on: homelab
     timeout-minutes: 5
     steps:
       # Not GITHUB_TOKEN: this repo doesn't let Actions open PRs, and a PR opened with it would
