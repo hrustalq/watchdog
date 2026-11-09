@@ -3,6 +3,7 @@
 import type { SourceType } from "@watchdog/db";
 import type { z } from "zod";
 import type { ItemDraft } from "./item.ts";
+import { github } from "./github/releases.ts";
 import { rss } from "./rss/source-type.ts";
 import type { FetchFeedDeps } from "./rss/fetch-feed.ts";
 
@@ -30,4 +31,4 @@ export interface SourceTypeImpl {
 }
 
 /** The types implemented so far. A Source of any other type polls nothing and takes no Backfill. */
-export const sourceTypes: Partial<Record<SourceType, SourceTypeImpl>> = { rss };
+export const sourceTypes: Partial<Record<SourceType, SourceTypeImpl>> = { rss, github };

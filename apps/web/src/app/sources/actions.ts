@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { requireWorkspace, server } from "@/lib/server";
-import { addRssSource, removeSource } from "@/lib/sources";
+import { addGithubReleasesSource, addRssSource, type AddValues, removeSource } from "@/lib/sources";
 
 // Both actions end in a redirect. Without JavaScript that's a 303 to a page the browser renders;
 // an action that only returned would leave it a blank page. What the page then shows from the URL
@@ -14,14 +14,21 @@ const text = (formData: FormData, name: string) => {
 };
 
 /**
- * Checks the feed and saves it as a Source of the user's Workspace. A problem goes back to the
- * form as a code, with what was entered, so the page can say what's wrong and keep the values.
+ * Checks the feed or the repo and saves it as a Source of the user's Workspace. A problem goes back
+ * to the form as a code, with what was entered, so the page can say what's wrong and keep the values.
  */
 export async function addSource(formData: FormData) {
   const { workspace } = await requireWorkspace();
-  const values = { url: text(formData, "url"), name: text(formData, "name"), schedule: text(formData, "schedule") };
+  const values: AddValues = {
+    type: text(formData, "type") === "github-releases" ? "github-releases" : "rss",
+    url: text(formData, "url"),
+    repo: text(formData, "repo"),
+    name: text(formData, "name"),
+    schedule: text(formData, "schedule"),
+  };
   const { db, fetch, mode } = server();
-  const result = await addRssSource(db, { fetch, mode }, workspace.id, values);
+  const add = values.type === "rss" ? addRssSource : addGithubReleasesSource;
+  const result = await add(db, { fetch, mode }, workspace.id, values);
   if ("source" in result) redirect("/sources?added=1");
   const back = new URLSearchParams({ error: result.problem, ...values });
   if (result.status !== undefined) back.set("status", result.status);

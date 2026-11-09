@@ -7,9 +7,12 @@ import {
   EgressLimitError,
   FeedHttpError,
   fetchFeed,
+  fetchReleases,
+  MissingRepoError,
   NotAFeedError,
+  parseRepo,
 } from "@watchdog/core";
-import { and, type Db, eq, source } from "@watchdog/db";
+import { and, type Db, eq, source, type SourceConfigs } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 export interface SourceDeps {
@@ -18,12 +21,27 @@ export interface SourceDeps {
   mode: Config["mode"];
 }
 
+/** The kinds of Source the form adds. */
+export const addTypes = ["rss", "github-releases"] as const;
+export type AddType = (typeof addTypes)[number];
+
+/** What the form posts. Each type reads its own field: `url` for RSS, `repo` for GitHub releases. */
+export interface AddValues {
+  type: AddType;
+  url: string;
+  repo: string;
+  name: string;
+  schedule: string;
+}
+
 /**
- * Why a feed URL wasn't saved. A code rather than a sentence, so the form can carry it in its URL
+ * Why a Source wasn't saved. A code rather than a sentence, so the form can carry it in its URL
  * without letting a crafted link put words on the page.
  */
 export const addProblems = [
   "invalid-url",
+  "invalid-repo",
+  "no-repo",
   "schedule",
   "duplicate",
   "blocked",
@@ -64,10 +82,9 @@ export async function addRssSource(
   if (url === null || (url.protocol !== "http:" && url.protocol !== "https:")) {
     return { problem: "invalid-url" };
   }
-  // Only the form's own schedules: a posted cron expression could be anything.
-  const schedule = input.schedule.trim();
-  if (!schedules.some((preset) => preset.cron === schedule)) return { problem: "schedule" };
-  if ((await watchedSourceName(db, workspaceId, url.href)) !== undefined) return { problem: "duplicate" };
+  const schedule = presetSchedule(input.schedule);
+  if (schedule === undefined) return { problem: "schedule" };
+  if ((await watchedName(db, workspaceId, "rss", url.href)) !== undefined) return { problem: "duplicate" };
 
   let feedTitle;
   try {
@@ -79,16 +96,57 @@ export async function addRssSource(
   }
 
   const name = cleanName(input.name) || cleanName(feedTitle ?? "") || url.hostname;
-  // Another add of the same URL can finish between the check above and this insert, and then the
-  // unique key on (workspace_id, type, dedup_key) skips this row. Its other unique keys are on a
-  // random id or the Inbox token hash an RSS Source doesn't have, so that key is the only one an
-  // insert can hit. Drizzle 0.45 takes only columns as a conflict target, which can't name an
-  // expression index.
-  const [saved] = await db
-    .insert(source)
-    .values({ workspaceId, type: "rss", name, config: { url: url.href }, schedule })
-    .onConflictDoNothing()
-    .returning({ id: source.id });
+  return save(db, { workspaceId, type: "rss", name, config: { url: url.href }, schedule });
+}
+
+/**
+ * Checks that GitHub has the repo's releases feed, and saves it as a GitHub releases Source only
+ * if so. Like an RSS Source, it is due at once.
+ */
+export async function addGithubReleasesSource(
+  db: Db,
+  deps: SourceDeps,
+  workspaceId: string,
+  input: { repo: string; name: string; schedule: string },
+): Promise<AddSourceResult> {
+  const repo = parseRepo(input.repo);
+  if (repo === null) return { problem: "invalid-repo" };
+  const schedule = presetSchedule(input.schedule);
+  if (schedule === undefined) return { problem: "schedule" };
+  if ((await watchedName(db, workspaceId, "github", releasesKey(repo))) !== undefined) {
+    return { problem: "duplicate" };
+  }
+
+  try {
+    await fetchReleases(repo, {}, deps);
+  } catch (error) {
+    return error instanceof MissingRepoError ? { problem: "no-repo" } : fetchProblem(error);
+  }
+
+  const name = cleanName(input.name) || `${repo} releases`;
+  return save(db, { workspaceId, type: "github", name, config: { kind: "releases", repo }, schedule });
+}
+
+/** Only the form's own schedules: a posted cron expression could be anything. */
+function presetSchedule(posted: string) {
+  const schedule = posted.trim();
+  return schedules.some((preset) => preset.cron === schedule) ? schedule : undefined;
+}
+
+/** The dedup key Postgres builds for a GitHub releases Source (docs: Sources and ingestion, "Uniqueness"). */
+const releasesKey = (repo: string) => `releases:${repo.toLowerCase()}`;
+
+type NewSource =
+  | { workspaceId: string; type: "rss"; name: string; config: SourceConfigs["rss"]; schedule: string }
+  | { workspaceId: string; type: "github"; name: string; config: SourceConfigs["github"]; schedule: string };
+
+async function save(db: Db, values: NewSource): Promise<AddSourceResult> {
+  // Another add of the same Source can finish between the duplicate check and this insert, and then
+  // the unique key on (workspace_id, type, dedup_key) skips this row. Its other unique keys are on a
+  // random id or the Inbox token hash these types don't have, so that key is the only one an insert
+  // can hit. Drizzle 0.45 takes only columns as a conflict target, which can't name an expression
+  // index.
+  const [saved] = await db.insert(source).values(values).onConflictDoNothing().returning({ id: source.id });
   return saved === undefined ? { problem: "duplicate" } : { source: saved };
 }
 
@@ -108,51 +166,82 @@ function fetchProblem(error: unknown): { problem: AddProblem; status?: string } 
 }
 
 /**
- * The name of the Workspace's Source that watches this feed URL, compared as saved (`URL.href`), or
- * undefined.
+ * The name of the Workspace's Source that the form's values would add again, or undefined. A feed
+ * URL compares as saved (`URL.href`), a repo in any case.
  */
-export async function watchedSourceName(db: Db, workspaceId: string, url: string) {
-  const href = URL.parse(url.trim())?.href;
-  if (href === undefined) return undefined;
+export async function watchedSourceName(db: Db, workspaceId: string, values: Omit<AddValues, "name" | "schedule">) {
+  if (values.type === "rss") {
+    const href = URL.parse(values.url.trim())?.href;
+    return href === undefined ? undefined : watchedName(db, workspaceId, "rss", href);
+  }
+  const repo = parseRepo(values.repo);
+  return repo === null ? undefined : watchedName(db, workspaceId, "github", releasesKey(repo));
+}
+
+async function watchedName(db: Db, workspaceId: string, type: "rss" | "github", dedupKey: string) {
   const [watched] = await db
     .select({ name: source.name })
     .from(source)
-    .where(and(eq(source.workspaceId, workspaceId), eq(source.type, "rss"), eq(source.dedupKey, href)));
+    .where(and(eq(source.workspaceId, workspaceId), eq(source.type, type), eq(source.dedupKey, dedupKey)));
   return watched?.name;
 }
 
 /**
- * What the form says about a problem, naming the host of the URL it was given, or for "duplicate"
- * the Source that already watches it.
+ * What the form says about a problem, naming the host of the URL or the repo it was given, or for
+ * "duplicate" the Source that already watches it.
  */
 export function problemMessage(
   problem: AddProblem,
   {
+    type = "rss",
     url,
+    repo: typed = "",
     status,
     mode,
     source: watching,
-  }: { url: string; status: string; mode: Config["mode"]; source?: string | undefined },
+  }: {
+    type?: AddType;
+    url: string;
+    repo?: string;
+    status: string;
+    mode: Config["mode"];
+    source?: string | undefined;
+  },
 ) {
-  const hostname = URL.parse(url.trim())?.hostname ?? "";
+  const github = type === "github-releases";
+  // Only a repo parseRepo accepts is shown, so a crafted link can't put words on the page.
+  const repo = parseRepo(typed) ?? "that repo";
+  const hostname = github ? "github.com" : (URL.parse(url.trim())?.hostname ?? "");
   const host = hostname === "" ? "that address" : hostname;
   switch (problem) {
     case "invalid-url":
       return "Enter the full RSS feed URL, starting with https://.";
+    case "invalid-repo":
+      return "Enter a GitHub repo as owner/name, such as vercel/next.js, or paste its URL.";
+    case "no-repo":
+      return `GitHub has no public repo ${repo}. Check the name: only a public repo's releases can be watched.`;
     case "schedule":
       return "Choose one of the schedules in the list.";
-    case "duplicate":
+    case "duplicate": {
+      const what = github ? `the releases of ${repo}` : "that feed";
       return watching === undefined
-        ? "This Workspace already watches that feed."
-        : `This Workspace already watches that feed as the Source “${watching}”.`;
+        ? `This Workspace already watches ${what}.`
+        : `This Workspace already watches ${what} as the Source “${watching}”.`;
+    }
     case "blocked":
       return `${host} leads to a private, local or non-web address, which Watchdog doesn't fetch.${mode === "self-hosted" ? " Whoever runs this Watchdog can allow a private address with EGRESS_ALLOWLIST." : ""}`;
     case "unreachable":
       return `Watchdog couldn't reach ${host}. Check the URL and try again.`;
-    case "answered":
-      return `${host} answered ${/^\d{3}$/.test(status) ? `HTTP ${status}` : "with an error"} instead of a feed. Check the URL.`;
+    case "answered": {
+      const answer = /^\d{3}$/.test(status) ? `HTTP ${status}` : "with an error";
+      return github
+        ? `GitHub answered ${answer} instead of the releases feed. Try again in a moment.`
+        : `${host} answered ${answer} instead of a feed. Check the URL.`;
+    }
     case "not-a-feed":
-      return "That page isn't an RSS or Atom feed. Use the URL of the feed itself.";
+      return github
+        ? "GitHub didn't answer with the releases feed. Try again in a moment."
+        : "That page isn't an RSS or Atom feed. Use the URL of the feed itself.";
     case "limit":
       return `${host} was too slow, sent too much or redirected too many times, so Watchdog stopped reading it.`;
     case "failed":
@@ -161,7 +250,10 @@ export function problemMessage(
 }
 
 /** Which form field a problem is about. */
-export const problemField = (problem: AddProblem) => (problem === "schedule" ? "schedule" : "url");
+export const problemField = (problem: AddProblem, type: AddType = "rss") => {
+  if (problem === "schedule") return "schedule";
+  return type === "rss" ? "url" : "repo";
+};
 
 /** The Workspace's Sources, newest first. */
 export function listSources(db: Db, workspaceId: string) {
