@@ -157,7 +157,7 @@ export async function addGithubReleasesSource(
   if (repo === null) return { problem: "invalid-repo" };
   const schedule = presetSchedule(input.schedule);
   if (schedule === undefined) return { problem: "schedule" };
-  if ((await watchedName(db, workspaceId, "github", releasesKey(repo))) !== undefined) {
+  if ((await watchedName(db, workspaceId, "github", githubKey({ kind: "releases", repo }))) !== undefined) {
     return { problem: "duplicate" };
   }
 
@@ -252,7 +252,6 @@ function githubKey(config: { kind: "releases" | "issues"; repo: string } | { kin
     ? `mentions:${config.within ?? ""}:${config.term}`
     : `${config.kind}:${config.repo.toLowerCase()}`;
 }
-const releasesKey = (repo: string) => githubKey({ kind: "releases", repo });
 
 async function save(db: Db, values: typeof source.$inferInsert): Promise<AddSourceResult> {
   // Another add of the same Source can finish between the duplicate check and this insert, and then

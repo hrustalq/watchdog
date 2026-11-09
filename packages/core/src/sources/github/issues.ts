@@ -6,7 +6,7 @@ import type { Polled } from "../types.ts";
 import { type Deferred, githubApi, GithubHttpError, type GithubResponse } from "./client.ts";
 
 // Loose, so the Item's `raw` keeps every field the API gave.
-const issue = z.looseObject({
+export const issue = z.looseObject({
   number: z.number(),
   title: z.string(),
   body: z.string().nullish(),
@@ -77,7 +77,6 @@ export function draft(entry: z.infer<typeof issue>, externalId = String(entry.nu
   };
 }
 
-export { issue };
 
 /** The `Link` header's next page, only when it is on GitHub's API, since the token goes with it. */
 function nextPage(link: string | null) {

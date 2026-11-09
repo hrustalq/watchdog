@@ -94,9 +94,9 @@ export interface GithubGetDeps extends FetchFeedDeps {
 const searchPerMinute = 30;
 
 /**
- * GETs a GitHub API URL with the token, unless the token's limits for `resource` put it off. Every
- * answer's limits are stored. Answers a 2xx or a 304; throws GithubTokenError on a 401 and
- * GithubHttpError on another error.
+ * GETs a GitHub API URL with the token, unless the token's limits for `resource` put it off. An
+ * answer with none remaining, or with a `retry-after`, puts off the token's later requests too.
+ * Answers a 2xx or a 304; throws GithubTokenError on a 401 and GithubHttpError on another error.
  */
 export async function githubGet(
   url: string,
@@ -106,8 +106,7 @@ export async function githubGet(
   const tokenHash = createHash("sha256").update(token.value).digest("hex");
   const key = and(eq(githubRateLimit.tokenHash, tokenHash), eq(githubRateLimit.resource, resource));
   const [limit] = await db.select().from(githubRateLimit).where(key);
-  const paused = limit && pausedUntil(limit, now);
-  if (paused) return { deferUntil: paused };
+  if (limit?.pausedUntil && limit.pausedUntil > now) return { deferUntil: limit.pausedUntil };
 
   if (resource === "search") {
     // One row per token counts its calls in the current minute, so concurrent polls on several
@@ -137,29 +136,27 @@ export async function githubGet(
     },
   });
 
-  const header = (name: string) => {
-    const value = Number.parseInt(response.headers.get(name) ?? "", 10);
-    return Number.isNaN(value) ? null : value;
-  };
-  const remaining = header("x-ratelimit-remaining");
-  const reset = header("x-ratelimit-reset");
-  const retryAfter = header("retry-after");
-  const limits = {
-    ...(remaining !== null && { remaining, resetAt: reset === null ? null : new Date(reset * 1000) }),
-    ...(retryAfter !== null && { retryAt: new Date(now.getTime() + retryAfter * 1000) }),
-  };
-  if (Object.keys(limits).length > 0) {
+  const header = (name: string) => Number.parseInt(response.headers.get(name) ?? "", 10) || 0;
+  // Just past the reset when none remain, or the retry-after time.
+  const spent = response.headers.get("x-ratelimit-remaining") === "0";
+  const resetAt = spent ? header("x-ratelimit-reset") * 1000 + 1000 : 0;
+  const retryAt = header("retry-after") > 0 ? now.getTime() + header("retry-after") * 1000 : 0;
+  const pausedUntil = new Date(Math.max(resetAt, retryAt));
+  if (pausedUntil > now) {
+    // Kept per token, so its other Sources wait too. A later answer never shortens the pause.
     await db
       .insert(githubRateLimit)
-      .values({ tokenHash, resource, ...limits })
-      .onConflictDoUpdate({ target: [githubRateLimit.tokenHash, githubRateLimit.resource], set: limits });
+      .values({ tokenHash, resource, pausedUntil })
+      .onConflictDoUpdate({
+        target: [githubRateLimit.tokenHash, githubRateLimit.resource],
+        set: { pausedUntil: sql`greatest(${githubRateLimit.pausedUntil}, excluded.paused_until)` },
+      });
   }
 
   if (response.ok || response.status === 304) return response;
-  const limitedUntil = pausedUntil({ remaining: null, resetAt: null, retryAt: null, ...limits }, now);
-  if ((response.status === 403 || response.status === 429) && limitedUntil) {
+  if ((response.status === 403 || response.status === 429) && pausedUntil > now) {
     await response.body?.cancel();
-    return { deferUntil: limitedUntil };
+    return { deferUntil: pausedUntil };
   }
   if (response.status === 401) {
     await response.body?.cancel();
@@ -168,20 +165,4 @@ export async function githubGet(
   const body: unknown = await response.json().catch(() => null);
   const message = typeof body === "object" && body !== null && "message" in body ? String(body.message) : "";
   throw new GithubHttpError(response.status, message);
-}
-
-/**
- * When the stored limits let the token's requests start again, or null when they already do: just
- * past the reset when none remain, or the retry-after time.
- */
-function pausedUntil(
-  limit: { remaining: number | null; resetAt: Date | null; retryAt: Date | null },
-  now: Date,
-) {
-  const times = [
-    limit.remaining === 0 && limit.resetAt ? limit.resetAt.getTime() + 1000 : 0,
-    limit.retryAt?.getTime() ?? 0,
-  ];
-  const until = Math.max(...times);
-  return until > now.getTime() ? new Date(until) : null;
 }

@@ -1,5 +1,5 @@
 {
-  "id": "c62fbc33-9c74-47eb-a431-7605ed6e715c",
+  "id": "ff95b715-73ae-4e77-94dd-d77194e4a8ba",
   "prevId": "e85308d0-086b-46ff-86cf-ab7ebc2c752d",
   "version": "7",
   "dialect": "postgresql",
@@ -2945,20 +2945,8 @@
           "primaryKey": false,
           "notNull": true
         },
-        "remaining": {
-          "name": "remaining",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "reset_at": {
-          "name": "reset_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "retry_at": {
-          "name": "retry_at",
+        "paused_until": {
+          "name": "paused_until",
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
