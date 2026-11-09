@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { diffLines } from "diff";
 import { z } from "zod";
+import { renderTimeout } from "../../render/renderer.ts";
 import { capBody } from "../item.ts";
 import type { SourceTypeImpl } from "../types.ts";
 import { fetchPage, normalise, readPage } from "./page.ts";
@@ -28,10 +29,14 @@ export const website: SourceTypeImpl = {
     const parsed = config.safeParse(source.config);
     if (!parsed.success) throw new Error("The Source's config has no page URL");
     const { url, region, ignore, render, ignoreRobots } = parsed.data;
-    if (render !== "static") throw new Error(`The ${render} renderer isn't available yet`);
+    if (render === "chromium") throw new Error("The chromium renderer isn't available yet");
+    if (render === "obscura" && deps.obscura === undefined) throw new Error("The Obscura renderer isn't running");
     const robots = deps.mode !== "self-hosted" || ignoreRobots !== true;
     if (robots) await checkRobots(url, deps);
-    const { html, finalUrl } = await fetchPage(url, deps);
+    const { html, finalUrl } =
+      render === "obscura" && deps.obscura !== undefined
+        ? await deps.obscura.render(url, { timeout: renderTimeout, ...(deps.signal && { signal: deps.signal }) })
+        : await fetchPage(url, deps);
     // A redirect leads to a page robots.txt hasn't been asked about. It was fetched, but isn't read.
     if (robots && finalUrl !== url) await checkRobots(finalUrl, deps);
 

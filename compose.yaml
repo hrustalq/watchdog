@@ -96,7 +96,12 @@ services:
   obscura:
     # https://github.com/h4ckf0r0day/obscura (ADR 0010). It binds 0.0.0.0 inside the container and
     # refuses to start without a token of at least 32 bytes, which CDP clients send as a Bearer.
+    # The public image is built without the stealth feature (ADR 0015), and blocks private addresses
+    # unless --allow-private-network is passed, which it must never be here.
     image: h4ckf0r0day/obscura:0.2.6
+    # Long-running instances grow in memory, so each worker is replaced past 512 MB or after an hour.
+    # Recycling needs more than one worker.
+    command: ["serve", "--port", "9222", "--host", "0.0.0.0", "--workers", "2", "--worker-max-rss", "512", "--worker-max-age", "3600"]
     environment:
       OBSCURA_CDP_TOKEN: ${OBSCURA_CDP_TOKEN:?set OBSCURA_CDP_TOKEN in .env}
     # The image has no shell, so its own binary checks the port. Any answer, even the 401 that a

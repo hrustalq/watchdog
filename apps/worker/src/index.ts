@@ -3,6 +3,7 @@ import {
   createAgentFetch,
   createEgressFetch,
   createMailer,
+  createObscuraRenderer,
   createSenders,
   linkChat,
   loadConfig,
@@ -60,10 +61,12 @@ await startPipeline(db, boss, {
   fetch: createAgentFetch(config),
   encryptionKey: config.encryptionKey,
 });
+const { cdpUrl, cdpToken } = config.obscura;
 await startScheduler(db, boss, config.mode, {
   fetch: egressFetch,
   enqueueItems: itemEnqueuer(boss),
   secrets: { encryptionKey: config.encryptionKey, authSecret: config.auth.secret },
+  ...(cdpUrl !== undefined && { obscura: createObscuraRenderer({ cdpUrl, cdpToken }) }),
 });
 const { botToken } = config.telegram;
 const stopTelegramBot =

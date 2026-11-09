@@ -2,6 +2,7 @@ export { type AgentResult, callAgent, readApiKey, testModelConnection } from "./
 export { loadProfile } from "./agent/profile.ts";
 export { type RatingAxis, ratingAnchor, ratingMeaning, ratingScale } from "./agent/rating.ts";
 export { type AgentFetch, createAgentFetch } from "./agent/provider.ts";
+export { createObscuraRenderer } from "./render/obscura.ts";
 export { loadConfig, type Config } from "./config.ts";
 export {
   createEgressFetch,
