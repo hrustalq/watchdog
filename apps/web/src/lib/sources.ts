@@ -33,6 +33,17 @@ export interface AddValues {
   schedule: string;
 }
 
+/** The form's values from a posted form or the URL it was sent back to, read by field name. */
+export function addValues(field: (name: string) => string): AddValues {
+  return {
+    type: field("type") === "github-releases" ? "github-releases" : "rss",
+    url: field("url"),
+    repo: field("repo"),
+    name: field("name"),
+    schedule: field("schedule"),
+  };
+}
+
 /**
  * Why a Source wasn't saved. A code rather than a sentence, so the form can carry it in its URL
  * without letting a crafted link put words on the page.
@@ -226,11 +237,11 @@ export function problemMessage(
     case "blocked":
       return `${host} leads to a private, local or non-web address, which Watchdog doesn't fetch.${mode === "self-hosted" ? " Whoever runs this Watchdog can allow a private address with EGRESS_ALLOWLIST." : ""}`;
     case "unreachable":
-      return `Watchdog couldn't reach ${host}. Check the URL and try again.`;
+      return `Watchdog couldn't reach ${host}. ${github ? "Try again in a moment." : "Check the URL and try again."}`;
     case "answered": {
       const answer = /^\d{3}$/.test(status) ? `HTTP ${status}` : "with an error";
       return github
-        ? `GitHub answered ${answer} instead of the releases feed. Try again in a moment.`
+        ? `GitHub answered ${answer} instead of the releases feed of ${repo}.`
         : `${host} answered ${answer} instead of a feed. Check the URL.`;
     }
     case "not-a-feed":

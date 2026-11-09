@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { requireWorkspace, server } from "@/lib/server";
-import { addGithubReleasesSource, addRssSource, type AddValues, removeSource } from "@/lib/sources";
+import { addGithubReleasesSource, addRssSource, addValues, removeSource } from "@/lib/sources";
 
 // Both actions end in a redirect. Without JavaScript that's a 303 to a page the browser renders;
 // an action that only returned would leave it a blank page. What the page then shows from the URL
@@ -19,17 +19,12 @@ const text = (formData: FormData, name: string) => {
  */
 export async function addSource(formData: FormData) {
   const { workspace } = await requireWorkspace();
-  const values: AddValues = {
-    type: text(formData, "type") === "github-releases" ? "github-releases" : "rss",
-    url: text(formData, "url"),
-    repo: text(formData, "repo"),
-    name: text(formData, "name"),
-    schedule: text(formData, "schedule"),
-  };
+  const values = addValues((name) => text(formData, name));
   const { db, fetch, mode } = server();
   const add = values.type === "rss" ? addRssSource : addGithubReleasesSource;
   const result = await add(db, { fetch, mode }, workspace.id, values);
-  if ("source" in result) redirect("/sources?added=1");
+  // The type stays chosen, so a second repo or feed can follow without choosing it again.
+  if ("source" in result) redirect(`/sources?${new URLSearchParams({ added: "1", type: values.type })}`);
   const back = new URLSearchParams({ error: result.problem, ...values });
   if (result.status !== undefined) back.set("status", result.status);
   redirect(`/sources?${back}`);

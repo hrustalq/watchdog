@@ -242,10 +242,15 @@ function capped(response: Response, url: URL, maxBytes: number): Response {
     {
       async pull(controller) {
         const chunk = await reader.read();
+        if (chunk.done) {
+          controller.close();
+          return;
+        }
         // undici types the chunks as any; they are always bytes.
         const bytes: unknown = chunk.value;
-        if (chunk.done || !(bytes instanceof Uint8Array)) {
-          controller.close();
+        if (!(bytes instanceof Uint8Array)) {
+          controller.error(new TypeError(`${url.hostname} sent a body that isn't bytes`));
+          await reader.cancel();
           return;
         }
         size += bytes.byteLength;

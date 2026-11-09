@@ -6,7 +6,7 @@ import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
 import {
   addProblems,
-  type AddValues,
+  addValues,
   listSources,
   problemField,
   problemMessage,
@@ -60,17 +60,13 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
     const value = params[name];
     return typeof value === "string" ? value : "";
   };
-  if (param("added") !== "") return <AddSourceForm added />;
+  const values = addValues(param);
+  if (param("added") !== "") {
+    return <AddSourceForm added values={{ ...addValues(() => ""), type: values.type }} />;
+  }
   // The code comes from the URL, so only a known one counts.
   const problem = addProblems.find((known) => known === param("error"));
   if (problem === undefined) return <AddSourceForm />;
-  const values: AddValues = {
-    type: param("type") === "github-releases" ? "github-releases" : "rss",
-    url: param("url"),
-    repo: param("repo"),
-    name: param("name"),
-    schedule: param("schedule"),
-  };
   const { db, mode } = server();
   // Only the code travels in the URL, so the Source it's already watched as is looked up.
   const watching =
@@ -90,15 +86,15 @@ async function SourceList() {
   const { workspace } = await requireWorkspace();
   const sources = await listSources(server().db, workspace.id);
   const scheduleLabel = (cron: string | null) => schedules.find((preset) => preset.cron === cron)?.label;
-  // RSS and website Sources watch a URL, and a GitHub Source a repo; the other types have none.
+  // RSS and website Sources watch a URL, and a GitHub releases Source a repo's releases.
   const urlOf = ({ config }: (typeof sources)[number]) => {
     if ("url" in config) return config.url;
-    return "repo" in config ? `https://github.com/${config.repo}/releases` : null;
+    return "kind" in config && config.kind === "releases" ? `https://github.com/${config.repo}/releases` : null;
   };
   // The URL is on the line above, so the error needn't repeat the URL it fetched.
   const withoutUrl = ({ config }: (typeof sources)[number], error: string) => {
     if ("url" in config) return error.replace(config.url, "the feed");
-    return "repo" in config ? error.replace(releasesFeedUrl(config.repo), "GitHub") : error;
+    return "kind" in config && config.kind === "releases" ? error.replace(releasesFeedUrl(config.repo), "the releases feed") : error;
   };
 
   return (
