@@ -58,7 +58,7 @@ export async function startScheduler(
         .update(source)
         .set({ nextPollAt: nextPollAt(schedule, mode, new Date()) })
         .where(eq(source.id, sourceId));
-      await pollSource(db, sourceId, deps);
+      await pollSource(db, sourceId, { ...deps, mode });
     } catch (error) {
       console.error(`Polling Source ${sourceId} failed:`, error);
       throw error;

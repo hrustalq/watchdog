@@ -1,0 +1,6 @@
+# Everyone may read the site but the drafts; Watchdog may not read the pricing page.
+User-agent: *
+Disallow: /drafts/
+
+User-agent: Watchdog
+Disallow: /pricing

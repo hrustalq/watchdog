@@ -13,6 +13,8 @@ export interface ItemDraft {
   publishedAt: Date | null;
   /** The entry as the Source gave it, for Source-specific extras. */
   raw: object;
+  /** A sentence the capture Log row adds, such as why the Item keeps less than usual. */
+  captureNote?: string;
 }
 
 export const maxBodyBytes = 32 * 1024;

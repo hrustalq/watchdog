@@ -19,7 +19,14 @@ export interface SourceConfigs {
   github:
     | { kind: "releases" | "issues"; repo: string }
     | { kind: "mentions"; term: string; within?: string };
-  website: { url: string; region?: string; ignore: string[]; render: "static" | "obscura" | "chromium" };
+  /** `ignoreRobots` is self-hosted only, turned on behind ADR 0015's warning; hosted ignores it. */
+  website: {
+    url: string;
+    region?: string;
+    ignore: string[];
+    render: "static" | "obscura" | "chromium";
+    ignoreRobots?: true;
+  };
   /** Optional JSONPaths that turn a payload into an Item. */
   webhook: { mapping?: { title?: string; body?: string; url?: string; externalId?: string } };
   /** A bot Source has no chat until the bot binds one. */

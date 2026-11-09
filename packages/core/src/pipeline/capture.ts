@@ -139,7 +139,7 @@ export async function captureItems(
         : await tx
             .insert(item)
             .values(
-              capture.map((draft) => ({
+              capture.map(({ captureNote: _, ...draft }) => ({
                 ...draft,
                 workspaceId: locked.workspaceId,
                 sourceId,
@@ -148,12 +148,16 @@ export async function captureItems(
               })),
             )
             .onConflictDoNothing({ target: [item.sourceId, item.externalId] })
-            .returning({ id: item.id });
+            .returning({ id: item.id, externalId: item.externalId });
     if (inserted.length > 0) {
       const message = `Captured from ${locked.name}${isBackfill ? " as part of the Backfill" : ""}`;
+      const notes = new Map(capture.map((draft) => [draft.externalId, draft.captureNote]));
       const data = { sourceId, fetchedAt: at.toISOString() };
       const stage = "capture" as const;
-      const rows = inserted.map(({ id }) => ({ itemId: id, stage, message, data }));
+      const rows = inserted.map(({ id, externalId }) => {
+        const note = notes.get(externalId);
+        return { itemId: id, stage, message: note === undefined ? message : `${message}. ${note}`, data };
+      });
       await tx.insert(itemLog).values(rows);
       await deps.enqueueItems(
         tx,
