@@ -37,8 +37,8 @@ export type AddType = (typeof addTypes)[number];
 
 /**
  * What the form posts, apart from a pasted token. Each type reads its own fields: `url` for RSS,
- * `url`, `region`, `ignore`, `ignoreRobots` and `render` for a website, `repo` for GitHub releases and issues,
- * `term` and `within` for GitHub mentions.
+ * `url`, `region`, `ignore`, `ignoreRobots` and `render` for a website, `repo` for GitHub releases
+ * and issues, `term` and `within` for GitHub mentions.
  */
 export interface AddValues {
   type: AddType;

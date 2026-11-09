@@ -129,6 +129,41 @@ export function AddSourceForm({
         autoComplete="url"
         defaultValue={values.url}
       />
+      <fieldset
+        className={cn("hidden flex-col gap-2", shownFor.website)}
+        aria-describedby={error?.field === "render" ? "render-error" : "render-help"}
+      >
+        <legend className={cn(label, "mb-2")}>How to read the page</legend>
+        <div className="flex flex-wrap gap-1">
+          {renders.map((render) => (
+            <label key={render.value} className={choice}>
+              <input
+                type="radio"
+                id={`render-${render.value}`}
+                name="render"
+                value={render.value}
+                defaultChecked={values.render === render.value}
+                disabled={render.value === "obscura" && rendering === false}
+                // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
+                autoFocus={error?.field === "render" && render.value === "static"}
+                className="sr-only"
+              />
+              {render.title}
+            </label>
+          ))}
+        </div>
+        {error?.field === "render" ? (
+          <p id="render-error" role="alert" className={fieldError}>
+            {error.message}
+          </p>
+        ) : (
+          <p id="render-help" className="text-xs text-muted-foreground">
+            Static reads the page&apos;s HTML as served, in one quick fetch. Rendered runs the page&apos;s scripts
+            first, for a page that builds its content with them, and takes longer.
+            {rendering === false ? " Rendering is unavailable: this install doesn't run Obscura." : null}
+          </p>
+        )}
+      </fieldset>
       <TextField
         id="region"
         label="Region"
@@ -175,41 +210,6 @@ export function AddSourceForm({
           </p>
         )}
       </div>
-      <fieldset
-        className={cn("hidden flex-col gap-2", shownFor.website)}
-        aria-describedby={error?.field === "render" ? "render-error" : "render-help"}
-      >
-        <legend className={cn(label, "mb-2")}>Reading</legend>
-        <div className="flex flex-wrap gap-1">
-          {renders.map((render) => (
-            <label key={render.value} className={choice}>
-              <input
-                type="radio"
-                id={`render-${render.value}`}
-                name="render"
-                value={render.value}
-                defaultChecked={values.render === render.value}
-                disabled={render.value === "obscura" && rendering === false}
-                // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
-                autoFocus={error?.field === "render" && render.value === "static"}
-                className="sr-only"
-              />
-              {render.title}
-            </label>
-          ))}
-        </div>
-        {error?.field === "render" ? (
-          <p id="render-error" role="alert" className={fieldError}>
-            {error.message}
-          </p>
-        ) : (
-          <p id="render-help" className="text-xs text-muted-foreground">
-            Static reads the page&apos;s HTML as served, in one quick fetch. Rendered runs the page&apos;s scripts
-            first, for a page that builds its content with them, and takes longer.
-            {rendering === false ? " Rendering is unavailable: this install doesn't run Obscura." : null}
-          </p>
-        )}
-      </fieldset>
       {mode === "self-hosted" ? (
         <div className={cn("hidden flex-col gap-2", shownFor.website)}>
           {/* The label holds the box, so the whole row is the target. */}
