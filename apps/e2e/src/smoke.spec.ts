@@ -78,7 +78,7 @@ async function saveRule(page: Page) {
 async function addRssSource(page: Page, path: string) {
   const url = fixtureFeed(path);
   // The page shows a copy of the form until the streamed one replaces it, and that drops what
-  // was typed into the copy, so the browser refuses the empty field. A repeat after a submit that
+  // was typed into the copy, so the server refuses the empty field. A repeat after a submit that
   // went through says the feed is already watched, so a retry can't hide a failure.
   await expect(async () => {
     await visibleField(page, "RSS feed URL").fill(url);

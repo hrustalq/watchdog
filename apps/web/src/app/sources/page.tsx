@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
+import { releasesFeedUrl } from "@watchdog/core";
 import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
 import {
   addProblems,
+  addValues,
   listSources,
   problemField,
   problemMessage,
@@ -36,7 +38,7 @@ export default function SourcesPage({ searchParams }: PageProps<"/sources">) {
         <h1 className="text-headline">Sources</h1>
         <section aria-labelledby="add-source" className="flex flex-col gap-4 rounded-lg border p-4">
           <h2 id="add-source" className="text-title">
-            Add an RSS Source
+            Add a Source
           </h2>
           {/* The form is in the static shell, so it submits without JavaScript. What the last submit
               said, read from the URL, streams in over it, which takes JavaScript to show. */}
@@ -58,22 +60,24 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
     const value = params[name];
     return typeof value === "string" ? value : "";
   };
-  if (param("added") !== "") return <AddSourceForm added />;
+  const values = addValues(param);
+  if (param("added") !== "") {
+    return <AddSourceForm added values={{ ...addValues(() => ""), type: values.type }} />;
+  }
   // The code comes from the URL, so only a known one counts.
   const problem = addProblems.find((known) => known === param("error"));
   if (problem === undefined) return <AddSourceForm />;
-  const values = { url: param("url"), name: param("name"), schedule: param("schedule") };
   const { db, mode } = server();
-  // Only the code travels in the URL, so the Source the feed is already watched as is looked up.
+  // Only the code travels in the URL, so the Source it's already watched as is looked up.
   const watching =
     problem === "duplicate"
-      ? await watchedSourceName(db, (await requireWorkspace()).workspace.id, values.url)
+      ? await watchedSourceName(db, (await requireWorkspace()).workspace.id, values)
       : undefined;
-  const shown = { url: values.url, status: param("status"), mode, source: watching };
+  const shown = { ...values, status: param("status"), mode, source: watching };
   return (
     <AddSourceForm
       values={values}
-      error={{ field: problemField(problem), message: problemMessage(problem, shown) }}
+      error={{ field: problemField(problem, values.type), message: problemMessage(problem, shown) }}
     />
   );
 }
@@ -82,11 +86,15 @@ async function SourceList() {
   const { workspace } = await requireWorkspace();
   const sources = await listSources(server().db, workspace.id);
   const scheduleLabel = (cron: string | null) => schedules.find((preset) => preset.cron === cron)?.label;
-  // RSS and website Sources watch a URL; the other types have none to show.
-  const urlOf = ({ config }: (typeof sources)[number]) => ("url" in config ? config.url : null);
-  const withoutUrl = (row: (typeof sources)[number], error: string) => {
-    const url = urlOf(row);
-    return url === null ? error : error.replace(url, "the feed");
+  // RSS and website Sources watch a URL, and a GitHub releases Source a repo's releases.
+  const urlOf = ({ config }: (typeof sources)[number]) => {
+    if ("url" in config) return config.url;
+    return "kind" in config && config.kind === "releases" ? `https://github.com/${config.repo}/releases` : null;
+  };
+  // The URL is on the line above, so the error needn't repeat the URL it fetched.
+  const withoutUrl = ({ config }: (typeof sources)[number], error: string) => {
+    if ("url" in config) return error.replace(config.url, "the feed");
+    return "kind" in config && config.kind === "releases" ? error.replace(releasesFeedUrl(config.repo), "the releases feed") : error;
   };
 
   return (
@@ -97,7 +105,8 @@ async function SourceList() {
         </h2>
         {sources.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            None yet. Add an RSS feed above, and every Item it captures shows up in the Feed.
+            None yet. Add a feed or a repo&apos;s releases above, and every Item it captures shows up
+            in the Feed.
           </p>
         ) : (
           <ul className="divide-y rounded-lg border">
@@ -129,8 +138,7 @@ async function SourceList() {
                             at <Timestamp at={row.lastErrorAt} />
                           </>
                         )}
-                        : {/* The URL is on the line above; the error needn't repeat it. */}
-                        {withoutUrl(row, row.lastError)}
+                        : {withoutUrl(row, row.lastError)}
                       </span>
                     </p>
                   )}

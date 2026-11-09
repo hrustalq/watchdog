@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest";
 import { loadConfig } from "../config.ts";
 import {
   createEgressFetch,
@@ -61,6 +61,7 @@ const routes: Record<string, (req: IncomingMessage, res: ServerResponse) => void
   "/never": () => undefined,
   "/stalls": (_req, res) => res.write("partial"),
   "/big": (_req, res) => res.end("x".repeat(2048)),
+  "/not-found": (_req, res) => res.writeHead(404, { "content-type": "text/plain" }).end("Not Found"),
   "/big-streamed": (_req, res) => {
     res.write("x".repeat(800));
     res.end("x".repeat(800));
@@ -315,6 +316,23 @@ describe("createEgressFetch", () => {
     const fetch = createEgressFetch(selfHosted("public.test"), { lookup, maxBytes: 1024 });
     const response = await fetch(reach("/big-streamed"));
     await expect(response.text()).rejects.toThrow(EgressLimitError);
+  });
+
+  it("lets the caller cancel a body it won't read, without a rejection nothing handles", async () => {
+    // One unhandled rejection ends a Node process, the worker included.
+    const unhandled: unknown[] = [];
+    const record = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", record);
+    onTestFinished(() => {
+      process.off("unhandledRejection", record);
+    });
+
+    const response = await open()(reach("/not-found"));
+    await response.body?.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(response.status).toBe(404);
+    expect(unhandled).toEqual([]);
   });
 
   it("passes a body under the cap through whole", async () => {
