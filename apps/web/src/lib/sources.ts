@@ -13,6 +13,7 @@ import {
   NotAFeedError,
   parseRepo,
   parseWithin,
+  maxRegionLength,
   regexError,
   regionError,
   signInToken,
@@ -419,15 +420,16 @@ export function problemMessage(
       return `Enter the full ${type === "website" ? "page" : "RSS feed"} URL, starting with https://.`;
     case "invalid-region": {
       // Only which rule the posted region breaks is said, never the region itself.
-      const error = regionError(cleanRegion(region)) ?? "";
-      if (error.includes(":has()")) return "The region can't use :has(). Select the element itself, such as #pricing .plan.";
-      if (error.includes("characters")) return "Keep the region to 1,000 characters or fewer.";
+      const why = regionError(cleanRegion(region));
+      if (why === "has") return "The region can't use :has(). Select the element itself, such as #pricing .plan.";
+      if (why === "too-long") return `Keep the region to ${maxRegionLength.toLocaleString("en")} characters or fewer.`;
       return "That isn't a CSS selector Watchdog can match. Enter one such as main or #pricing .plan, or leave it empty to watch the whole page.";
     }
     case "invalid-ignore": {
-      const lines = ignoreLines(ignore);
-      if (lines.length > maxIgnore) return `Enter at most ${String(maxIgnore)} ignore patterns, one a line.`;
-      const line = lines.findIndex((pattern) => regexError(pattern) !== undefined) + 1;
+      if (ignoreLines(ignore).length > maxIgnore) return `Enter at most ${String(maxIgnore)} ignore patterns, one a line.`;
+      // Counted as the textarea shows them, blank lines included.
+      const line =
+        ignore.split(/\r?\n/).findIndex((text) => text.trim() !== "" && regexError(text.replaceAll("\0", "").trim()) !== undefined) + 1;
       return `${line > 0 ? `Line ${String(line)}` : "A line"} isn't a regular expression Watchdog can run. Ignore patterns use RE2 syntax, such as \\d+ visitors.`;
     }
     case "invalid-repo":

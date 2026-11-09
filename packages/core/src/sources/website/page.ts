@@ -14,17 +14,19 @@ export const maxRegionLength = 1000;
 /** A deeper page isn't read: matching a descendant combinator walks every match's ancestors. */
 const maxDepth = 1000;
 
-/** Why a website Source can't watch this Region selector, or undefined when it can. */
-export function regionError(selector: string): string | undefined {
-  if (selector.length > maxRegionLength) return `The region has more than ${String(maxRegionLength)} characters.`;
+/**
+ * Why a website Source can't watch this Region selector: too long, using :has(), or not a selector
+ * css-select can match. Undefined when it can.
+ */
+export function regionError(selector: string): "too-long" | "has" | "invalid" | undefined {
+  if (selector.length > maxRegionLength) return "too-long";
   try {
-    // css-select refuses what css-what parses but it can't match, such as :hover.
+    // css-select refuses what css-what parses but it can't match, such as ::before.
     compile(selector);
-    if (usesHas(parse(selector))) return "The region can't use :has().";
-  } catch (error) {
-    return `The region isn't a CSS selector Watchdog can match: ${error instanceof Error ? error.message : String(error)}`;
+    return usesHas(parse(selector)) ? "has" : undefined;
+  } catch {
+    return "invalid";
   }
-  return undefined;
 }
 
 /** :has() walks every descendant of each element it tests, and nested ones multiply. */
@@ -35,7 +37,10 @@ const usesHas = (selectors: Selector[][]): boolean =>
     ),
   );
 
-/** Fetches the page through the egress guard and returns its HTML, or throws why it can't. */
+/**
+ * Fetches the page through the egress guard and returns its HTML and the URL it came from after any
+ * redirects, or throws why it can't.
+ */
 export async function fetchPage(url: string, deps: { fetch: ReturnType<typeof createEgressFetch> }) {
   const response = await deps.fetch(url, { headers: { accept: "text/html, application/xhtml+xml;q=0.9" } });
   if (!response.ok) {
@@ -49,7 +54,8 @@ export async function fetchPage(url: string, deps: { fetch: ReturnType<typeof cr
     await response.body?.cancel();
     throw new Error(`${url} answered with ${type.slice(0, 100) || "no content type"}, not an HTML page`);
   }
-  return decode(new Uint8Array(await response.arrayBuffer()), contentType);
+  const html = decode(new Uint8Array(await response.arrayBuffer()), contentType);
+  return { html, finalUrl: response.url || url };
 }
 
 /**
@@ -82,7 +88,8 @@ export function readPage(html: string, region: string | undefined) {
 /** The text without the ignore patterns' matches, each line's whitespace collapsed, blank lines dropped. */
 export function normalise(text: string, ignore: string[]) {
   return ignore
-    .reduce((kept, pattern) => withoutMatches(pattern, kept), text)
+    // Postgres refuses U+0000 in the jsonb that keeps the Baseline.
+    .reduce((kept, pattern) => withoutMatches(pattern, kept), text.replaceAll("\0", ""))
     .split("\n")
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter((line) => line !== "")

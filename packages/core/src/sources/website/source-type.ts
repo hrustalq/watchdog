@@ -29,9 +29,13 @@ export const website: SourceTypeImpl = {
     if (!parsed.success) throw new Error("The Source's config has no page URL");
     const { url, region, ignore, render, ignoreRobots } = parsed.data;
     if (render !== "static") throw new Error(`The ${render} renderer isn't available yet`);
-    if (deps.mode === "hosted" || ignoreRobots !== true) await checkRobots(url, deps);
+    const robots = deps.mode !== "self-hosted" || ignoreRobots !== true;
+    if (robots) await checkRobots(url, deps);
+    const { html, finalUrl } = await fetchPage(url, deps);
+    // A redirect leads to a page robots.txt hasn't been asked about. It was fetched, but isn't read.
+    if (robots && finalUrl !== url) await checkRobots(finalUrl, deps);
 
-    const page = readPage(await fetchPage(url, deps), region);
+    const page = readPage(html, region);
     const text = normalise(page.text, ignore);
     const hash = createHash("sha256").update(text).digest("hex");
     const baseline = source.fetchState;
@@ -56,13 +60,14 @@ export const website: SourceTypeImpl = {
   },
 };
 
-/** Past this many changed lines, the shortest diff costs too much to find. */
+/** Past this many changed lines, or this many ms, the shortest diff costs too much to find. */
 const maxEditLength = 1000;
+const diffTimeout = 1000;
 
 /** Added lines as `+ <line>` and removed ones as `- <line>`, unchanged ones left out. */
 function lineDiff(before: string, after: string) {
   // A last line without its newline would differ from the same line with one.
-  const changes = diffLines(`${before}\n`, `${after}\n`, { maxEditLength });
+  const changes = diffLines(`${before}\n`, `${after}\n`, { maxEditLength, timeout: diffTimeout });
   if (changes === undefined) return roughDiff(before.split("\n"), after.split("\n"));
   return changes
     .filter((change) => change.added || change.removed)

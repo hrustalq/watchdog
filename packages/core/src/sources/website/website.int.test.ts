@@ -241,6 +241,43 @@ describe("website Sources", () => {
     expect((await reload(onHosted.id)).lastError).toMatch(/robots\.txt disallows/);
   });
 
+  it("asks robots.txt about the page a redirect leads to, and checks robots.txt when no mode is given", async () => {
+    const src = await newSource();
+    const moved = `https://${crypto.randomUUID()}.pages.test`;
+    const { asked, deps } = site((url) => {
+      if (url === `${src.origin}/robots.txt`) return new Response("", { status: 404 });
+      if (url === `${moved}/robots.txt`) return new Response(robotsDisallow);
+      // The egress guard follows the redirect itself; the answer says where it ended.
+      const response = new Response(v1, { headers: html });
+      Object.defineProperty(response, "url", { value: `${moved}/pricing` });
+      return response;
+    });
+    expect(await pollSource(db, src.id, deps)).toEqual({
+      error: `${moved}/robots.txt disallows Watchdog from fetching this page`,
+    });
+    expect(asked).toEqual([`${src.origin}/robots.txt`, src.url, `${moved}/robots.txt`]);
+    expect((await reload(src.id)).fetchState).toEqual({});
+
+    const ignored = await newSource({ ignoreRobots: true });
+    const { deps: noMode } = site((url) =>
+      url === `${ignored.origin}/robots.txt` ? new Response(robotsDisallow) : new Response(v1, { headers: html }),
+    );
+    delete noMode.mode;
+    await pollSource(db, ignored.id, noMode);
+    expect((await reload(ignored.id)).lastError).toMatch(/robots\.txt disallows/);
+  });
+
+  it("treats a robots.txt answering 429 as unavailable, not as allowing everything", async () => {
+    const src = await newSource();
+    const { deps } = site((url) =>
+      url === `${src.origin}/robots.txt` ? new Response("Slow down", { status: 429 }) : new Response(v1, { headers: html }),
+    );
+    await pollSource(db, src.id, deps);
+    expect((await reload(src.id)).lastError).toBe(
+      `${src.origin}/robots.txt answered 429, so Watchdog didn't fetch the page. The next poll tries again.`,
+    );
+  });
+
   it("caches robots.txt per origin for 24 hours, but not an answer it couldn't use", async () => {
     const src = await newSource();
     let robots = () => new Response("Unavailable", { status: 503 });

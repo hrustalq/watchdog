@@ -102,7 +102,11 @@ async function SourceList() {
   };
   // The URL is on the line above, so the error needn't repeat the URL it fetched.
   const withoutUrl = ({ type, config }: (typeof sources)[number], error: string) => {
-    if ("url" in config) return error.replace(config.url, type === "website" ? "the page" : "the feed");
+    // Only the URL itself, not a longer one it starts, such as a site's robots.txt.
+    if ("url" in config && error.startsWith(`${config.url} `)) {
+      return `${type === "website" ? "the page" : "the feed"}${error.slice(config.url.length)}`;
+    }
+    if ("url" in config) return error;
     return "kind" in config && config.kind === "releases" ? error.replace(releasesFeedUrl(config.repo), "the releases feed") : error;
   };
 

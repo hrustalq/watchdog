@@ -1,6 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
 import { dataBox, field, fieldError, label, textBox } from "@/components/field-classes";
-import type { Config } from "@watchdog/core";
+import { type Config, maxRegionLength } from "@watchdog/core";
 import { type AddType, type AddValues, schedules } from "@/lib/sources";
 import { cn } from "@/lib/utils";
 import { Notice } from "../sign-in/notice";
@@ -109,16 +109,17 @@ export function AddSourceForm({
         help={
           <>
             <span className="[form:has(#type-website:checked)_&]:hidden">
-              The address of an RSS or Atom feed. Watchdog fetches it once to check it before saving.
+              The address of an RSS or Atom feed, such as https://example.com/feed.xml. Watchdog fetches it once
+              to check it before saving.
             </span>
             <span className="hidden [form:has(#type-website:checked)_&]:inline">
-              The page to watch. Watchdog reads its HTML as served, without running its scripts.
+              The page to watch, such as https://example.com/pricing. Watchdog reads its HTML as served, without
+              running its scripts, so a page that builds its content with scripts may show little to watch.
             </span>
           </>
         }
         inputMode="url"
         autoComplete="url"
-        placeholder="https://example.com/"
         defaultValue={values.url}
       />
       <TextField
@@ -127,22 +128,24 @@ export function AddSourceForm({
         optional
         className={shownFor.website}
         error={errorFor("region")}
-        help="A CSS selector for the part of the page to watch, such as #pricing .plan. Every match counts. Leave it empty to watch the whole page."
+        help="A CSS selector for the part of the page to watch, such as #pricing .plan. When it matches several elements, Watchdog watches them all. Leave it empty to watch the whole page."
         autoCapitalize="off"
         autoComplete="off"
         placeholder="main"
-        maxLength={1000}
+        maxLength={maxRegionLength}
         defaultValue={values.region}
         inputClassName={dataBox}
       />
       <div className={cn("hidden flex-col gap-2", shownFor.website)}>
         <label htmlFor="ignore" className={label}>
-          Ignore <span className="font-normal text-muted-foreground">(optional)</span>
+          Ignored text <span className="font-normal text-muted-foreground">(optional)</span>
         </label>
         <textarea
           id="ignore"
           name="ignore"
           rows={3}
+          // The text goes back in the URL with a problem, so it stays well under a URL's limits.
+          maxLength={2000}
           spellCheck={false}
           autoCapitalize="off"
           autoComplete="off"
@@ -180,8 +183,10 @@ export function AddSourceForm({
             Ignore robots.txt
           </label>
           <p id="ignoreRobots-help" className="text-xs text-muted-foreground">
-            Watchdog then fetches the page even where the site&apos;s robots.txt asks crawlers not to. The site may
-            object or block this server&apos;s address, and that risk is yours.
+            <span className="font-medium text-foreground">
+              The risk is yours: the site may object or block this server&apos;s address.
+            </span>{" "}
+            Watchdog then fetches the page even where the site&apos;s robots.txt asks crawlers not to.
           </p>
         </div>
       ) : null}

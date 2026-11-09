@@ -36,7 +36,7 @@ export async function checkRobots(
 }
 
 /**
- * A robots.txt that answers 4xx allows everything. One that answers 5xx or can't be fetched
+ * A robots.txt that answers 4xx allows everything. One that answers 429 or 5xx, or can't be fetched,
  * disallows this poll and isn't kept, so the next poll asks again.
  */
 async function fetchRules(url: string, deps: { fetch: ReturnType<typeof createEgressFetch> }) {
@@ -53,7 +53,8 @@ async function fetchRules(url: string, deps: { fetch: ReturnType<typeof createEg
   }
   if (response.ok) return rulesFor(new TextDecoder().decode((await response.bytes()).subarray(0, maxParsedBytes)));
   await response.body?.cancel();
-  if (response.status >= 400 && response.status < 500) return [];
+  // 429 asks Watchdog to slow down, so it is as unavailable as a 5xx.
+  if (response.status >= 400 && response.status < 500 && response.status !== 429) return [];
   throw new Error(unavailable(`answered ${String(response.status)}`));
 }
 

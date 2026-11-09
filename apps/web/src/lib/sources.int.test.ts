@@ -681,6 +681,12 @@ describe("Sources", () => {
         "Line 2 isn't a regular expression Watchdog can run. Ignore patterns use RE2 syntax, such as \\d+ visitors.",
       ],
       [
+        { ignore: "\\d+ visitors\n\n(unclosed" },
+        "invalid-ignore",
+        "ignore",
+        "Line 3 isn't a regular expression Watchdog can run. Ignore patterns use RE2 syntax, such as \\d+ visitors.",
+      ],
+      [
         { ignore: Array.from({ length: 21 }, (_, i) => `x${String(i)}`).join("\n") },
         "invalid-ignore",
         "ignore",

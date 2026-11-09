@@ -8,11 +8,11 @@ describe("regionError", () => {
   });
 
   it("refuses a selector that doesn't parse, can't be matched, uses :has() or runs too long", () => {
-    expect(regionError("main[data-plan")).toMatch(/^The region isn't a CSS selector Watchdog can match/);
-    expect(regionError("p::before")).toMatch(/^The region isn't a CSS selector Watchdog can match/);
-    expect(regionError("section:has(.price)")).toBe("The region can't use :has().");
-    expect(regionError("main :is(p, div:has(span))")).toBe("The region can't use :has().");
-    expect(regionError(`.${"a".repeat(1000)}`)).toBe("The region has more than 1000 characters.");
+    expect(regionError("main[data-plan")).toBe("invalid");
+    expect(regionError("p::before")).toBe("invalid");
+    expect(regionError("section:has(.price)")).toBe("has");
+    expect(regionError("main :is(p, div:has(span))")).toBe("has");
+    expect(regionError(`.${"a".repeat(1000)}`)).toBe("too-long");
   });
 });
 
@@ -33,6 +33,10 @@ describe("readPage", () => {
 });
 
 describe("normalise", () => {
+  it("drops U+0000, which Postgres can't keep in the Baseline", () => {
+    expect(normalise("a\0b", [])).toBe("ab");
+  });
+
   it("drops ignore matches and blank lines, and collapses whitespace in each line", () => {
     expect(normalise("Price:   $20\n\n  Updated 5 minutes ago \nVisits: 991", [String.raw`Updated \d+ minutes ago`])).toBe(
       "Price: $20\nVisits: 991",
