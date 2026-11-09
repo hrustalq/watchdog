@@ -39,11 +39,12 @@ gate.on("upgrade", (request, socket, head) => {
     return;
   }
   const upstream = connect(3001, "127.0.0.1", () => {
-    // The browser server answers only at /, and the token goes no further than the gate.
+    // The browser server answers only at /, and only to a loopback Host, which guards it against DNS
+    // rebinding. The token goes no further than the gate.
     const search = new URL(request.url ?? "/", "http://gate").search;
-    let lines = `${request.method} /${search} HTTP/1.1\r\n`;
+    let lines = `${request.method} /${search} HTTP/1.1\r\nHost: 127.0.0.1:3001\r\n`;
     for (let i = 0; i < request.rawHeaders.length; i += 2) {
-      if (request.rawHeaders[i].toLowerCase() !== "authorization") {
+      if (!["authorization", "host"].includes(request.rawHeaders[i].toLowerCase())) {
         lines += `${request.rawHeaders[i]}: ${request.rawHeaders[i + 1]}\r\n`;
       }
     }
