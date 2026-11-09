@@ -27,6 +27,8 @@ export interface SourceDeps {
   mode: Config["mode"];
   /** Encrypts a pasted GitHub token. It never leaves the server. */
   encryptionKey: Buffer;
+  /** Whether this install runs Obscura (OBSCURA_CDP_URL is set), which a rendered website needs. */
+  rendering?: boolean;
 }
 
 /** The kinds of Source the form adds. */
@@ -35,8 +37,8 @@ export type AddType = (typeof addTypes)[number];
 
 /**
  * What the form posts, apart from a pasted token. Each type reads its own fields: `url` for RSS,
- * `url`, `region`, `ignore` and `ignoreRobots` for a website, `repo` for GitHub releases and issues,
- * `term` and `within` for GitHub mentions.
+ * `url`, `region`, `ignore`, `ignoreRobots` and `render` for a website, `repo` for GitHub releases
+ * and issues, `term` and `within` for GitHub mentions.
  */
 export interface AddValues {
   type: AddType;
@@ -50,6 +52,8 @@ export interface AddValues {
   ignore: string;
   /** "on" when a self-hosted website Source skips robots.txt. */
   ignoreRobots: string;
+  /** How a website is read: fetched as served, or rendered by Obscura. */
+  render: "static" | "obscura";
   name: string;
   schedule: string;
 }
@@ -68,6 +72,7 @@ export function addValues(field: (name: string) => string): AddValues {
     region: field("region"),
     ignore: field("ignore"),
     ignoreRobots: field("ignoreRobots") === "on" ? "on" : "",
+    render: field("render") === "obscura" ? "obscura" : "static",
     name: field("name"),
     schedule: field("schedule"),
   };
@@ -81,6 +86,7 @@ export const addProblems = [
   "invalid-url",
   "invalid-region",
   "invalid-ignore",
+  "render-unavailable",
   "invalid-repo",
   "no-repo",
   "invalid-term",
@@ -159,15 +165,23 @@ export async function addRssSource(
 }
 
 /**
- * Saves a website Source for its static fetch. The page isn't fetched first: its first poll stores the
- * Baseline, and a page it can't read shows as that poll's last error. Robots.txt can be turned off
- * only on self-hosted (ADR 0015).
+ * Saves a website Source, fetched as served or rendered by Obscura. The page isn't fetched first: its
+ * first poll stores the Baseline, and a page it can't read shows as that poll's last error. Robots.txt
+ * can be turned off only on self-hosted (ADR 0015).
  */
 export async function addWebsiteSource(
   db: Db,
   deps: SourceDeps,
   workspaceId: string,
-  input: { url: string; region: string; ignore: string; ignoreRobots: string; name: string; schedule: string },
+  input: {
+    url: string;
+    region: string;
+    ignore: string;
+    ignoreRobots: string;
+    render: string;
+    name: string;
+    schedule: string;
+  },
 ): Promise<AddSourceResult> {
   const url = webUrl(input.url);
   if (url === null) return { problem: "invalid-url" };
@@ -177,6 +191,8 @@ export async function addWebsiteSource(
   if (ignore.length > maxIgnore || ignore.some((pattern) => regexError(pattern) !== undefined)) {
     return { problem: "invalid-ignore" };
   }
+  const render = input.render === "obscura" ? "obscura" : "static";
+  if (render === "obscura" && deps.rendering !== true) return { problem: "render-unavailable" };
   const schedule = presetSchedule(input.schedule);
   if (schedule === undefined) return { problem: "schedule" };
   if ((await watchedName(db, workspaceId, "website", `${url.href} ${region}`)) !== undefined) {
@@ -186,7 +202,7 @@ export async function addWebsiteSource(
     url: url.href,
     ...(region !== "" && { region }),
     ignore,
-    render: "static" as const,
+    render,
     ...(deps.mode === "self-hosted" && input.ignoreRobots === "on" && { ignoreRobots: true as const }),
   };
   const name = cleanName(input.name) || cleanName(`${url.hostname}${url.pathname === "/" ? "" : url.pathname}`);
@@ -432,6 +448,8 @@ export function problemMessage(
         ignore.split(/\r?\n/).findIndex((text) => text.trim() !== "" && regexError(text.replaceAll("\0", "").trim()) !== undefined) + 1;
       return `${line > 0 ? `Line ${String(line)}` : "A line"} isn't a regular expression Watchdog can run. Ignore patterns use RE2 syntax, such as \\d+ visitors.`;
     }
+    case "render-unavailable":
+      return "This install doesn't run Obscura, the browser that renders pages, so choose Static.";
     case "invalid-repo":
       return "Enter a GitHub repo as owner/name, such as vercel/next.js, or paste its URL.";
     case "no-repo":
@@ -489,6 +507,7 @@ export const problemField = (problem: AddProblem, type: AddType = "rss") => {
   if (problem === "invalid-within") return "within";
   if (problem === "invalid-region") return "region";
   if (problem === "invalid-ignore") return "ignore";
+  if (problem === "render-unavailable") return "render";
   if (type === "github-mentions") return "term";
   return type === "rss" || type === "website" ? "url" : "repo";
 };

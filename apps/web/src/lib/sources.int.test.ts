@@ -590,7 +590,7 @@ describe("Sources", () => {
     const every15 = "*/15 * * * *";
     const website = (
       workspaceId: string,
-      input: { url?: string; region?: string; ignore?: string; ignoreRobots?: string; name?: string },
+      input: { url?: string; region?: string; ignore?: string; ignoreRobots?: string; render?: string; name?: string },
       deps = selfHosted,
     ) =>
       addWebsiteSource(db, deps, workspaceId, {
@@ -598,6 +598,7 @@ describe("Sources", () => {
         region: "",
         ignore: "",
         ignoreRobots: "",
+        render: "static",
         name: "",
         schedule: every15,
         ...input,
@@ -644,6 +645,29 @@ describe("Sources", () => {
       const hosted = { ...selfHosted, mode: "hosted" as const };
       const dropped = await savedSource(await website(ours, { url: newPage(), ignoreRobots: "on" }, hosted));
       expect(dropped?.config).not.toHaveProperty("ignoreRobots");
+    });
+
+    it("renders the page through Obscura only on an install that runs it", async () => {
+      const rendering = { ...selfHosted, rendering: true };
+      const rendered = await savedSource(await website(ours, { url: newPage(), render: "obscura" }, rendering));
+      expect(rendered?.config).toMatchObject({ render: "obscura" });
+      // Anything else posted is the static fetch.
+      const other = await savedSource(await website(ours, { url: newPage(), render: "chromium" }, rendering));
+      expect(other?.config).toMatchObject({ render: "static" });
+
+      const before = (await sourcesIn(ours)).length;
+      expect(await website(ours, { url: newPage(), render: "obscura" })).toEqual({ problem: "render-unavailable" });
+      expect((await sourcesIn(ours)).length).toBe(before);
+      expect(problemField("render-unavailable", "website")).toBe("render");
+      const values = { ...addValues(() => ""), type: "website" as const, url: newPage() };
+      expect(problemMessage("render-unavailable", { ...values, status: "", mode: "self-hosted" })).toBe(
+        "This install doesn't run Obscura, the browser that renders pages, so choose Static.",
+      );
+    });
+
+    it("carries the render mode back in the form's values, and nothing but obscura counts", () => {
+      expect(addValues((name) => (name === "render" ? "obscura" : "")).render).toBe("obscura");
+      expect(addValues((name) => (name === "render" ? "chromium" : "")).render).toBe("static");
     });
 
     it("refuses the same page and Region twice, but watches another Region of it", async () => {

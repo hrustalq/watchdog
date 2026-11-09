@@ -3,6 +3,7 @@
 import type { Db, source, SourceType } from "@watchdog/db";
 import type { z } from "zod";
 import type { Config } from "../config.ts";
+import type { Renderer } from "../render/renderer.ts";
 import type { ItemDraft } from "./item.ts";
 import type { Deferred, GithubSecrets } from "./github/client.ts";
 import { github } from "./github/source-type.ts";
@@ -24,6 +25,13 @@ export interface PollDeps extends FetchFeedDeps {
    * it, robots.txt is checked as on hosted.
    */
   mode?: Config["mode"];
+  /** Renders a website Source set to `obscura`. Without it, such a Source's polls fail. */
+  obscura?: Renderer;
+  /**
+   * Fires when the worker stops or loses the job. A render still running then stops, and the poll
+   * throws rather than recording an error on the Source.
+   */
+  signal?: AbortSignal;
 }
 
 /**

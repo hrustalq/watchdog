@@ -15,7 +15,19 @@ const types: { value: AddType; title: string }[] = [
   { value: "github-mentions", title: "GitHub mentions" },
 ];
 
-type FieldName = "url" | "region" | "ignore" | "repo" | "term" | "within" | "token" | "schedule";
+const renders: { value: AddValues["render"]; title: string }[] = [
+  { value: "static", title: "Static" },
+  { value: "obscura", title: "Rendered" },
+];
+
+type FieldName = "url" | "region" | "ignore" | "render" | "repo" | "term" | "within" | "token" | "schedule";
+
+/**
+ * A choice in a row of them, its radio hidden. Forced colors drop the fill, which would leave the
+ * choices looking the same. A disabled one is dimmed and takes no pointer.
+ */
+const choice =
+  "inline-flex h-8 cursor-pointer items-center rounded-lg border border-transparent px-3 text-sm font-medium select-none hover:bg-muted has-checked:bg-primary has-checked:text-primary-foreground has-checked:hover:bg-primary/80 has-focus-visible:border-ring has-focus-visible:ring-3 has-focus-visible:ring-ring/30 has-disabled:pointer-events-none has-disabled:opacity-50 dark:hover:bg-muted/50 forced-colors:has-checked:bg-[Highlight] forced-colors:has-checked:text-[HighlightText] forced-colors:has-checked:forced-color-adjust-none";
 
 // Each type's fields show while its choice is checked, which CSS decides, so it works without
 // JavaScript. No field is `required`, and the URL isn't `type="url"`: a hidden field the browser
@@ -36,6 +48,7 @@ const empty: AddValues = {
   region: "",
   ignore: "",
   ignoreRobots: "",
+  render: "static",
   repo: "",
   term: "",
   within: "",
@@ -55,6 +68,7 @@ export function AddSourceForm({
   tokenDropped = false,
   githubSignIn,
   mode,
+  rendering,
 }: {
   values?: AddValues;
   error?: { field: FieldName; message: string };
@@ -65,6 +79,8 @@ export function AddSourceForm({
   githubSignIn?: boolean;
   /** Only self-hosted offers to skip robots.txt (ADR 0015); unknown in the static shell. */
   mode?: Config["mode"];
+  /** Whether this install runs Obscura, so a page can be rendered; unknown in the static shell. */
+  rendering?: boolean;
 }) {
   const errorFor = (name: FieldName) => (error?.field === name ? error.message : undefined);
   return (
@@ -78,11 +94,7 @@ export function AddSourceForm({
         <legend className={cn(label, "mb-2")}>Type</legend>
         <div className="flex flex-wrap gap-1">
           {types.map((type) => (
-            <label
-              key={type.value}
-              // Forced colors drop the fill, which would leave the choices looking the same.
-              className="inline-flex h-8 cursor-pointer items-center rounded-lg border border-transparent px-3 text-sm font-medium select-none hover:bg-muted has-checked:bg-primary has-checked:text-primary-foreground has-checked:hover:bg-primary/80 has-focus-visible:border-ring has-focus-visible:ring-3 has-focus-visible:ring-ring/30 dark:hover:bg-muted/50 forced-colors:has-checked:bg-[Highlight] forced-colors:has-checked:text-[HighlightText] forced-colors:has-checked:forced-color-adjust-none"
-            >
+            <label key={type.value} className={choice}>
               <input
                 type="radio"
                 id={`type-${type.value}`}
@@ -109,8 +121,7 @@ export function AddSourceForm({
               to check it before saving.
             </span>
             <span className="hidden [form:has(#type-website:checked)_&]:inline">
-              The page to watch, such as https://example.com/pricing. Watchdog reads its HTML as served, without
-              running its scripts, so a page that builds its content with scripts may show little to watch.
+              The page to watch, such as https://example.com/pricing.
             </span>
           </>
         }
@@ -118,6 +129,43 @@ export function AddSourceForm({
         autoComplete="url"
         defaultValue={values.url}
       />
+      <fieldset
+        className={cn("hidden flex-col gap-2", shownFor.website)}
+        aria-describedby={error?.field === "render" ? "render-error" : "render-help"}
+      >
+        <legend className={cn(label, "mb-2")}>How to read the page</legend>
+        <div className="flex flex-wrap gap-1">
+          {renders.map((render) => (
+            <label key={render.value} className={choice}>
+              <input
+                type="radio"
+                id={`render-${render.value}`}
+                name="render"
+                value={render.value}
+                // A rendered page sent back to an install without Obscura comes back as Static, the
+                // choice that can be sent.
+                defaultChecked={(rendering === false ? "static" : values.render) === render.value}
+                disabled={render.value === "obscura" && rendering === false}
+                // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
+                autoFocus={error?.field === "render" && render.value === "static"}
+                className="sr-only"
+              />
+              {render.title}
+            </label>
+          ))}
+        </div>
+        {error?.field === "render" ? (
+          <p id="render-error" role="alert" className={fieldError}>
+            {error.message}
+          </p>
+        ) : (
+          <p id="render-help" className="text-xs text-muted-foreground">
+            Static reads the page&apos;s HTML as served, in one quick fetch. Rendered runs the page&apos;s scripts
+            first, for a page that builds its content with them, and takes longer.
+            {rendering === false ? " Rendering is unavailable: this install doesn't run Obscura." : null}
+          </p>
+        )}
+      </fieldset>
       <TextField
         id="region"
         label="Region"

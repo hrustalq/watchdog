@@ -43,19 +43,27 @@ const usesHas = (selectors: Selector[][]): boolean =>
  */
 export async function fetchPage(url: string, deps: { fetch: ReturnType<typeof createEgressFetch> }) {
   const response = await deps.fetch(url, { headers: { accept: "text/html, application/xhtml+xml;q=0.9" } });
-  if (!response.ok) {
-    await response.body?.cancel();
-    throw new Error(`${url} answered ${String(response.status)} ${response.statusText}`.trim());
-  }
   const contentType = response.headers.get("content-type");
-  const type = contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
-  // A PDF or a JSON document has no page to compare.
-  if (type !== "text/html" && type !== "application/xhtml+xml") {
+  const problem = unwatchable(url, { status: response.status, statusText: response.statusText, contentType });
+  if (problem !== undefined) {
     await response.body?.cancel();
-    throw new Error(`${url} answered with ${type.slice(0, 100) || "no content type"}, not an HTML page`);
+    throw new Error(problem);
   }
   const html = decode(new Uint8Array(await response.arrayBuffer()), contentType);
   return { html, finalUrl: response.url || url };
+}
+
+/**
+ * Why a page's answer, fetched or rendered, can't be watched: an error status, or a type that isn't
+ * HTML, because a PDF or a JSON document has no page to compare. Undefined when it can.
+ */
+export function unwatchable(url: string, answer: { status: number; statusText: string; contentType: string | null }) {
+  if (answer.status < 200 || answer.status > 299) return `${url} answered ${String(answer.status)} ${answer.statusText}`.trim();
+  const type = answer.contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (type !== "text/html" && type !== "application/xhtml+xml") {
+    return `${url} answered with ${type.slice(0, 100) || "no content type"}, not an HTML page`;
+  }
+  return undefined;
 }
 
 /**

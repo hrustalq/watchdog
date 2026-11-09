@@ -61,16 +61,24 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
     return typeof value === "string" ? value : "";
   };
   const values = addValues(param);
-  const { db, mode } = server();
+  const { db, mode, rendering } = server();
   const { workspace } = await requireWorkspace();
   // The token field says whether it's needed, which depends on a GitHub sign-in.
   const githubSignIn = (await signInToken(db, workspace.id)) !== undefined;
   if (param("added") !== "") {
-    return <AddSourceForm added githubSignIn={githubSignIn} mode={mode} values={{ ...addValues(() => ""), type: values.type }} />;
+    return (
+      <AddSourceForm
+        added
+        githubSignIn={githubSignIn}
+        mode={mode}
+        rendering={rendering}
+        values={{ ...addValues(() => ""), type: values.type }}
+      />
+    );
   }
   // The code comes from the URL, so only a known one counts.
   const problem = addProblems.find((known) => known === param("error"));
-  if (problem === undefined) return <AddSourceForm githubSignIn={githubSignIn} mode={mode} />;
+  if (problem === undefined) return <AddSourceForm githubSignIn={githubSignIn} mode={mode} rendering={rendering} />;
   // Only the code travels in the URL, so the Source it's already watched as is looked up.
   const watching = problem === "duplicate" ? await watchedSourceName(db, workspace.id, values) : undefined;
   const shown = { ...values, status: param("status"), mode, source: watching };
@@ -79,6 +87,7 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
       values={values}
       githubSignIn={githubSignIn}
       mode={mode}
+      rendering={rendering}
       tokenDropped={param("pasted") !== ""}
       error={{ field: problemField(problem, values.type), message: problemMessage(problem, shown) }}
     />

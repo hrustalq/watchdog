@@ -72,7 +72,9 @@ describe("website Sources", () => {
   }, 120_000);
 
   /** A website Source on its own origin, so robots.txt caching can't leak between tests. */
-  async function newSource(config: { region?: string; ignore?: string[]; ignoreRobots?: true } = {}) {
+  async function newSource(
+    config: { region?: string; ignore?: string[]; ignoreRobots?: true; render?: "obscura" } = {},
+  ) {
     const origin = `https://${crypto.randomUUID()}.pages.test`;
     const url = `${origin}/pricing`;
     const [created] = await db
@@ -209,6 +211,50 @@ describe("website Sources", () => {
     await pollSource(db, pdf.id, deps);
     expect((await reload(pdf.id)).lastError).toBe(`${pdf.url} answered with application/pdf, not an HTML page`);
     expect((await reload(pdf.id)).fetchState).toEqual({});
+  });
+
+  it("renders an obscura Source after robots.txt and compares it as it would a fetched page", async () => {
+    const src = await newSource({ render: "obscura" });
+    let body = v1;
+    const rendered: string[] = [];
+    const { asked, deps } = site((url) => (url === `${src.origin}/robots.txt` ? new Response("", { status: 404 }) : undefined));
+
+    // An install that doesn't run Obscura.
+    expect(await pollSource(db, src.id, deps)).toEqual({ error: "The Obscura renderer isn't running" });
+    expect(asked).toEqual([]);
+
+    deps.obscura = {
+      render: (url, { timeout }) => {
+        rendered.push(`${url} in ${String(timeout)} ms`);
+        return Promise.resolve({ html: body, title: "Acme & Co pricing", finalUrl: url });
+      },
+    };
+    expect(await pollSource(db, src.id, deps)).toEqual({ captured: 0 });
+    body = v2;
+    expect(await pollSource(db, src.id, deps)).toEqual({ captured: 1 });
+    // The page is never fetched statically, and each render gets the 30-second timeout.
+    expect(asked).toEqual([`${src.origin}/robots.txt`]);
+    expect(rendered).toEqual([`${src.url} in 30000 ms`, `${src.url} in 30000 ms`]);
+    const captured = present((await itemsOf(src.id))[0]);
+    expect(captured.title).toBe("Acme & Co pricing changed");
+    expect(captured.body).toContain("+ $25 / month");
+  });
+
+  it("throws a poll stopped with the worker instead of recording it as the Source's error", async () => {
+    const src = await newSource({ render: "obscura" });
+    const { deps } = page(src.origin, () => v1);
+    const stop = new AbortController();
+    deps.signal = stop.signal;
+    deps.obscura = {
+      render: (url, { signal }) => {
+        stop.abort();
+        return Promise.reject(new Error(signal?.aborted === true ? `Rendering ${url} was stopped` : "not stopped"));
+      },
+    };
+    await expect(pollSource(db, src.id, deps)).rejects.toThrow(`Rendering ${src.url} was stopped`);
+    const after = await reload(src.id);
+    expect(after.lastError).toBeNull();
+    expect(after.lastPolledAt).toBeNull();
   });
 
   it("refuses on hosted a page that robots.txt disallows for Watchdog, without fetching it", async () => {

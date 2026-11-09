@@ -32,8 +32,8 @@ export async function startScheduler(
   await boss.createQueue(tickQueue);
   // `exclusive` with a singletonKey per Source: one poll of a Source queued or running at a time.
   // pollSource records fetch failures itself, so a throw is a bug or a lost database connection.
-  // A poll takes at most the 30 s fetch timeout plus the capture, so a job still active after two
-  // minutes belongs to a worker that died, and expiring it lets the Source be polled again.
+  // A poll takes at most the 30 s fetch or render timeout plus the capture, so a job still active
+  // after two minutes belongs to a worker that died, and expiring it lets the Source be polled again.
   await boss.createQueue(pollQueue, {
     policy: "exclusive",
     retryBackoff: true,
@@ -58,7 +58,7 @@ export async function startScheduler(
         .update(source)
         .set({ nextPollAt: nextPollAt(schedule, mode, new Date()) })
         .where(eq(source.id, sourceId));
-      await pollSource(db, sourceId, { ...deps, mode });
+      await pollSource(db, sourceId, { ...deps, mode, signal: job.signal });
     } catch (error) {
       console.error(`Polling Source ${sourceId} failed:`, error);
       throw error;
