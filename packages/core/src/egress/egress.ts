@@ -3,7 +3,7 @@
 // Security and privacy page and EGRESS_ALLOWLIST on the Configuration page in Knowledge.
 import { lookup as dnsLookup } from "node:dns/promises";
 import { BlockList, isIP, type LookupFunction } from "node:net";
-import { TransformStream } from "node:stream/web";
+import { ReadableStream } from "node:stream/web";
 import { Agent, fetch, Headers, type RequestInit, Response } from "undici";
 import rootPackage from "../../../../package.json" with { type: "json" };
 import type { Config } from "../config.ts";
@@ -234,14 +234,31 @@ function capped(response: Response, url: URL, maxBytes: number): Response {
   }
   if (response.body === null) return response;
   let size = 0;
-  const body = response.body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        size += chunk.byteLength;
-        if (size > maxBytes) controller.error(tooBig());
-        else controller.enqueue(chunk);
+  const reader = response.body.getReader();
+  // Reads only when the caller does. A pipe, such as pipeThrough, keeps a read pending, and
+  // cancelling undici's body under a pending read rejects a promise nothing handles, which ends
+  // the process (Node 26, undici 8). Callers cancel the body of every error response they skip.
+  const body = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        const chunk = await reader.read();
+        // undici types the chunks as any; they are always bytes.
+        const bytes: unknown = chunk.value;
+        if (chunk.done || !(bytes instanceof Uint8Array)) {
+          controller.close();
+          return;
+        }
+        size += bytes.byteLength;
+        if (size <= maxBytes) {
+          controller.enqueue(bytes);
+          return;
+        }
+        controller.error(tooBig());
+        await reader.cancel();
       },
-    }),
+      cancel: (reason) => reader.cancel(reason),
+    },
+    { highWaterMark: 0 },
   );
   const result = new Response(body, response);
   Object.defineProperty(result, "url", { value: url.href });
