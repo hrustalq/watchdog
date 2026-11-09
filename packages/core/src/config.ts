@@ -58,7 +58,7 @@ const schema = z
     TELEGRAM_API_HASH: z.string().optional(),
     OBSCURA_CDP_URL: z.url({ protocol: /^(wss?|https?)$/ }).optional(),
     OBSCURA_CDP_TOKEN: z.string().optional(),
-    // The token is the path the browser server answers at. The message can't repeat it.
+    // The worker sends the token as a Bearer header. The message can't repeat it.
     chromium: z
       .object({
         CHROMIUM_URL: z.url({ protocol: /^wss?$/, error: invalid("must be a ws:// or wss:// URL") }),

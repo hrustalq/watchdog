@@ -10,5 +10,7 @@ export function createObscuraRenderer(obscura: { cdpUrl: string; cdpToken: strin
   return createBrowserRenderer({
     name: "Obscura",
     connect: (timeout) => chromium.connectOverCDP(obscura.cdpUrl, { headers, timeout }),
+    prepare: (url) => Promise.resolve(url),
+    open: async (browser, url) => ({ context: await browser.newContext(), url, blocked: [] }),
   });
 }

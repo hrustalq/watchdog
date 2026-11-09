@@ -17,19 +17,23 @@ export interface Opened {
   blocked: string[];
 }
 
-export function createBrowserRenderer({
+export function createBrowserRenderer<Prepared>({
   name,
   connect,
-  open = async (browser, url) => ({ context: await browser.newContext(), url, blocked: [] }),
+  prepare,
+  open,
 }: {
   /** As in "Couldn't reach the <name> renderer". */
   name: string;
   connect: (timeout: number) => Promise<Browser>;
-  /** Opens the context the page at `url` loads in. The signal fires when the render stops. */
-  open?: (browser: Browser, url: string, signal: AbortSignal) => Promise<Opened>;
+  /** Runs before the browser is reached, inside the deadline. What it throws is the render's error. */
+  prepare: (url: string, signal: AbortSignal) => Promise<Prepared>;
+  /** Opens the context the page loads in. The signal fires when the render stops. */
+  open: (browser: Browser, prepared: Prepared, signal: AbortSignal) => Promise<Opened>;
 }): Renderer {
   return {
     render: async (url, { timeout, signal }) => {
+      const started = Date.now();
       const deadline = AbortSignal.timeout(timeout);
       const stop = signal === undefined ? deadline : AbortSignal.any([signal, deadline]);
       const timedOut = () => new Error(`${url} didn't finish rendering within ${String(timeout / 1000)} s`);
@@ -39,9 +43,16 @@ export function createBrowserRenderer({
         return signal?.aborted === true ? new Error(`Rendering ${url} was stopped`) : undefined;
       };
 
+      let prepared: Prepared;
+      try {
+        stop.throwIfAborted();
+        prepared = await prepare(url, stop);
+      } catch (error) {
+        throw stopped() ?? error;
+      }
       let browser: Browser;
       try {
-        browser = await connect(timeout);
+        browser = await connect(Math.max(1, timeout - (Date.now() - started)));
       } catch (error) {
         // Playwright's own connect timeout can fire just before the deadline does.
         if (error instanceof errors.TimeoutError) throw timedOut();
@@ -56,7 +67,7 @@ export function createBrowserRenderer({
       let answer;
       try {
         stop.throwIfAborted();
-        answer = await visit(await open(browser, url, stop));
+        answer = await visit(await open(browser, prepared, stop));
       } catch (error) {
         throw stopped() ?? new Error(`${url} couldn't be rendered: ${firstLine(error)}`);
       } finally {

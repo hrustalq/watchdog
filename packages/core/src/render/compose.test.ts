@@ -64,10 +64,13 @@ describe("the Chromium fallback in compose.yaml", () => {
       .parse(JSON.parse(read("packages/core/package.json")));
     const version = core.dependencies["playwright-core"];
     expect(version).toMatch(/^\d+\.\d+\.\d+$/);
-    const dockerfile = read(`${z.string().parse(chromium?.build)}/Dockerfile`);
+    const build = z.string().parse(chromium?.build);
+    const dockerfile = read(`${build}/Dockerfile`);
     expect(dockerfile).toContain(`FROM mcr.microsoft.com/playwright:v${version}-`);
     expect(dockerfile).toContain(`playwright-core@${version}`);
-    // Clients may not pass launch flags such as --no-sandbox or a proxy.
-    expect(dockerfile).not.toContain("--unsafe");
+    // The browser server listens on loopback behind the gate, and clients can't pass launch arguments.
+    const gate = read(`${build}/gate.mjs`);
+    expect(gate).toContain('"run-server", "--host", "127.0.0.1"');
+    expect(gate).not.toContain("--unsafe");
   });
 });

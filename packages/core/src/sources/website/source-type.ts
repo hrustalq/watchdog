@@ -9,11 +9,14 @@ import type { SourceTypeImpl } from "../types.ts";
 import { fetchPage, normalise, readPage } from "./page.ts";
 import { checkRobots } from "./robots.ts";
 
+/** How a website is read: fetched as served, rendered by Obscura, or rendered by the Chromium fallback. */
+export const renderModes = ["static", "obscura", "chromium"] as const;
+
 const config = z.object({
   url: z.string(),
   region: z.string().optional(),
   ignore: z.array(z.string()),
-  render: z.enum(["static", "obscura", "chromium"]),
+  render: z.enum(renderModes),
   /** Self-hosted only: skip robots.txt, which the user turned on behind ADR 0015's warning. */
   ignoreRobots: z.literal(true).optional(),
 });

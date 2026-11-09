@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage } from "node:http";
-import { GenericContainer, type StartedTestContainer, TestContainers } from "testcontainers";
+import { GenericContainer, type StartedTestContainer, TestContainers, Wait } from "testcontainers";
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadConfig } from "../config.ts";
 import { createEgressFetch } from "../egress/egress.ts";
@@ -31,6 +31,7 @@ describe("the Chromium Renderer", () => {
   const asked: string[] = [];
   const upgrades: string[] = [];
   let renderer: ReturnType<typeof createChromiumRenderer>;
+  let fetch: ReturnType<typeof createEgressFetch>;
 
   beforeAll(async () => {
     const server = createServer((request: IncomingMessage, response) => {
@@ -66,7 +67,11 @@ describe("the Chromium Renderer", () => {
     hidden = `http://host.testcontainers.internal:${String(port)}`;
 
     const image = await GenericContainer.fromDockerfile(new URL("../../../../docker/chromium", import.meta.url).pathname).build();
-    chromium = await image.withEnvironment({ CHROMIUM_TOKEN: token }).withExposedPorts(3000).withSharedMemorySize(1024 ** 3).start();
+    chromium = await image.withEnvironment({ CHROMIUM_TOKEN: token }).withExposedPorts(3000)
+      .withSharedMemorySize(1024 ** 3)
+      // The gate listens first; the browser server behind it is ready once it says so.
+      .withWaitStrategy(Wait.forLogMessage("Listening on ws://127.0.0.1:3001"))
+      .start();
 
     const config = loadConfig(
       {
@@ -85,7 +90,8 @@ describe("the Chromium Renderer", () => {
       return Promise.resolve(address === undefined ? [] : [{ address, family: 4 }]);
     };
     const url = `ws://${chromium.getHost()}:${String(chromium.getMappedPort(3000))}`;
-    renderer = createChromiumRenderer({ url, token }, createEgressFetch(config, { lookup }));
+    fetch = createEgressFetch(config, { lookup });
+    renderer = createChromiumRenderer({ url, token }, fetch);
     return async () => {
       server.closeAllConnections();
       server.close();
@@ -118,18 +124,37 @@ describe("the Chromium Renderer", () => {
     // The browser never sees the redirect: the guard follows it, and the page opens where it ended.
     expect(asked).toEqual(["/old", "/status", "/app.js"]);
 
+    // A fragment never reaches the server, so the page is still answered with what was fetched.
     asked.length = 0;
+    expect((await renderer.render(`${site}/status#plans`, { timeout: 20_000 })).html).toContain("All systems operational");
+    expect(asked).toEqual(["/status", "/app.js"]);
+
+    asked.length = 0;
+    // The same error a static fetch of the page gives.
     await expect(renderer.render(`${site}/to-hidden`, { timeout: 20_000 })).rejects.toThrow(
-      `${site}/to-hidden couldn't be rendered: ${blocked("host.testcontainers.internal", gatewayAddress)}`,
+      blocked("host.testcontainers.internal", gatewayAddress),
     );
     expect(asked).toEqual(["/to-hidden"]);
   });
 
-  it("is refused without the token", async () => {
-    const url = `ws://${chromium.getHost()}:${String(chromium.getMappedPort(3000))}`;
-    const wrong = createChromiumRenderer({ url, token: "not-the-token-but-long-enough-to-look-like-one" }, () =>
-      Promise.reject(new Error("unused")),
+  it("checks the page as a static fetch does, before reaching the browser", async () => {
+    await expect(renderer.render(`${site}/missing`, { timeout: 20_000 })).rejects.toThrow(
+      new Error(`${site}/missing answered 404 Not Found`),
     );
-    await expect(wrong.render(`${site}/status`, { timeout: 10_000 })).rejects.toThrow(/^Couldn't reach the Chromium renderer: /);
+  });
+
+  it("refuses a connection without the token, and tells nobody the browser server's address", async () => {
+    const http = `http://${chromium.getHost()}:${String(chromium.getMappedPort(3000))}`;
+    const wrongToken = "not-the-token-but-long-enough-to-look-like-one";
+    const wrong = createChromiumRenderer({ url: http.replace("http:", "ws:"), token: wrongToken }, fetch);
+    const refused = wrong.render(`${site}/status`, { timeout: 10_000 });
+    await expect(refused).rejects.toThrow(/^Couldn't reach the Chromium renderer: .*401/);
+    await expect(refused).rejects.not.toThrow(wrongToken);
+    // Playwright's server would answer /json with the path it serves at.
+    for (const path of ["/json", "/", `/${token}`]) {
+      const response = await globalThis.fetch(`${http}${path}`);
+      expect(response.status).toBe(401);
+      expect(await response.text()).toBe("");
+    }
   });
 });

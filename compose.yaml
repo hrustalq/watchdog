@@ -127,9 +127,9 @@ services:
     networks: [chromium]
     # A browser needs more shared memory than Docker's default 64 MB.
     shm_size: 1gb
-    # Any answer, even the one a request without the token's path gets, means the server is up.
+    # The browser server behind the gate answers on loopback once it is up.
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').catch(() => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/').then((r) => r.ok || process.exit(1), () => process.exit(1))"]
       timeout: 5s
       start_period: 30s
       start_interval: 1s

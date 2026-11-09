@@ -16,6 +16,7 @@ import {
   maxRegionLength,
   regexError,
   regionError,
+  renderModes,
   signInToken,
 } from "@watchdog/core";
 import { and, type Db, eq, source } from "@watchdog/db";
@@ -37,8 +38,6 @@ export interface Renderers {
   chromium: boolean;
 }
 
-/** How a website is read: fetched as served, rendered by Obscura, or rendered by the Chromium fallback. */
-export const renderModes = ["static", "obscura", "chromium"] as const;
 export type RenderMode = (typeof renderModes)[number];
 
 /** The kinds of Source the form adds. */
