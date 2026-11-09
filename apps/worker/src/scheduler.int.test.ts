@@ -13,6 +13,7 @@ const feed = `<?xml version="1.0"?><rss version="2.0"><channel><title>Synthetic<
 const fetched: string[] = [];
 const gates = new Map<string, Promise<void>>();
 const deps: PollSourceDeps = {
+  secrets: { encryptionKey: Buffer.alloc(32), authSecret: "unused-by-rss-sources" },
   fetch: async (input) => {
     const url = String(input);
     fetched.push(url);

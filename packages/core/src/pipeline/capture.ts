@@ -1,6 +1,6 @@
 // The capture stage: drafts from any Source type become Items, whether a poll fetched them or a
 // push delivered them (docs: Processing pipeline, "Stages").
-import { and, type Db, eq, inArray, item, itemLog, source, type Tx } from "@watchdog/db";
+import { and, type Db, eq, inArray, item, itemLog, source, sql, type Tx } from "@watchdog/db";
 import type { ItemDraft } from "../sources/item.ts";
 import { type PollDeps, sourceTypes } from "../sources/types.ts";
 import { detectLanguage } from "./language.ts";
@@ -16,7 +16,7 @@ export interface CaptureDeps {
 
 export interface PollSourceDeps extends PollDeps, CaptureDeps {}
 
-export type PollResult = { captured: number } | { error: string };
+export type PollResult = { captured: number } | { error: string } | { deferredUntil: Date };
 
 /** A successful poll or push. A poll moves last_polled_at, and stores its fetch state if it has one. */
 interface Success {
@@ -48,11 +48,20 @@ export async function pollSource(
 
   let polled;
   try {
-    polled = await type.poll(found, deps);
+    polled = await type.poll(found, { ...deps, db, now: at });
   } catch (error) {
     const message = describe(error);
     await recordOutcome(db, sourceId, { at, error: message });
     return { error: message };
+  }
+  if ("deferUntil" in polled) {
+    // A rate limit puts the poll off: no failure, no success, just a later next poll.
+    const until = polled.deferUntil;
+    await db
+      .update(source)
+      .set({ nextPollAt: sql`greatest(${source.nextPollAt}, ${until.toISOString()}::timestamptz)` })
+      .where(eq(source.id, sourceId));
+    return { deferredUntil: until };
   }
   if ("notModified" in polled) {
     await recordOutcome(db, sourceId, { at, polled: true });

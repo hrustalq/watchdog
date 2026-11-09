@@ -63,6 +63,7 @@ await startPipeline(db, boss, {
 await startScheduler(db, boss, config.mode, {
   fetch: egressFetch,
   enqueueItems: itemEnqueuer(boss),
+  secrets: { encryptionKey: config.encryptionKey, authSecret: config.auth.secret },
 });
 const { botToken } = config.telegram;
 const stopTelegramBot =

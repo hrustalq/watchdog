@@ -1,10 +1,9 @@
-// The GitHub Source type. So far it reads releases, through the repo's public releases.atom and
-// the RSS parser, with no API call and no token (docs: Sources and ingestion, "GitHub").
-import { z } from "zod";
+// GitHub releases: the repo's public releases.atom through the RSS parser, with no API call and no
+// token (docs: Sources and ingestion, "Releases").
 import { FeedHttpError, fetchFeed, type FetchFeedDeps, type FetchState } from "../rss/fetch-feed.ts";
-import type { SourceTypeImpl } from "../types.ts";
 
-const owner = /^[a-z\d][a-z\d-]{0,38}$/i;
+/** A GitHub user or org name. */
+export const owner = /^[a-z\d][a-z\d-]{0,38}$/i;
 const name = /^[\w.-]{1,100}$/;
 
 /**
@@ -21,8 +20,6 @@ export function parseRepo(input: string) {
 
 export const releasesFeedUrl = (repo: string) => `https://github.com/${repo}/releases.atom`;
 
-const config = z.object({ kind: z.literal("releases"), repo: z.string() });
-
 /** Fetches the repo's releases feed. Throws MissingRepoError when GitHub has no such public repo. */
 export async function fetchReleases(repo: string, fetchState: FetchState, deps: FetchFeedDeps) {
   try {
@@ -33,18 +30,6 @@ export async function fetchReleases(repo: string, fetchState: FetchState, deps: 
     throw error;
   }
 }
-
-export const github: SourceTypeImpl = {
-  config,
-  backfill: { window: 7 * 24 * 60 * 60 * 1000, max: 50 },
-  poll: async (source, deps) => {
-    const parsed = config.safeParse(source.config);
-    if (!parsed.success) throw new Error("The Source's config isn't a GitHub repo's releases");
-    const fetched = await fetchReleases(parsed.data.repo, source.fetchState, deps);
-    if ("notModified" in fetched) return fetched;
-    return { drafts: fetched.entries, fetchState: { ...fetched.fetchState } };
-  },
-};
 
 /** GitHub has no public repo by that name. */
 export class MissingRepoError extends Error {

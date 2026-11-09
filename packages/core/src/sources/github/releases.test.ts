@@ -1,7 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { PollDeps } from "../types.ts";
-import { github, parseRepo, releasesFeedUrl } from "./releases.ts";
+import { createDb } from "@watchdog/db";
+import type { SourceTypeImpl } from "../types.ts";
+import { parseRepo, releasesFeedUrl } from "./releases.ts";
+import { github } from "./source-type.ts";
 
 // Recorded from github.com on 2026-11-08: vercel/next.js's releases.atom trimmed to its first three
 // entries, and the body GitHub sends with its 404 for a repo that doesn't exist (text/plain).
@@ -10,12 +12,16 @@ const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, imp
 /** A fetch that answers each URL from `responses` and records what was asked. */
 function serving(responses: Record<string, () => Response>) {
   const asked: string[] = [];
-  const deps: PollDeps = {
+  const deps: Parameters<NonNullable<SourceTypeImpl["poll"]>>[1] = {
     fetch: (input) => {
       asked.push(String(input));
       const respond = responses[String(input)];
       return respond ? Promise.resolve(respond()) : Promise.reject(new Error("connect ECONNREFUSED"));
     },
+    // Releases need no token, so they never connect to the database or decrypt anything.
+    db: createDb("postgres://unused@localhost/unused"),
+    now: new Date(),
+    secrets: { encryptionKey: Buffer.alloc(32), authSecret: "" },
   };
   return { asked, deps };
 }
@@ -58,11 +64,11 @@ describe("a GitHub releases Source", () => {
       [url]: () => new Response(atom, { headers: { "content-type": "application/atom+xml", etag: 'W/"e7f5"' } }),
     });
 
-    const polled = await github.poll?.({ config: { kind: "releases", repo }, fetchState: {} }, deps);
+    const polled = await github.poll?.({ config: { kind: "releases", repo }, fetchState: {}, workspaceId: "", secretCiphertext: null }, deps);
 
     expect(releasesFeedUrl(repo)).toBe(url);
     expect(asked).toEqual([url]);
-    if (polled === undefined || "notModified" in polled) throw new Error("Expected drafts");
+    if (polled === undefined || !("drafts" in polled)) throw new Error("Expected drafts");
     expect(polled.fetchState).toEqual({ etag: 'W/"e7f5"' });
     expect(polled.drafts.map((draft) => draft.externalId)).toEqual([
       "tag:github.com,2008:Repository/70107786/v16.5.0-canary.45",
@@ -87,7 +93,7 @@ describe("a GitHub releases Source", () => {
     });
 
     await expect(
-      github.poll?.({ config: { kind: "releases", repo }, fetchState: {} }, deps),
+      github.poll?.({ config: { kind: "releases", repo }, fetchState: {}, workspaceId: "", secretCiphertext: null }, deps),
     ).rejects.toThrow(
       "GitHub has no public repo vercel/next.js. It may have been renamed, deleted or made private.",
     );
@@ -97,7 +103,7 @@ describe("a GitHub releases Source", () => {
     const { deps } = serving({ [url]: () => new Response("", { status: 503, statusText: "Service Unavailable" }) });
 
     await expect(
-      github.poll?.({ config: { kind: "releases", repo }, fetchState: {} }, deps),
+      github.poll?.({ config: { kind: "releases", repo }, fetchState: {}, workspaceId: "", secretCiphertext: null }, deps),
     ).rejects.toThrow(`${url} answered 503 Service Unavailable`);
   });
 

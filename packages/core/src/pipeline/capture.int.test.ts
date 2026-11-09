@@ -58,6 +58,7 @@ const deps: PollSourceDeps = {
   },
   now: () => now,
   enqueueItems: () => Promise.resolve(),
+  secrets: { encryptionKey: Buffer.alloc(32), authSecret: "unused-by-rss-sources" },
 };
 const serve = (url: string, body: string | Buffer, init?: ResponseInit) => {
   responses.set(url, () => new Response(body, init));

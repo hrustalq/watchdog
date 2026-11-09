@@ -64,6 +64,10 @@ export function createAuth({ mode, baseURL, secret, db, mailer, oauth = {} }: Au
       ...(oauth.google && { google: oauth.google }),
       ...(oauth.github && { github: oauth.github }),
     },
+    // The GitHub sign-in token reads the API for GitHub Sources, so it is kept encrypted with a key
+    // derived from the secret, like the other providers' tokens. A token stored before this is read
+    // as it is, and encrypted the next time its user signs in (docs: Security and privacy).
+    account: { encryptOAuthTokens: true },
     // Better Auth's default account linking attaches an OAuth sign-in to the existing user with
     // the same email only when the provider says that email is verified; no provider is trusted
     // beyond its own flag. Creating a user is held to the same bar, so an unverified provider email

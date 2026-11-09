@@ -62,6 +62,7 @@ const deps = {
   fetch: createEgressFetch(loadConfig(env, () => undefined), { lookup }),
   now: () => now,
   enqueueItems: () => Promise.resolve(),
+  secrets: { encryptionKey: Buffer.alloc(32), authSecret: "unused-by-rss-sources" },
 };
 
 describe("Feed", () => {

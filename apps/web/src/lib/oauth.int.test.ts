@@ -1,4 +1,4 @@
-import { loadConfig, type MailMessage } from "@watchdog/core";
+import { githubToken, loadConfig, type MailMessage } from "@watchdog/core";
 import { account, closeDb, createDb, migrate, type Db } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -204,6 +204,17 @@ describe("OAuth sign-in", () => {
     expect(hanaWorkspace).toMatchObject({ name: "hana", ownerUserId: hana.id });
     const again = await finishGitHub({ id: 101, email: "hana@example.com", verified: true });
     expect((await openApp(again.cookie)).workspace.id).toBe(hanaWorkspace.id);
+  });
+
+  it("keeps the GitHub sign-in token encrypted, and a GitHub Source can still read it", async () => {
+    const { cookie } = await finishGitHub({ id: 110, email: "jo@example.com", verified: true });
+    const { user: jo, workspace: joWorkspace } = await openApp(cookie);
+
+    const [stored] = await accountsOf(jo.id);
+    expect(stored?.accessToken).not.toContain("gho_test");
+    const secrets = { encryptionKey: Buffer.alloc(32), authSecret: secret };
+    const token = await githubToken(db, { workspaceId: joWorkspace.id, secretCiphertext: null }, secrets);
+    expect(token).toEqual({ value: "gho_test", pasted: false });
   });
 
   it("reaches the same user and Workspace by magic link and then by GitHub", async () => {
