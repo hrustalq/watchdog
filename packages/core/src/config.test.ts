@@ -231,6 +231,23 @@ describe("loadConfig", () => {
     );
   });
 
+  it("reaches the Chromium renderer only when its URL and token are both set", () => {
+    const token = "t".repeat(32);
+    expect(loadConfig({ ...minimal, CHROMIUM_URL: "ws://chromium:3000", CHROMIUM_TOKEN: token }).chromium).toEqual({
+      url: "ws://chromium:3000",
+      token,
+    });
+    expect(loadConfig(minimal).chromium).toBeUndefined();
+    expect(() => loadConfig({ ...minimal, CHROMIUM_URL: "ws://chromium:3000" })).toThrow(/CHROMIUM_TOKEN: is required/);
+    expect(() => loadConfig({ ...minimal, CHROMIUM_TOKEN: token })).toThrow(/CHROMIUM_URL: is required/);
+    expect(() => loadConfig({ ...minimal, CHROMIUM_URL: "http://chromium:3000", CHROMIUM_TOKEN: token })).toThrow(
+      /CHROMIUM_URL: must be a ws:\/\/ or wss:\/\/ URL/,
+    );
+    const short = () => loadConfig({ ...minimal, CHROMIUM_URL: "ws://chromium:3000", CHROMIUM_TOKEN: "short-token" });
+    expect(short).toThrow(/CHROMIUM_TOKEN: must be at least 32 characters/);
+    expect(short).not.toThrow("short-token");
+  });
+
   it("parses EGRESS_ALLOWLIST into hosts and subnets", () => {
     expect(
       loadConfig({ ...minimal, EGRESS_ALLOWLIST: "Ollama.local, 192.168.1.0/24,,fd00::1,10.0.0.0/8," })
