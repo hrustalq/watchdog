@@ -30,6 +30,8 @@ export {
 } from "./pipeline/capture.ts";
 export { runExtractorRuleByHand } from "./pipeline/manual-run.ts";
 export { processItem, type ProcessItemDeps } from "./pipeline/process-item.ts";
+export { githubToken, signInToken } from "./sources/github/client.ts";
+export { parseWithin } from "./sources/github/mentions.ts";
 export { fetchReleases, MissingRepoError, parseRepo, releasesFeedUrl } from "./sources/github/releases.ts";
 export type { ItemDraft } from "./sources/item.ts";
 export {

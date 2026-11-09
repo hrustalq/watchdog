@@ -30,6 +30,7 @@
     "@ai-sdk/openai-compatible": "^3.0.84",
     "@watchdog/db": "workspace:*",
     "ai": "^7.0.162",
+    "better-auth": "^1.7.15",
     "cron-parser": "^5.10.3",
     "entities": "^7.0.1",
     "feedsmith": "^3.0.1",

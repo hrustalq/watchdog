@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { createEgressFetch, loadConfig, pollSource } from "@watchdog/core";
+import { createEgressFetch, decryptSecret, loadConfig, pollSource } from "@watchdog/core";
 import {
+  account,
   closeDb,
   createDb,
   type Db,
@@ -18,8 +19,11 @@ import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { feedPage } from "./feed.ts";
 import {
+  addGithubIssuesSource,
+  addGithubMentionsSource,
   addGithubReleasesSource,
   addRssSource,
+  addValues,
   type AddProblem,
   listSources,
   problemField,
@@ -85,12 +89,14 @@ const env = {
   EGRESS_ALLOWLIST: "feeds.test",
 };
 const guarded = createEgressFetch(loadConfig(env, () => undefined), { lookup });
-const selfHosted: SourceDeps = { fetch: guarded, mode: "self-hosted" };
+const encryptionKey = Buffer.alloc(32, 3);
+const selfHosted: SourceDeps = { fetch: guarded, mode: "self-hosted", encryptionKey };
 
 // github.com's releases feeds come from the server above, through the guarded fetch.
 const githubFetches: string[] = [];
 const github: SourceDeps = {
   mode: "self-hosted",
+  encryptionKey,
   fetch: (input, init) => {
     const repo = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\.atom$/.exec(String(input))?.[1];
     if (repo === undefined) return guarded(input, init);
@@ -99,7 +105,12 @@ const github: SourceDeps = {
   },
 };
 // Just after the newest recorded release.
-const pollDeps = { fetch: github.fetch, now: () => new Date("2026-11-09T00:00:00Z"), enqueueItems: () => Promise.resolve() };
+const pollDeps = {
+  fetch: github.fetch,
+  now: () => new Date("2026-11-09T00:00:00Z"),
+  enqueueItems: () => Promise.resolve(),
+  secrets: { encryptionKey: Buffer.alloc(32), authSecret: "unused-by-rss-sources" },
+};
 
 describe("Sources", () => {
   let db: Db;
@@ -206,6 +217,7 @@ describe("Sources", () => {
     let fetched = false;
     const hosted: SourceDeps = {
       mode: "hosted",
+      encryptionKey,
       fetch: (...args) => {
         fetched = true;
         return guarded(...args);
@@ -251,6 +263,7 @@ describe("Sources", () => {
     let fetched = false;
     const counting: SourceDeps = {
       mode: "self-hosted",
+      encryptionKey,
       fetch: (...args) => {
         fetched = true;
         return guarded(...args);
@@ -280,6 +293,7 @@ describe("Sources", () => {
     const waiting: (() => void)[] = [];
     const together: SourceDeps = {
       mode: "self-hosted",
+      encryptionKey,
       fetch: async (...args) => {
         await new Promise<void>((resolve) => {
           waiting.push(resolve);
@@ -438,6 +452,131 @@ describe("Sources", () => {
       });
       expect(result).toEqual({ problem: "schedule" });
       expect(githubFetches).toHaveLength(fetchesBefore);
+    });
+  });
+  describe("GitHub issues and mentions", () => {
+    const every15 = "*/15 * * * *";
+    let signedIn = "";
+    let tokenless = "";
+
+    beforeAll(async () => {
+      await db.insert(user).values([
+        { id: "octocat", name: "Octocat", email: "octocat@example.com" },
+        { id: "nobody", name: "Nobody", email: "nobody@example.com" },
+      ]);
+      await db.insert(account).values({
+        id: "octocat-github",
+        accountId: "583231",
+        providerId: "github",
+        userId: "octocat",
+        accessToken: "gho_signin",
+      });
+      const [a, b] = await db
+        .insert(workspace)
+        .values([
+          { name: "Signed in", ownerUserId: "octocat" },
+          { name: "Tokenless", ownerUserId: "nobody" },
+        ])
+        .returning();
+      signedIn = a?.id ?? "";
+      tokenless = b?.id ?? "";
+    });
+
+    const issues = (workspaceId: string, repo: string, token = "") =>
+      addGithubIssuesSource(db, github, workspaceId, { repo, token, name: "", schedule: every15 });
+    const mentions = (workspaceId: string, term: string, within = "", token = "") =>
+      addGithubMentionsSource(db, github, workspaceId, { term, within, token, name: "", schedule: every15 });
+    const saved = async (result: Awaited<ReturnType<typeof issues>>) => {
+      if (!("source" in result)) throw new Error(`Not added: ${result.problem}`);
+      return (await db.select().from(source).where(eq(source.id, result.source.id)))[0];
+    };
+
+    it("saves an issues Source with a pasted token, encrypted and never listed", async () => {
+      const token = "github_pat_11ABCDEFG0pasted";
+      const row = await saved(await issues(tokenless, " https://github.com/microsoft/vscode/issues ", ` ${token} `));
+
+      expect(row).toMatchObject({
+        type: "github",
+        name: "microsoft/vscode issues",
+        config: { kind: "issues", repo: "microsoft/vscode" },
+        dedupKey: "issues:microsoft/vscode",
+        schedule: every15,
+      });
+      expect(row?.secretCiphertext).not.toContain(token);
+      expect(decryptSecret(row?.secretCiphertext ?? "", encryptionKey)).toBe(token);
+      const listed = (await listSources(db, tokenless)).find((entry) => entry.id === row?.id);
+      expect(listed).toBeDefined();
+      expect(JSON.stringify(listed)).not.toContain(row?.secretCiphertext ?? "");
+      expect(listed).not.toHaveProperty("secretCiphertext");
+    });
+
+    it("saves an issues Source on the owner's GitHub sign-in token, storing no token of its own", async () => {
+      const row = await saved(await issues(signedIn, "denoland/deno"));
+      expect(row).toMatchObject({ config: { kind: "issues", repo: "denoland/deno" }, secretCiphertext: null });
+    });
+
+    it("saves nothing without a pasted or a sign-in token, and says what to do", async () => {
+      const before = (await sourcesIn(tokenless)).length;
+
+      expect(await issues(tokenless, "denoland/deno")).toEqual({ problem: "no-token" });
+      expect(await mentions(tokenless, "watchdog")).toEqual({ problem: "no-token" });
+
+      expect(await sourcesIn(tokenless)).toHaveLength(before);
+      expect(problemField("no-token", "github-issues")).toBe("token");
+      const shown = { type: "github-issues" as const, url: "", status: "", mode: "hosted" as const };
+      expect(problemMessage("no-token", shown)).toBe(
+        "Sign in with GitHub, or paste a fine-grained personal access token, so Watchdog can read GitHub's API.",
+      );
+    });
+
+    it("refuses a token with spaces in it", async () => {
+      expect(await issues(tokenless, "denoland/deno", "github_pat one")).toEqual({ problem: "invalid-token" });
+    });
+
+    it("saves a mentions Source limited to a repo or an org, and refuses the same search again", async () => {
+      const inRepo = await saved(await mentions(signedIn, "  hydration mismatch ", "https://github.com/vercel/next.js"));
+      expect(inRepo).toMatchObject({
+        name: "hydration mismatch in vercel/next.js",
+        config: { kind: "mentions", term: "hydration mismatch", within: "repo:vercel/next.js" },
+        dedupKey: "mentions:repo:vercel/next.js:hydration mismatch",
+      });
+      const inOrg = await saved(await mentions(signedIn, "hydration mismatch", "vercel"));
+      expect(inOrg?.config).toEqual({ kind: "mentions", term: "hydration mismatch", within: "org:vercel" });
+      const anywhere = await saved(await mentions(signedIn, "watchdog"));
+      expect(anywhere).toMatchObject({ name: "watchdog on GitHub", config: { kind: "mentions", term: "watchdog" } });
+
+      expect(await mentions(signedIn, "hydration mismatch", "vercel/next.js")).toEqual({ problem: "duplicate" });
+      const values = { type: "github-mentions" as const, url: "", repo: "", term: "hydration mismatch", within: "vercel/next.js" };
+      const watching = await watchedSourceName(db, signedIn, values);
+      expect(watching).toBe("hydration mismatch in vercel/next.js");
+      expect(problemMessage("duplicate", { ...values, status: "", mode: "hosted", source: watching })).toBe(
+        "This Workspace already searches GitHub for “hydration mismatch” as the Source “hydration mismatch in vercel/next.js”.",
+      );
+    });
+
+    it("refuses the same repo's issues again, in any case", async () => {
+      await issues(signedIn, "nodejs/node");
+      expect(await issues(signedIn, "NodeJS/Node")).toEqual({ problem: "duplicate" });
+    });
+
+    it.each([
+      ["", "invalid-term"],
+      ["x".repeat(101), "invalid-term"],
+    ] as const)("refuses the term %j", async (term, problem) => {
+      expect(await mentions(signedIn, term)).toEqual({ problem });
+      expect(problemField(problem, "github-mentions")).toBe("term");
+    });
+
+    it("refuses a limit that is neither an org nor a repo", async () => {
+      expect(await mentions(signedIn, "watchdog", "https://gitlab.com/vercel")).toEqual({ problem: "invalid-within" });
+      expect(problemField("invalid-within", "github-mentions")).toBe("within");
+    });
+
+    it("never carries a posted token back in the form's values", () => {
+      const posted: Record<string, string> = { type: "github-issues", repo: "a/b", token: "github_pat_secret" };
+      const values = addValues((name) => posted[name] ?? "");
+      expect(values.type).toBe("github-issues");
+      expect(Object.values(values)).not.toContain("github_pat_secret");
     });
   });
 });

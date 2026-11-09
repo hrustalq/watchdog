@@ -1,9 +1,10 @@
 // What every Source type implements, so capture is written once for all of them (docs: Sources and
 // ingestion, "Source types"; Processing pipeline, "Capture and the Backfill window").
-import type { SourceType } from "@watchdog/db";
+import type { Db, source, SourceType } from "@watchdog/db";
 import type { z } from "zod";
 import type { ItemDraft } from "./item.ts";
-import { github } from "./github/releases.ts";
+import type { Deferred, GithubSecrets } from "./github/client.ts";
+import { github } from "./github/source-type.ts";
 import { rss } from "./rss/source-type.ts";
 import type { FetchFeedDeps } from "./rss/fetch-feed.ts";
 
@@ -13,10 +14,25 @@ export interface Backfill {
   max: number;
 }
 
-export type PollDeps = FetchFeedDeps;
+export interface PollDeps extends FetchFeedDeps {
+  /** What decrypts a GitHub Source's token. */
+  secrets: GithubSecrets;
+}
 
-/** A poll's answer: nothing new since the last poll, or the drafts it found. */
-export type Polled = { notModified: true } | { drafts: ItemDraft[]; fetchState: Record<string, string> };
+/**
+ * A poll's answer: nothing new since the last poll, the drafts it found, or a poll put off by a
+ * rate limit, which isn't a failure.
+ */
+export type Polled =
+  | { notModified: true }
+  | { drafts: ItemDraft[]; fetchState: Record<string, string> }
+  | Deferred;
+
+/** What a poll reads of its Source. */
+export type PolledSource = Pick<
+  typeof source.$inferSelect,
+  "config" | "fetchState" | "workspaceId" | "secretCiphertext"
+>;
 
 export interface SourceTypeImpl {
   /** The shape of the type's `config`. */
@@ -27,7 +43,7 @@ export interface SourceTypeImpl {
    * Schedule types fetch their Source's new drafts. A push type has no poll: whatever receives its
    * drafts hands them to captureItems. Throws why the fetch failed.
    */
-  poll?: (source: { config: unknown; fetchState: Record<string, string> }, deps: PollDeps) => Promise<Polled>;
+  poll?: (source: PolledSource, deps: PollDeps & { db: Db; now: Date }) => Promise<Polled>;
 }
 
 /** The types implemented so far. A Source of any other type polls nothing and takes no Backfill. */

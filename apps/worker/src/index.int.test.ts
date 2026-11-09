@@ -271,6 +271,7 @@ describe("worker", () => {
       await pollSource(db, sourceId, {
         fetch: () => Promise.resolve(new Response(feed())),
         enqueueItems: itemEnqueuer(boss),
+        secrets: { encryptionKey: Buffer.alloc(32), authSecret: "unused-by-rss-sources" },
       });
       const captured = await itemOf(sourceId);
       if (captured === undefined) throw new Error("Nothing was captured");

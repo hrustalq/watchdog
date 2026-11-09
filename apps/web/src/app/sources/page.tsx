@@ -86,10 +86,12 @@ async function SourceList() {
   const { workspace } = await requireWorkspace();
   const sources = await listSources(server().db, workspace.id);
   const scheduleLabel = (cron: string | null) => schedules.find((preset) => preset.cron === cron)?.label;
-  // RSS and website Sources watch a URL, and a GitHub releases Source a repo's releases.
+  // RSS and website Sources watch a URL, a GitHub Source a repo's releases or issues, or a search.
   const urlOf = ({ config }: (typeof sources)[number]) => {
     if ("url" in config) return config.url;
-    return "kind" in config && config.kind === "releases" ? `https://github.com/${config.repo}/releases` : null;
+    if (!("kind" in config)) return null;
+    if (config.kind === "mentions") return [config.term, config.within].filter(Boolean).join(" ");
+    return `https://github.com/${config.repo}/${config.kind}`;
   };
   // The URL is on the line above, so the error needn't repeat the URL it fetched.
   const withoutUrl = ({ config }: (typeof sources)[number], error: string) => {
@@ -105,7 +107,7 @@ async function SourceList() {
         </h2>
         {sources.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            None yet. Add a feed or a repo&apos;s releases above, and every Item it captures shows up
+            None yet. Add a feed, a GitHub repo or a GitHub search above, and every Item it captures shows up
             in the Feed.
           </p>
         ) : (

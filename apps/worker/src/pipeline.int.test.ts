@@ -94,6 +94,7 @@ describe("pipeline", () => {
   const answering = (ids: string[]) => ({
     fetch: () => Promise.resolve(new Response(feed(ids))),
     enqueueItems: itemEnqueuer(boss),
+    secrets: { encryptionKey: Buffer.alloc(32), authSecret: "unused-by-rss-sources" },
   });
 
   const itemIdsOf = async (sourceId: string) =>
@@ -143,7 +144,7 @@ describe("pipeline", () => {
 
     await expect(
       pollSource(db, sourceId, {
-        fetch: () => Promise.resolve(new Response(feed(["one"]))),
+        ...answering(["one"]),
         // The job is written, then the transaction it's in fails.
         enqueueItems: async (tx, itemIds) => {
           await enqueueItems(tx, itemIds);
@@ -328,7 +329,7 @@ describe("pipeline", () => {
     it("finishes the Item when its job has no retries left", async () => {
       modelFetch = fakeLlm("openai-compatible", [{ status: 500 }]).fetch;
       const sourceId = await modelWorkspace();
-      await pollSource(db, sourceId, { fetch: answering(["one"]).fetch, enqueueItems: () => Promise.resolve() });
+      await pollSource(db, sourceId, { ...answering(["one"]), enqueueItems: () => Promise.resolve() });
       const itemId = present((await itemIdsOf(sourceId))[0]);
 
       await boss.send(processItemQueue, { itemId }, { retryLimit: 0 });

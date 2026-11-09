@@ -1960,6 +1960,7 @@ describe("processItem", () => {
       await pollSource(db, seeded.sourceId, {
         fetch: () => Promise.resolve(new Response(feed)),
         now: () => new Date(at),
+        secrets: { encryptionKey: Buffer.alloc(32), authSecret: "unused-by-rss-sources" },
         enqueueItems: () => Promise.resolve(),
       });
       const captured = await db.query.item.findFirst({ where: eq(item.externalId, externalId) });

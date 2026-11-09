@@ -5,12 +5,15 @@ import {
   type createEgressFetch,
   EgressBlockedError,
   EgressLimitError,
+  encryptSecret,
   FeedHttpError,
   fetchFeed,
   fetchReleases,
   MissingRepoError,
   NotAFeedError,
   parseRepo,
+  parseWithin,
+  signInToken,
 } from "@watchdog/core";
 import { and, type Db, eq, source } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
@@ -19,26 +22,39 @@ export interface SourceDeps {
   /** The egress guard's fetch: a feed URL is user input. */
   fetch: ReturnType<typeof createEgressFetch>;
   mode: Config["mode"];
+  /** Encrypts a pasted GitHub token. It never leaves the server. */
+  encryptionKey: Buffer;
 }
 
 /** The kinds of Source the form adds. */
-export type AddType = "rss" | "github-releases";
+export const addTypes = ["rss", "github-releases", "github-issues", "github-mentions"] as const;
+export type AddType = (typeof addTypes)[number];
 
-/** What the form posts. Each type reads its own field: `url` for RSS, `repo` for GitHub releases. */
+/**
+ * What the form posts, apart from a pasted token. Each type reads its own fields: `url` for RSS,
+ * `repo` for GitHub releases and issues, `term` and `within` for GitHub mentions.
+ */
 export interface AddValues {
   type: AddType;
   url: string;
   repo: string;
+  term: string;
+  within: string;
   name: string;
   schedule: string;
 }
 
-/** The form's values from a posted form or the URL it was sent back to, read by field name. */
+/**
+ * The form's values from a posted form or the URL it was sent back to, read by field name. A pasted
+ * token is never one of them, so the URL a problem sends the form back to can't carry it.
+ */
 export function addValues(field: (name: string) => string): AddValues {
   return {
-    type: field("type") === "github-releases" ? "github-releases" : "rss",
+    type: addTypes.find((type) => type === field("type")) ?? "rss",
     url: field("url"),
     repo: field("repo"),
+    term: field("term"),
+    within: field("within"),
     name: field("name"),
     schedule: field("schedule"),
   };
@@ -52,6 +68,10 @@ export const addProblems = [
   "invalid-url",
   "invalid-repo",
   "no-repo",
+  "invalid-term",
+  "invalid-within",
+  "invalid-token",
+  "no-token",
   "schedule",
   "duplicate",
   "blocked",
@@ -77,6 +97,20 @@ export const schedules = [
   { cron: "0 * * * *", label: "Every hour" },
   { cron: "0 0 * * *", label: "Every day" },
 ];
+
+/** Adds a Source of the type the form chose. */
+export function addFormSource(db: Db, deps: SourceDeps, workspaceId: string, values: AddValues & { token: string }) {
+  switch (values.type) {
+    case "rss":
+      return addRssSource(db, deps, workspaceId, values);
+    case "github-releases":
+      return addGithubReleasesSource(db, deps, workspaceId, values);
+    case "github-issues":
+      return addGithubIssuesSource(db, deps, workspaceId, values);
+    case "github-mentions":
+      return addGithubMentionsSource(db, deps, workspaceId, values);
+  }
+}
 
 /**
  * Fetches and parses the feed once, and saves it as an RSS Source only if that worked. The new
@@ -137,14 +171,88 @@ export async function addGithubReleasesSource(
   return save(db, { workspaceId, type: "github", name, config: { kind: "releases", repo }, schedule });
 }
 
+/**
+ * Saves a GitHub issues Source. It reads the API with the pasted token, or else the Workspace owner's
+ * GitHub sign-in token, and is refused when there's neither. Like every Source, it is due at once.
+ */
+export async function addGithubIssuesSource(
+  db: Db,
+  deps: SourceDeps,
+  workspaceId: string,
+  input: { repo: string; token: string; name: string; schedule: string },
+): Promise<AddSourceResult> {
+  const repo = parseRepo(input.repo);
+  if (repo === null) return { problem: "invalid-repo" };
+  const config = { kind: "issues" as const, repo };
+  const name = cleanName(input.name) || `${repo} issues`;
+  return saveWithToken(db, deps, workspaceId, { ...input, config, name });
+}
+
+/** Saves a GitHub mentions Source: a search of issues and PRs, optionally in one org or repo. */
+export async function addGithubMentionsSource(
+  db: Db,
+  deps: SourceDeps,
+  workspaceId: string,
+  input: { term: string; within: string; token: string; name: string; schedule: string },
+): Promise<AddSourceResult> {
+  const term = cleanTerm(input.term);
+  if (term === "" || term.length > maxTermLength) return { problem: "invalid-term" };
+  const within = parseWithin(input.within);
+  if (within === null) return { problem: "invalid-within" };
+  const config = { kind: "mentions" as const, term, ...(within !== undefined && { within }) };
+  const defaultName = within === undefined ? `${term} on GitHub` : `${term} in ${within.replace(/^\w+:/, "")}`;
+  return saveWithToken(db, deps, workspaceId, { ...input, config, name: cleanName(input.name) || defaultName });
+}
+
+/** GitHub caps a search query at 256 characters, which the term shares with its qualifiers. */
+const maxTermLength = 100;
+const cleanTerm = (term: string) => term.replace(/\s+/g, " ").trim();
+
+/** A pasted token as GitHub shows it: printable ASCII, no spaces. */
+const tokenPattern = /^[\x21-\x7e]{1,255}$/;
+
+async function saveWithToken(
+  db: Db,
+  deps: SourceDeps,
+  workspaceId: string,
+  input: {
+    config: { kind: "issues"; repo: string } | { kind: "mentions"; term: string; within?: string };
+    name: string;
+    token: string;
+    schedule: string;
+  },
+): Promise<AddSourceResult> {
+  const schedule = presetSchedule(input.schedule);
+  if (schedule === undefined) return { problem: "schedule" };
+  const token = input.token.trim();
+  if (token !== "" && !tokenPattern.test(token)) return { problem: "invalid-token" };
+  if (token === "" && (await signInToken(db, workspaceId)) === undefined) return { problem: "no-token" };
+  if ((await watchedName(db, workspaceId, "github", githubKey(input.config))) !== undefined) {
+    return { problem: "duplicate" };
+  }
+  return save(db, {
+    workspaceId,
+    type: "github",
+    name: input.name,
+    config: input.config,
+    schedule,
+    secretCiphertext: token === "" ? null : encryptSecret(token, deps.encryptionKey),
+  });
+}
+
 /** Only the form's own schedules: a posted cron expression could be anything. */
 function presetSchedule(posted: string) {
   const schedule = posted.trim();
   return schedules.some((preset) => preset.cron === schedule) ? schedule : undefined;
 }
 
-/** The dedup key Postgres builds for a GitHub releases Source (docs: Sources and ingestion, "Uniqueness"). */
-const releasesKey = (repo: string) => `releases:${repo.toLowerCase()}`;
+/** The dedup key Postgres builds for a GitHub Source (docs: Sources and ingestion, "Uniqueness"). */
+function githubKey(config: { kind: "releases" | "issues"; repo: string } | { kind: "mentions"; term: string; within?: string }) {
+  return config.kind === "mentions"
+    ? `mentions:${config.within ?? ""}:${config.term}`
+    : `${config.kind}:${config.repo.toLowerCase()}`;
+}
+const releasesKey = (repo: string) => githubKey({ kind: "releases", repo });
 
 async function save(db: Db, values: typeof source.$inferInsert): Promise<AddSourceResult> {
   // Another add of the same Source can finish between the duplicate check and this insert, and then
@@ -175,13 +283,24 @@ function fetchProblem(error: unknown): { problem: AddProblem; status?: string } 
  * The name of the Workspace's Source that the form's values would add again, or undefined. A feed
  * URL compares as saved (`URL.href`), a repo in any case.
  */
-export async function watchedSourceName(db: Db, workspaceId: string, values: Omit<AddValues, "name" | "schedule">) {
+export async function watchedSourceName(
+  db: Db,
+  workspaceId: string,
+  values: Pick<AddValues, "type" | "url" | "repo"> & Partial<Pick<AddValues, "term" | "within">>,
+) {
   if (values.type === "rss") {
     const href = URL.parse(values.url.trim())?.href;
     return href === undefined ? undefined : watchedName(db, workspaceId, "rss", href);
   }
+  if (values.type === "github-mentions") {
+    const within = parseWithin(values.within ?? "");
+    if (within === null) return undefined;
+    const config = { kind: "mentions" as const, term: cleanTerm(values.term ?? ""), ...(within !== undefined && { within }) };
+    return watchedName(db, workspaceId, "github", githubKey(config));
+  }
   const repo = parseRepo(values.repo);
-  return repo === null ? undefined : watchedName(db, workspaceId, "github", releasesKey(repo));
+  const kind = values.type === "github-issues" ? "issues" : "releases";
+  return repo === null ? undefined : watchedName(db, workspaceId, "github", githubKey({ kind, repo }));
 }
 
 async function watchedName(db: Db, workspaceId: string, type: "rss" | "github", dedupKey: string) {
@@ -202,6 +321,7 @@ export function problemMessage(
     type = "rss",
     url,
     repo: typed = "",
+    term = "",
     status,
     mode,
     source: watching,
@@ -209,12 +329,13 @@ export function problemMessage(
     type?: AddType;
     url: string;
     repo?: string;
+    term?: string;
     status: string;
     mode: Config["mode"];
     source?: string | undefined;
   },
 ) {
-  const github = type === "github-releases";
+  const github = type !== "rss";
   // Only a repo parseRepo accepts is shown, so a crafted link can't put words on the page.
   const repo = parseRepo(typed) ?? "that repo";
   const hostname = github ? "github.com" : (URL.parse(url.trim())?.hostname ?? "");
@@ -226,13 +347,29 @@ export function problemMessage(
       return "Enter a GitHub repo as owner/name, such as vercel/next.js, or paste its URL.";
     case "no-repo":
       return `GitHub has no public repo ${repo}. Check the name: only a public repo's releases can be watched.`;
+    case "invalid-term":
+      return `Enter what to search GitHub for, at most ${String(maxTermLength)} characters.`;
+    case "invalid-within":
+      return "Enter an org as its name, such as vercel, or a repo as owner/name, or leave it empty to search all of GitHub.";
+    case "invalid-token":
+      return "Paste the token as GitHub showed it, without spaces.";
+    case "no-token":
+      return "Sign in with GitHub, or paste a fine-grained personal access token, so Watchdog can read GitHub's API.";
     case "schedule":
       return "Choose one of the schedules in the list.";
     case "duplicate": {
-      const what = github ? `the releases of ${repo}` : "that feed";
+      // The term is only quoted back once it is a term the form would accept.
+      const search = cleanTerm(term);
+      const shownTerm = search !== "" && search.length <= maxTermLength ? `“${search}”` : "that term";
+      const what = {
+        rss: "watches that feed",
+        "github-releases": `watches the releases of ${repo}`,
+        "github-issues": `watches the issues of ${repo}`,
+        "github-mentions": `searches GitHub for ${shownTerm}`,
+      }[type];
       return watching === undefined
-        ? `This Workspace already watches ${what}.`
-        : `This Workspace already watches ${what} as the Source “${watching}”.`;
+        ? `This Workspace already ${what}.`
+        : `This Workspace already ${what} as the Source “${watching}”.`;
     }
     case "blocked":
       return `${host} leads to a private, local or non-web address, which Watchdog doesn't fetch.${mode === "self-hosted" ? " Whoever runs this Watchdog can allow a private address with EGRESS_ALLOWLIST." : ""}`;
@@ -258,6 +395,9 @@ export function problemMessage(
 /** Which form field a problem is about. */
 export const problemField = (problem: AddProblem, type: AddType = "rss") => {
   if (problem === "schedule") return "schedule";
+  if (problem === "no-token" || problem === "invalid-token") return "token";
+  if (problem === "invalid-within") return "within";
+  if (type === "github-mentions") return "term";
   return type === "rss" ? "url" : "repo";
 };
 
