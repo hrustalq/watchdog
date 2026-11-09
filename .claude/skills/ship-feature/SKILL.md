@@ -142,6 +142,7 @@ Merge only when **all** of these hold:
 - Every acceptance criterion is checked off with evidence, and no manual check is pending.
 - No confirmed review finding is unaddressed.
 - The branch is up to date with `main`. If `main` has moved, merge it in, run the tests again and wait for CI.
+- If the diff touches the web UI, `pnpm smoke` passed locally on the latest commit. PR CI skips the smoke test, and nothing watches `main` after the merge, so this is the only place it runs.
 
 If any of them fails, leave the PR open, tell the user exactly what's missing, and stop.
 
@@ -160,7 +161,6 @@ After the merge:
 
 - `git switch main && git pull --ff-only`, then delete the local branch.
 - `gh issue view N --json state` should say `CLOSED`, closed by `Closes #N`. If it doesn't, close it with a comment that links the PR.
-- Watch the run on `main` (`gh run list --commit "$(git rev-parse HEAD)"`, then `gh run watch <id>` for each of CI and Release). The smoke test runs only there. Release updates the release PR. Leave that PR alone. If `main` goes red, say so right away and fix it forward on a new branch, because a red `main` blocks every later issue.
 - If the docs MR has merged by now, bump the submodule pointer through a small PR (`chore(docs): point submodule at Knowledge main`). If it hasn't, list it as pending.
 
 ## 10. Wrap up
