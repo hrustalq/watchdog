@@ -13,6 +13,6 @@
     "@watchdog/lint-config": "workspace:*",
     "oxlint": "^1.92.0",
     "oxlint-tsgolint": "^7.0.2006",
-    "typescript": "^5"
+    "typescript": "^7"
   }
 }
