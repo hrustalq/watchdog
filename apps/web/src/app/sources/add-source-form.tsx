@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode } from "react";
-import { dataBox, field, fieldError, label } from "@/components/field-classes";
+import { dataBox, field, fieldError, label, textBox } from "@/components/field-classes";
+import type { Config } from "@watchdog/core";
 import { type AddType, type AddValues, schedules } from "@/lib/sources";
 import { cn } from "@/lib/utils";
 import { Notice } from "../sign-in/notice";
@@ -8,35 +9,52 @@ import { addSource } from "./actions";
 
 const types: { value: AddType; title: string }[] = [
   { value: "rss", title: "RSS feed" },
+  { value: "website", title: "Website" },
   { value: "github-releases", title: "GitHub releases" },
   { value: "github-issues", title: "GitHub issues" },
   { value: "github-mentions", title: "GitHub mentions" },
 ];
 
-type FieldName = "url" | "repo" | "term" | "within" | "token" | "schedule";
+type FieldName = "url" | "region" | "ignore" | "repo" | "term" | "within" | "token" | "schedule";
 
 // Each type's fields show while its choice is checked, which CSS decides, so it works without
 // JavaScript. No field is `required`, and the URL isn't `type="url"`: a hidden field the browser
 // finds invalid would block the submit. Tailwind needs each class written out whole.
 const shownFor = {
-  // Shown unless another type is checked, so RSS still works in a browser without :has().
+  // Shown unless another type is checked, so RSS still works in a browser without :has(). A website
+  // uses it too.
   url: "flex [form:has(#type-github-releases:checked)_&]:hidden [form:has(#type-github-issues:checked)_&]:hidden [form:has(#type-github-mentions:checked)_&]:hidden",
   repo: "[form:has(#type-github-releases:checked)_&]:flex [form:has(#type-github-issues:checked)_&]:flex",
   search: "[form:has(#type-github-mentions:checked)_&]:flex",
+  website: "[form:has(#type-website:checked)_&]:flex",
   token: "[form:has(#type-github-issues:checked)_&]:flex [form:has(#type-github-mentions:checked)_&]:flex",
 };
 
+const empty: AddValues = {
+  type: "rss",
+  url: "",
+  region: "",
+  ignore: "",
+  ignoreRobots: "",
+  repo: "",
+  term: "",
+  within: "",
+  name: "",
+  schedule: "",
+};
+
 /**
- * Adds an RSS feed, or a GitHub repo's releases or issues, or a GitHub search. The server checks a
- * feed or releases before saving it, and a problem comes back on the field it's about, with the
- * values that were entered. A pasted token is never sent back.
+ * Adds an RSS feed, a website, a GitHub repo's releases or issues, or a GitHub search. The server
+ * checks a feed or releases before saving it, and a problem comes back on the field it's about, with
+ * the values that were entered. A pasted token is never sent back.
  */
 export function AddSourceForm({
-  values = { type: "rss", url: "", repo: "", term: "", within: "", name: "", schedule: "" },
+  values = empty,
   error,
   added = false,
   tokenDropped = false,
   githubSignIn,
+  mode,
 }: {
   values?: AddValues;
   error?: { field: FieldName; message: string };
@@ -45,16 +63,15 @@ export function AddSourceForm({
   tokenDropped?: boolean;
   /** Whether the Workspace's owner signed in with GitHub; unknown in the static shell. */
   githubSignIn?: boolean;
+  /** Only self-hosted offers to skip robots.txt (ADR 0015); unknown in the static shell. */
+  mode?: Config["mode"];
 }) {
   const errorFor = (name: FieldName) => (error?.field === name ? error.message : undefined);
-  const viaApi = values.type === "github-issues" || values.type === "github-mentions";
   return (
     <form action={addSource} className="flex flex-col gap-4">
       {added ? (
         <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
-          {viaApi
-            ? "Source added. Its first poll runs within a minute, and its recent entries show up in the Feed as the Backfill. If none do, its row below says why."
-            : "Source added. The worker fetches it within a minute, and its recent entries show up in the Feed as the Backfill."}
+          {addedNotice(values.type)}
         </Notice>
       ) : null}
       <fieldset className="flex flex-col gap-2">
@@ -81,15 +98,93 @@ export function AddSourceForm({
       </fieldset>
       <TextField
         id="url"
-        label="RSS feed URL"
+        label={
+          <>
+            <span className="[form:has(#type-website:checked)_&]:hidden">RSS feed URL</span>
+            <span className="hidden [form:has(#type-website:checked)_&]:inline">Page URL</span>
+          </>
+        }
         className={shownFor.url}
         error={errorFor("url")}
-        help="The address of an RSS or Atom feed. Watchdog fetches it once to check it before saving."
+        help={
+          <>
+            <span className="[form:has(#type-website:checked)_&]:hidden">
+              The address of an RSS or Atom feed. Watchdog fetches it once to check it before saving.
+            </span>
+            <span className="hidden [form:has(#type-website:checked)_&]:inline">
+              The page to watch. Watchdog reads its HTML as served, without running its scripts.
+            </span>
+          </>
+        }
         inputMode="url"
         autoComplete="url"
-        placeholder="https://example.com/feed.xml"
+        placeholder="https://example.com/"
         defaultValue={values.url}
       />
+      <TextField
+        id="region"
+        label="Region"
+        optional
+        className={shownFor.website}
+        error={errorFor("region")}
+        help="A CSS selector for the part of the page to watch, such as #pricing .plan. Every match counts. Leave it empty to watch the whole page."
+        autoCapitalize="off"
+        autoComplete="off"
+        placeholder="main"
+        maxLength={1000}
+        defaultValue={values.region}
+        inputClassName={dataBox}
+      />
+      <div className={cn("hidden flex-col gap-2", shownFor.website)}>
+        <label htmlFor="ignore" className={label}>
+          Ignore <span className="font-normal text-muted-foreground">(optional)</span>
+        </label>
+        <textarea
+          id="ignore"
+          name="ignore"
+          rows={3}
+          spellCheck={false}
+          autoCapitalize="off"
+          autoComplete="off"
+          placeholder={"\\d+ visitors today\nUpdated .* ago"}
+          defaultValue={values.ignore}
+          aria-invalid={error?.field === "ignore"}
+          aria-describedby={error?.field === "ignore" ? "ignore-error" : "ignore-help"}
+          // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
+          autoFocus={error?.field === "ignore"}
+          className={cn(textBox, dataBox, "py-2 leading-[1.5]")}
+        />
+        {error?.field === "ignore" ? (
+          <p id="ignore-error" role="alert" className={fieldError}>
+            {error.message}
+          </p>
+        ) : (
+          <p id="ignore-help" className="text-xs text-muted-foreground">
+            Text that changes without mattering, such as a date or a counter, as regular expressions in RE2 syntax,
+            one a line, at most 20. Watchdog removes what they match before comparing.
+          </p>
+        )}
+      </div>
+      {mode === "self-hosted" ? (
+        <div className={cn("hidden flex-col gap-2", shownFor.website)}>
+          {/* The label holds the box, so the whole row is the target. */}
+          <label htmlFor="ignoreRobots" className={cn(label, "flex min-h-6 items-center gap-2")}>
+            <input
+              id="ignoreRobots"
+              name="ignoreRobots"
+              type="checkbox"
+              defaultChecked={values.ignoreRobots === "on"}
+              aria-describedby="ignoreRobots-help"
+              className="size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            />
+            Ignore robots.txt
+          </label>
+          <p id="ignoreRobots-help" className="text-xs text-muted-foreground">
+            Watchdog then fetches the page even where the site&apos;s robots.txt asks crawlers not to. The site may
+            object or block this server&apos;s address, and that risk is yours.
+          </p>
+        </div>
+      ) : null}
       <TextField
         id="repo"
         label="Repo"
@@ -181,7 +276,7 @@ export function AddSourceForm({
             name="name"
             type="text"
             maxLength={200}
-            placeholder="Taken from the feed, repo or search"
+            placeholder="Taken from the feed, page, repo or search"
             defaultValue={values.name}
             className={field}
           />
@@ -220,6 +315,17 @@ export function AddSourceForm({
   );
 }
 
+/** What happens after an add, which depends on how the type's first poll goes. */
+function addedNotice(type: AddType) {
+  if (type === "website") {
+    return "Source added. Its first poll, within a minute, keeps the page as the Baseline. Each change after that shows up in the Feed as one Item. If the page can't be read, its row below says why.";
+  }
+  if (type === "github-issues" || type === "github-mentions") {
+    return "Source added. Its first poll runs within a minute, and its recent entries show up in the Feed as the Backfill. If none do, its row below says why.";
+  }
+  return "Source added. The worker fetches it within a minute, and its recent entries show up in the Feed as the Backfill.";
+}
+
 /** A labelled text field, hidden unless `className` shows it, with its help or its error below. */
 function TextField({
   id,
@@ -232,7 +338,7 @@ function TextField({
   ...input
 }: {
   id: FieldName;
-  label: string;
+  label: ReactNode;
   optional?: boolean;
   help: ReactNode;
   error: string | undefined;

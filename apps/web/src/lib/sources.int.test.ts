@@ -24,6 +24,7 @@ import {
   addGithubReleasesSource,
   addRssSource,
   addValues,
+  addWebsiteSource,
   type AddProblem,
   listSources,
   problemField,
@@ -582,6 +583,116 @@ describe("Sources", () => {
       const values = addValues((name) => posted[name] ?? "");
       expect(values.type).toBe("github-issues");
       expect(Object.values(values)).not.toContain("github_pat_secret");
+    });
+  });
+
+  describe("websites", () => {
+    const every15 = "*/15 * * * *";
+    const website = (
+      workspaceId: string,
+      input: { url?: string; region?: string; ignore?: string; ignoreRobots?: string; name?: string },
+      deps = selfHosted,
+    ) =>
+      addWebsiteSource(db, deps, workspaceId, {
+        url: at("/page.html"),
+        region: "",
+        ignore: "",
+        ignoreRobots: "",
+        name: "",
+        schedule: every15,
+        ...input,
+      });
+    let pageCount = 0;
+    /** A page URL no Workspace watches yet. */
+    const newPage = () => {
+      pageCount += 1;
+      return at(`/page.html?page=${String(pageCount)}`);
+    };
+    const savedSource = async (result: Awaited<ReturnType<typeof website>>) => {
+      if (!("source" in result)) throw new Error(`Not added: ${result.problem}`);
+      const [row] = await db.select().from(source).where(eq(source.id, result.source.id));
+      return row;
+    };
+
+    it("saves the page, Region and ignore patterns, and its first poll stores the Baseline", async () => {
+      const url = newPage();
+      const row = await savedSource(
+        await website(ours, { url, region: "  #pricing .plan ", ignore: String.raw`\d+ visitors` + "\n\n  Updated .* ago  \n" }),
+      );
+      expect(row).toMatchObject({
+        type: "website",
+        name: `feeds.test/page.html`,
+        config: { url, region: "#pricing .plan", ignore: [String.raw`\d+ visitors`, "Updated .* ago"], render: "static" },
+        dedupKey: `${url} #pricing .plan`,
+        schedule: every15,
+      });
+      expect(row?.config).not.toHaveProperty("ignoreRobots");
+
+      const whole = await savedSource(await website(ours, { url: newPage(), name: "Landing page" }));
+      expect(whole?.config).toMatchObject({ ignore: [], render: "static" });
+      expect(whole?.config).not.toHaveProperty("region");
+      // robots.txt answers 404 on the test server, which allows everything.
+      expect(await pollSource(db, whole?.id ?? "", pollDeps)).toEqual({ captured: 0 });
+      const [polled] = await db.select().from(source).where(eq(source.id, whole?.id ?? ""));
+      expect(polled?.fetchState.text).toBe("A page");
+      expect(polled?.lastError).toBeNull();
+    });
+
+    it("keeps robots.txt off only on self-hosted", async () => {
+      const kept = await savedSource(await website(ours, { url: newPage(), ignoreRobots: "on" }));
+      expect(kept?.config).toMatchObject({ ignoreRobots: true });
+      const hosted = { ...selfHosted, mode: "hosted" as const };
+      const dropped = await savedSource(await website(ours, { url: newPage(), ignoreRobots: "on" }, hosted));
+      expect(dropped?.config).not.toHaveProperty("ignoreRobots");
+    });
+
+    it("refuses the same page and Region twice, but watches another Region of it", async () => {
+      const url = newPage();
+      await website(ours, { url, region: "main", name: "Pricing" });
+      expect(await website(ours, { url, region: " main " })).toEqual({ problem: "duplicate" });
+      const values = { ...addValues(() => ""), type: "website" as const, url, region: "main" };
+      const watching = await watchedSourceName(db, ours, values);
+      expect(watching).toBe("Pricing");
+      expect(problemMessage("duplicate", { ...values, status: "", mode: "hosted", source: watching })).toBe(
+        "This Workspace already watches that part of that page as the Source “Pricing”.",
+      );
+      expect("source" in (await website(ours, { url, region: "aside" }))).toBe(true);
+      expect("source" in (await website(theirs, { url, region: "main" }))).toBe(true);
+    });
+
+    it.each([
+      [{ url: "example.com/pricing" }, "invalid-url", "url", "Enter the full page URL, starting with https://."],
+      [
+        { region: "main[data-plan" },
+        "invalid-region",
+        "region",
+        "That isn't a CSS selector Watchdog can match. Enter one such as main or #pricing .plan, or leave it empty to watch the whole page.",
+      ],
+      [
+        { region: "section:has(.price)" },
+        "invalid-region",
+        "region",
+        "The region can't use :has(). Select the element itself, such as #pricing .plan.",
+      ],
+      [
+        { ignore: "\\d+ visitors\n(unclosed" },
+        "invalid-ignore",
+        "ignore",
+        "Line 2 isn't a regular expression Watchdog can run. Ignore patterns use RE2 syntax, such as \\d+ visitors.",
+      ],
+      [
+        { ignore: Array.from({ length: 21 }, (_, i) => `x${String(i)}`).join("\n") },
+        "invalid-ignore",
+        "ignore",
+        "Enter at most 20 ignore patterns, one a line.",
+      ],
+    ] as const)("refuses %j", async (input, problem, field, message) => {
+      const before = (await sourcesIn(ours)).length;
+      expect(await website(ours, input)).toEqual({ problem });
+      expect(problemField(problem, "website")).toBe(field);
+      const values = { ...addValues(() => ""), url: at("/page.html"), ...input, type: "website" as const };
+      expect(problemMessage(problem, { ...values, status: "", mode: "hosted" })).toBe(message);
+      expect(await sourcesIn(ours)).toHaveLength(before);
     });
   });
 });

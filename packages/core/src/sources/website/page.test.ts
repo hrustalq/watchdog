@@ -18,7 +18,7 @@ describe("regionError", () => {
 
 describe("readPage", () => {
   it("reads a page with no <body> whole, and its URL stands in for a missing title", () => {
-    expect(readPage("<p>Plain fragment</p>", undefined)).toEqual({
+    expect(readPage("<!doctype html><p>Plain fragment</p>", undefined)).toEqual({
       title: null,
       html: "<p>Plain fragment</p>",
       text: "Plain fragment",

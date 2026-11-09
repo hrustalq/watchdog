@@ -61,10 +61,11 @@ export function readPage(html: string, region: string | undefined) {
   if (tooDeep(document)) throw new Error(`The page is nested more than ${String(maxDepth)} elements deep, too deep to read`);
   const titleElement = findOne((element) => element.name === "title", document);
   const title = titleElement === null ? "" : textContent(titleElement).replace(/\s+/g, " ").trim();
-  let matches;
+  let matches: Parameters<typeof render>[0][];
   if (region === undefined) {
-    // htmlparser2 adds no <body> a page leaves out, so such a page is read whole.
-    matches = [findOne((element) => element.name === "body", document) ?? document];
+    // htmlparser2 adds no <body> a page leaves out, so such a page is read whole, but its doctype.
+    const body = findOne((element) => element.name === "body", document);
+    matches = [body ?? getChildren(document).filter((node) => !("name" in node && node.name === "!doctype"))];
   } else {
     matches = selectAll(region, document);
     if (matches.length === 0) throw new Error(`The region ${region} matched nothing on the page`);
