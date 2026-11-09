@@ -12,7 +12,7 @@ import {
   NotAFeedError,
   parseRepo,
 } from "@watchdog/core";
-import { and, type Db, eq, source, type SourceConfigs } from "@watchdog/db";
+import { and, type Db, eq, source } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 export interface SourceDeps {
@@ -22,8 +22,7 @@ export interface SourceDeps {
 }
 
 /** The kinds of Source the form adds. */
-export const addTypes = ["rss", "github-releases"] as const;
-export type AddType = (typeof addTypes)[number];
+export type AddType = "rss" | "github-releases";
 
 /** What the form posts. Each type reads its own field: `url` for RSS, `repo` for GitHub releases. */
 export interface AddValues {
@@ -136,11 +135,7 @@ function presetSchedule(posted: string) {
 /** The dedup key Postgres builds for a GitHub releases Source (docs: Sources and ingestion, "Uniqueness"). */
 const releasesKey = (repo: string) => `releases:${repo.toLowerCase()}`;
 
-type NewSource =
-  | { workspaceId: string; type: "rss"; name: string; config: SourceConfigs["rss"]; schedule: string }
-  | { workspaceId: string; type: "github"; name: string; config: SourceConfigs["github"]; schedule: string };
-
-async function save(db: Db, values: NewSource): Promise<AddSourceResult> {
+async function save(db: Db, values: typeof source.$inferInsert): Promise<AddSourceResult> {
   // Another add of the same Source can finish between the duplicate check and this insert, and then
   // the unique key on (workspace_id, type, dedup_key) skips this row. Its other unique keys are on a
   // random id or the Inbox token hash these types don't have, so that key is the only one an insert
