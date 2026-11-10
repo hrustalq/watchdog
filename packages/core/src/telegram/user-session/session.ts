@@ -2,6 +2,7 @@
 // each step on the login's row, and the worker's job answers there. Nothing here talks to Telegram,
 // so web never loads mtcute and never decrypts a session.
 import { and, type Db, eq, sql, telegramLogin, telegramSession, type Tx } from "@watchdog/db";
+import { fromDrizzle, type PgBoss } from "pg-boss";
 import { encryptSecret } from "../../secrets/secrets.ts";
 
 export const telegramLoginQueue = "telegram-login";
@@ -15,6 +16,13 @@ export const loginLost =
   "Watchdog's worker stopped in the middle of the login, so it ended. Start again, and Telegram sends a new code.";
 
 export type Enqueue = (tx: Tx, id: string) => Promise<void>;
+
+/** Queues a login's or a revoke's job over the transaction that writes its row, so they commit together. */
+export function sessionJobEnqueuer(boss: PgBoss, queue: typeof telegramLoginQueue | typeof telegramRevokeQueue): Enqueue {
+  return async (tx, id) => {
+    await boss.insert(queue, [{ data: { id } }], { db: fromDrizzle(tx, sql) });
+  };
+}
 
 /** What a login waits for, or why it ended. */
 export type LoginState =

@@ -26,6 +26,7 @@ export {
   type LoginState,
   loginState,
   requestRevoke,
+  sessionJobEnqueuer,
   sessionOf,
   startLogin,
   telegramLoginQueue,
