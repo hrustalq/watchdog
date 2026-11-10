@@ -14,6 +14,7 @@ const groups = {
   google: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
   github: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"],
   chromium: ["CHROMIUM_URL", "CHROMIUM_TOKEN"],
+  telegramApi: ["TELEGRAM_API_ID", "TELEGRAM_API_HASH"],
 } as const;
 
 const oauth = (id: string, secret: string) => ({ clientId: id, clientSecret: secret });
@@ -54,8 +55,12 @@ const schema = z
       .string()
       .regex(/^\d+:[\w-]+$/, "must look like <digits>:<token>, as BotFather gives it")
       .optional(),
-    TELEGRAM_API_ID: z.coerce.number().int().positive().optional(),
-    TELEGRAM_API_HASH: z.string().optional(),
+    telegramApi: z
+      .object({
+        TELEGRAM_API_ID: z.string().regex(/^[1-9]\d*$/, "must be a whole number").transform(Number),
+        TELEGRAM_API_HASH: z.string(),
+      })
+      .optional(),
     OBSCURA_CDP_URL: z.url({ protocol: /^(wss?|https?)$/ }).optional(),
     OBSCURA_CDP_TOKEN: z.string().optional(),
     // The worker sends the token as a Bearer header. The message can't repeat it.
@@ -120,8 +125,11 @@ const schema = z
     },
     telegram: {
       botToken: env.TELEGRAM_BOT_TOKEN,
-      apiId: env.TELEGRAM_API_ID,
-      apiHash: env.TELEGRAM_API_HASH,
+      // Hosted offers no user sessions (ADR 0014), so its values are dropped; loadConfig warns.
+      api:
+        env.WATCHDOG_MODE === "hosted" || env.telegramApi === undefined
+          ? undefined
+          : { id: env.telegramApi.TELEGRAM_API_ID, hash: env.telegramApi.TELEGRAM_API_HASH },
     },
     obscura: { cdpUrl: env.OBSCURA_CDP_URL, cdpToken: env.OBSCURA_CDP_TOKEN },
     chromium: env.chromium && { url: env.chromium.CHROMIUM_URL, token: env.chromium.CHROMIUM_TOKEN },
@@ -158,6 +166,11 @@ export function loadConfig(
     if (result.data.mode === "hosted" && result.data.egressAllowlist.length > 0) {
       warn(
         "EGRESS_ALLOWLIST is ignored when WATCHDOG_MODE=hosted: the egress guard lets no private addresses through.",
+      );
+    }
+    if (result.data.mode === "hosted" && input.telegramApi !== undefined) {
+      warn(
+        "TELEGRAM_API_ID and TELEGRAM_API_HASH are ignored when WATCHDOG_MODE=hosted: hosted Watchdog offers no Telegram user sessions.",
       );
     }
     if (result.data.encryptionKey.equals(placeholderKey)) {
