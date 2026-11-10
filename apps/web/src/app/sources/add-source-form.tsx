@@ -351,10 +351,10 @@ export function AddSourceForm({
         inputClassName={dataBox}
       />
       <fieldset className={cn("hidden flex-col gap-4", shownFor.webhook)}>
-        <legend className={cn(label, "mb-1")}>
+        <legend className={cn(label, "mb-2")}>
           Mapping <span className="font-normal text-muted-foreground">(optional)</span>
         </legend>
-        <p className="-mt-2 text-xs text-muted-foreground">
+        <p className="text-xs text-muted-foreground">
           JSONPaths that pick the Item&apos;s fields out of each request&apos;s JSON. Each takes the first value its
           path finds. The whole JSON is kept on the Item either way, for Rules to read.
         </p>

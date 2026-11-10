@@ -322,8 +322,8 @@ export async function addWebhookSource(
   workspaceId: string,
   input: Pick<AddValues, "name" | (typeof mappingFields)[number]>,
 ): Promise<AddSourceResult> {
-  const paths = mappingFields.map((field) => input[field].replaceAll("\0", "").trim());
-  if (paths.some((path) => path !== "" && mappingError(path) !== undefined)) return { problem: "invalid-mapping" };
+  const paths = mappingFields.map((field) => cleanPath(input[field]));
+  if (mappingFields.some((field) => badPath(input[field]))) return { problem: "invalid-mapping" };
   const [title, body, url, externalId] = paths.map((path) => (path === "" ? undefined : path));
   const mapping = Object.fromEntries(Object.entries({ title, body, url, externalId }).filter(([, path]) => path !== undefined));
   const config = Object.keys(mapping).length === 0 ? {} : { mapping };
@@ -337,6 +337,10 @@ export async function addWebhookSource(
     ...newInboxToken(encryptionKey),
   });
 }
+
+const cleanPath = (path: string) => path.replaceAll("\0", "").trim();
+/** A mapping path that's filled in but can't run. */
+const badPath = (path: string) => cleanPath(path) !== "" && mappingError(cleanPath(path)) !== undefined;
 
 /** GitHub caps a search query at 256 characters, which the term shares with its qualifiers. */
 const maxTermLength = 100;
@@ -563,13 +567,7 @@ export function problemMessage(
 /** Which form field a problem is about: for a mapping, the first path that can't run. */
 export const problemField = (problem: AddProblem, type: AddType = "rss", values?: Partial<AddValues>) => {
   if (problem === "schedule") return "schedule";
-  if (problem === "invalid-mapping") {
-    const bad = (field: (typeof mappingFields)[number]) => {
-      const path = (values?.[field] ?? "").replaceAll("\0", "").trim();
-      return path !== "" && mappingError(path) !== undefined;
-    };
-    return mappingFields.find(bad) ?? "mapTitle";
-  }
+  if (problem === "invalid-mapping") return mappingFields.find((field) => badPath(values?.[field] ?? "")) ?? "mapTitle";
   if (problem === "no-token" || problem === "invalid-token") return "token";
   if (problem === "invalid-within") return "within";
   if (problem === "invalid-region") return "region";
