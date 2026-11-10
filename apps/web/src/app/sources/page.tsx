@@ -159,7 +159,9 @@ async function SourceList() {
                 <div className="flex min-w-0 flex-col gap-1">
                   <h3 className="text-title break-words">{row.name}</h3>
                   {row.type === "telegram" ? (
-                    <p className="text-sm text-muted-foreground">Telegram · {telegramState(row.config, telegramAvailable)}</p>
+                    <p className="text-sm text-muted-foreground">
+                      Telegram · <TelegramState config={row.config} available={telegramAvailable} />
+                    </p>
                   ) : null}
                   {row.type === "webhook" ? (
                     <p className="text-sm text-muted-foreground">
@@ -228,10 +230,15 @@ async function SourceList() {
   );
 }
 
-/** A Telegram Source's chat, or why it has none. */
-function telegramState(config: object, available: boolean) {
-  if (!available) return "Unavailable: this install has no TELEGRAM_BOT_TOKEN";
-  return "title" in config && typeof config.title === "string" ? config.title : "Waiting for the bot";
+/** A Telegram Source's chat, or why it has none, with a caution lamp as on the Destinations screen. */
+function TelegramState({ config, available }: { config: object; available: boolean }) {
+  if (available && "title" in config && typeof config.title === "string") return config.title;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-caution" />
+      {available ? "Waiting for the bot" : "Unavailable: this install has no TELEGRAM_BOT_TOKEN"}
+    </span>
+  );
 }
 
 /** How to bring the bot into a chat. It works without JavaScript, and the text box copies from a keyboard. */
