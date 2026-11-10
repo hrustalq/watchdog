@@ -43,14 +43,14 @@ export function telegramIntake(db: Db, deps: CaptureDeps) {
 
 /** Why the bot can't read the chat any more, or undefined while it still can. */
 function lostAccess({ chat, new_chat_member: { status, is_member: isMember } }: ChatMemberUpdate) {
-  const again = " Add it back, then bind the chat again with a new link from this Source.";
+  const again = " Add the bot back to the chat, or bind the chat again with a new link from this Source.";
   if (status === "kicked") return `The bot was removed from this chat and banned from it.${again}`;
   if (status === "left" || (status === "restricted" && isMember === false)) {
     return `The bot was removed from this chat, or left it.${again}`;
   }
   // A bot reads a channel's posts only as one of its admins.
   if (chat.type === "channel" && status !== "administrator" && status !== "creator") {
-    return "The bot is no longer an admin of this channel, so it can't read the posts. Make it an admin again, then bind the channel again with a new link from this Source.";
+    return "The bot is no longer an admin of this channel, so it can't read the posts. Make it an admin again, or bind the channel again with a new link from this Source.";
   }
   return undefined;
 }
