@@ -216,6 +216,7 @@ async function SourceList() {
                 <div className="flex shrink-0 flex-wrap items-start gap-2">
                   {telegramAvailable &&
                   row.type === "telegram" &&
+                  !isSession(row.config) &&
                   link?.id !== row.id &&
                   (!("chatId" in row.config) || row.health === "failing") ? (
                     <form action={newSourceLinkAction.bind(null, row.id)}>
@@ -235,9 +236,15 @@ async function SourceList() {
   );
 }
 
+/** A Source that reads through the Telegram user session rather than the bot. */
+const isSession = (config: object) => "via" in config && config.via === "session";
+
 /** A Telegram Source's chat, or why it has none, with a caution lamp as on the Destinations screen. */
 function TelegramState({ config, available }: { config: object; available: boolean }) {
-  if (available && "title" in config && typeof config.title === "string") return config.title;
+  const title = "title" in config && typeof config.title === "string" ? config.title : undefined;
+  // A session Source reads without the bot, so it has its chat whether or not the install has one.
+  if (title !== undefined && isSession(config)) return `${title} · through your account`;
+  if (available && title !== undefined) return title;
   return (
     <span className="inline-flex items-center gap-1.5">
       <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-caution" />

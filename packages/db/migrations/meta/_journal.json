@@ -141,6 +141,13 @@
       "when": 1794301388768,
       "tag": "0019_telegram_user_session",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794307383022,
+      "tag": "0020_telegram_session_runner",
+      "breakpoints": true
     }
   ]
 }

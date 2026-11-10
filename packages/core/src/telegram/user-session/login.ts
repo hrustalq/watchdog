@@ -7,6 +7,7 @@ import { checkPassword, logOut, sendCode, signIn } from "@mtcute/node/methods.js
 import type { ITelegramClient } from "@mtcute/node";
 import { and, type Db, eq, getTableColumns, isNull, lt, source, sql, telegramLogin, telegramSession } from "@watchdog/db";
 import { decryptSecret, encryptSecret } from "../../secrets/secrets.ts";
+import { readOnly } from "./read-only.ts";
 import { loginLost, stale } from "./session.ts";
 
 export interface SessionDeps {
@@ -38,6 +39,14 @@ const refusals = {
 };
 
 const is = (error: unknown, ...names: string[]) => names.some((name) => tl.RpcError.is(error, name));
+/** Telegram ended the session: it was logged out, terminated from another device, or the account is gone. */
+export const endedByTelegram = (error: unknown) =>
+  is(error, "AUTH_KEY_UNREGISTERED", "SESSION_REVOKED", "SESSION_EXPIRED", "USER_DEACTIVATED");
+
+/** A Workspace's Sources that read through its session. */
+export const sessionSources = (workspaceId: string) =>
+  and(eq(source.workspaceId, workspaceId), eq(source.type, "telegram"), sql`${source.config}->>'via' = 'session'`);
+
 const floodWait = (error: unknown) => is(error, "FLOOD_WAIT_%d", "PHONE_NUMBER_FLOOD", "PHONE_PASSWORD_FLOOD");
 
 function sendCodeRefusal(error: unknown) {
@@ -94,7 +103,8 @@ export async function runLogin(db: Db, deps: SessionDeps, loginId: string, signa
     return false;
   };
 
-  const client = deps.createClient();
+  // A login's own methods on top of the reads, and the logout of an authorization nobody keeps.
+  const client = readOnly(deps.createClient(), ["auth.sendCode", "auth.signIn", "auth.checkPassword", "auth.logOut"]);
   try {
     let phoneCodeHash: string;
     try {
@@ -196,11 +206,11 @@ async function finish(db: Db, deps: SessionDeps, client: ITelegramClient, login:
 export async function revokeSession(db: Db, deps: SessionDeps, sessionId: string): Promise<void> {
   const [session] = await db.select().from(telegramSession).where(eq(telegramSession.id, sessionId));
   if (session === undefined) return;
-  const client = deps.createClient();
+  const client = readOnly(deps.createClient(), ["auth.logOut"]);
   try {
     await client.importSession(decryptSecret(session.secretCiphertext, deps.encryptionKey));
     await logOut(client).catch((error: unknown) => {
-      if (!is(error, "AUTH_KEY_UNREGISTERED", "SESSION_REVOKED", "SESSION_EXPIRED", "USER_DEACTIVATED")) throw error;
+      if (!endedByTelegram(error)) throw error;
     });
   } finally {
     await client.destroy();
@@ -210,8 +220,6 @@ export async function revokeSession(db: Db, deps: SessionDeps, sessionId: string
     await tx
       .update(source)
       .set({ health: "failing", lastError: revokedError, lastErrorAt: sql`now()` })
-      .where(
-        and(eq(source.workspaceId, session.workspaceId), eq(source.type, "telegram"), sql`${source.config}->>'via' = 'session'`),
-      );
+      .where(sessionSources(session.workspaceId));
   });
 }

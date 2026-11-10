@@ -8,6 +8,7 @@ import {
   revokeTelegramSession,
   type SessionAccess,
   startTelegramLogin,
+  watchTelegramChat,
 } from "@/lib/telegram-session";
 
 // Each action waits a few seconds for the worker's answer, then redirects to the page, which reads
@@ -52,4 +53,12 @@ export async function revokeTelegramSessionAction() {
   const { workspaceId, access: session } = await access();
   await revokeTelegramSession(session, workspaceId);
   redirect(page);
+}
+
+/** Watches a chat from the session's list. The page's list then shows the Source it became. */
+export async function watchTelegramChatAction(formData: FormData) {
+  const { workspaceId, access: session } = await access();
+  const result = await watchTelegramChat(session, workspaceId, text(formData, "chat"));
+  if (result === "unavailable") redirect("/sources");
+  redirect(`${page}?${result === "watching" ? "done" : "problem"}=${result}`);
 }

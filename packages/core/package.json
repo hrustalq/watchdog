@@ -7,7 +7,7 @@
     "./rules/draft": "./src/rules/draft.ts",
     "./render": "./src/render/index.ts",
     "./testing": "./src/agent/fake-llm.ts",
-    "./telegram-session": "./src/telegram/user-session/login.ts"
+    "./telegram-session": "./src/telegram/user-session/worker.ts"
   },
   "scripts": {
     "typecheck": "tsc",

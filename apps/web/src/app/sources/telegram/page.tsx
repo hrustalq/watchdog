@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { loginState, sessionOf } from "@watchdog/core";
+import { loginState, sessionChats, sessionOf } from "@watchdog/core";
 import { Confirming } from "@/components/confirming";
 import { dataBox, field, fieldError, label, textLink } from "@/components/field-classes";
 import { Timestamp } from "@/components/timestamp";
@@ -13,6 +13,7 @@ import {
   cancelTelegramLoginAction,
   revokeTelegramSessionAction,
   startTelegramLoginAction,
+  watchTelegramChatAction,
 } from "./actions";
 
 export const metadata: Metadata = { title: "Telegram (your account) · Watchdog" };
@@ -27,6 +28,11 @@ const crumb =
 const problems: Record<string, string> = {
   "signed-in": "This Workspace already has a Telegram session. Revoke it before signing in another account.",
   "not-asked": "The login had already moved on, so nothing was sent. Here is where it stands.",
+  "not-listed": "That chat isn't in your account's list any more, so nothing was saved. Here is the current list.",
+  watched: "This Workspace already watches that chat, so nothing was saved.",
+};
+const done: Record<string, string> = {
+  watching: "Watching the chat. Its messages from the last 7 days come in within a minute, then every new one.",
 };
 const phoneInvalid = "That isn't a phone number. Enter it with the country code, such as +44 20 7946 0958.";
 
@@ -35,9 +41,14 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
   const { db, telegramSessionAvailable } = server();
   // Hosted, or no API variables: the screen isn't offered (ADR 0014).
   if (!telegramSessionAvailable) notFound();
-  const [session, login] = await Promise.all([sessionOf(db, workspace.id), loginState(db, workspace.id)]);
+  const [session, login, chats] = await Promise.all([
+    sessionOf(db, workspace.id),
+    loginState(db, workspace.id),
+    sessionChats(db, workspace.id),
+  ]);
   const code = typeof params.problem === "string" ? params.problem : "";
   const problem = problems[code];
+  const status = typeof params.done === "string" ? done[params.done] : undefined;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -76,13 +87,22 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
           </Notice>
         )}
 
+        {status === undefined ? null : (
+          <Notice key={status} role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+            {status}
+          </Notice>
+        )}
+
         {session !== undefined ? (
-          <SessionPanel
-            account={session.account}
-            since={session.createdAt}
-            revoking={session.revokedAt !== null}
-            stuck={session.revokeStuck}
-          />
+          <>
+            <SessionPanel
+              account={session.account}
+              since={session.createdAt}
+              revoking={session.revokedAt !== null}
+              stuck={session.revokeStuck}
+            />
+            {session.revokedAt === null ? <ChatsPanel chats={chats} /> : null}
+          </>
         ) : (
           <LoginPanel login={login} invalid={code === "invalid-phone"} empty={code === "empty"} />
         )}
@@ -155,6 +175,63 @@ function SessionPanel({
         pendingLabel="Revoking…"
       />
     </section>
+  );
+}
+
+const kinds = { group: "Group", supergroup: "Group", channel: "Channel" };
+
+/** The account's groups and channels, each watched as a Source with one click. */
+function ChatsPanel({ chats }: { chats: Awaited<ReturnType<typeof sessionChats>> }) {
+  return (
+    <section aria-labelledby="chats" className="flex flex-col gap-3 rounded-lg border p-4">
+      <div className="flex flex-col gap-1">
+        <h2 id="chats" className="text-title">
+          Chats to watch
+        </h2>
+        <p className="text-sm text-muted-foreground">
+          Each chat you watch becomes a Source. It starts with the chat&apos;s messages from the last 7 days, at most 50,
+          then takes every new one. Watchdog reads this list from Telegram once an hour.
+        </p>
+      </div>
+      <ChatList chats={chats} />
+    </section>
+  );
+}
+
+function ChatList({ chats }: { chats: Awaited<ReturnType<typeof sessionChats>> }) {
+  if (chats === undefined) {
+    return (
+      <Notice role="status" className="text-sm">
+        Watchdog is reading your chats from Telegram.{" "}
+        <Link href="/sources/telegram" prefetch={false} className={textLink}>
+          Reload this page
+        </Link>{" "}
+        in a minute.
+      </Notice>
+    );
+  }
+  if (chats.length === 0) return <p className="text-sm text-muted-foreground">The account isn&apos;t in any groups or channels.</p>;
+  return (
+    <ul className="flex flex-col divide-y">
+      {chats.map((chat) => (
+        <li key={chat.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2">
+          <div className="flex min-w-0 flex-col">
+            <span className="break-words">{chat.title}</span>
+            <span className="text-xs text-muted-foreground">{kinds[chat.type]}</span>
+          </div>
+          {chat.watchedAs === null ? (
+            <form action={watchTelegramChatAction}>
+              <input type="hidden" name="chat" value={chat.id} />
+              <SubmitButton variant="outline" pendingLabel="Watching…" className="sm:w-auto">
+                Watch<span className="sr-only"> {chat.title}</span>
+              </SubmitButton>
+            </form>
+          ) : (
+            <span className="text-sm text-muted-foreground">Watched as {chat.watchedAs}</span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 

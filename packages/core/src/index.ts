@@ -27,10 +27,12 @@ export {
   loginState,
   requestRevoke,
   sessionJobEnqueuer,
+  sessionChats,
   sessionOf,
   startLogin,
   telegramLoginQueue,
   telegramRevokeQueue,
+  watchChat,
 } from "./telegram/user-session/session.ts";
 export { checkUnsubscribeToken, unsubscribeUrl } from "./delivery/unsubscribe.ts";
 export { verifyWebhookSignature } from "./delivery/verify-signature.ts";

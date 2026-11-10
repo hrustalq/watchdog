@@ -1,5 +1,5 @@
 import { telegramLoginQueue, telegramRevokeQueue } from "@watchdog/core";
-import { closeDb, createDb, type Db, migrate, sql, telegramLogin, telegramSession, user, workspace } from "@watchdog/db";
+import { closeDb, createDb, type Db, migrate, source, sql, telegramLogin, telegramSession, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { PgBoss } from "pg-boss";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +9,7 @@ import {
   revokeTelegramSession,
   type SessionAccess,
   startTelegramLogin,
+  watchTelegramChat,
 } from "./telegram-session.ts";
 
 const encryptionKey = Buffer.alloc(32, 7);
@@ -43,6 +44,7 @@ describe("the Telegram user session screen", () => {
   beforeEach(async () => {
     await db.delete(telegramLogin);
     await db.delete(telegramSession);
+    await db.delete(source);
     await db.execute(sql`delete from pgboss.job where name in (${telegramLoginQueue}, ${telegramRevokeQueue})`);
   });
 
@@ -58,6 +60,18 @@ describe("the Telegram user session screen", () => {
     expect(login).toMatchObject({ step: "code", codeCiphertext: null });
     expect((await db.select().from(telegramSession))[0]?.revokedAt).toBeNull();
     expect([...(await jobs(telegramLoginQueue)), ...(await jobs(telegramRevokeQueue))]).toEqual([]);
+  });
+
+  it("watches a chat from the session's list as a Source, and only where user sessions are offered", async () => {
+    const dialogs = [{ id: -1001234567890, title: "Ops room", type: "supergroup" as const }];
+    await db.insert(telegramSession).values({ workspaceId, account: "Ada", secretCiphertext: "v1.x", dialogs });
+
+    expect(await watchTelegramChat(access(false), workspaceId, "-1001234567890")).toBe("unavailable");
+    expect(await watchTelegramChat(access(true), workspaceId, "not a chat")).toBe("not-listed");
+    expect(await db.select().from(source)).toEqual([]);
+    expect(await watchTelegramChat(access(true), workspaceId, "-1001234567890")).toBe("watching");
+    expect(await watchTelegramChat(access(true), workspaceId, "-1001234567890")).toBe("watched");
+    expect(await db.select().from(source)).toMatchObject([{ name: "Ops room", config: { via: "session", chatId: -1001234567890 } }]);
   });
 
   it("starts a login with its job, and revokes a session with its job, where they're offered", async () => {

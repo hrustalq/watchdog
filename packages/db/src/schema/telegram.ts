@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { check, jsonb, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { workspace } from "./workspace.ts";
 
 /**
@@ -35,6 +35,13 @@ export const telegramLogin = pgTable(
   (table) => [check("telegram_login_step_check", sql`${table.step} in ('starting', 'code', 'password', 'failed')`)],
 );
 
+/** A chat in a session's dialog list. `id` is the marked id the Bot API uses too, such as -100…. */
+export interface TelegramDialog {
+  id: number;
+  title: string;
+  type: "group" | "supergroup" | "channel";
+}
+
 /** A Workspace's one Telegram user session, self-hosted only (ADR 0014). Only the worker decrypts it. */
 export const telegramSession = pgTable("telegram_session", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -48,5 +55,12 @@ export const telegramSession = pgTable("telegram_session", {
   secretCiphertext: text("secret_ciphertext").notNull(),
   /** Set when the user revokes it. The worker then logs it out on Telegram and deletes the row. */
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  /**
+   * The groups, supergroups and channels the account is in, which the runner reads at the start of
+   * each turn, for the screen to pick from. Null until it first has.
+   */
+  dialogs: jsonb("dialogs").$type<TelegramDialog[]>(),
+  /** Telegram asked the session to wait past its turn (FLOOD_WAIT), so no turn starts before this. */
+  waitUntil: timestamp("wait_until", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
