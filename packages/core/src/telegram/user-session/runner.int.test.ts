@@ -345,6 +345,7 @@ describe("a Telegram user session's runner", () => {
     await telegram.registerPeers(opsRoom, ada);
     telegram.respondWith("messages.getDialogs", () => createStub("messages.dialogs", { dialogs: [], messages: [], chats: [], users: [] }));
     telegram.respondWith("messages.getHistory", () => createStub("messages.channelMessages", { messages: [], chats: [], users: [] }));
+    telegram.respondWith("updates.getState", () => createStub("updates.state"));
     const turn = run();
 
     await vi.waitFor(async () => {

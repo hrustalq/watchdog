@@ -208,7 +208,7 @@ export async function runSession(db: Db, deps: RunnerDeps, sessionId: string, { 
     while (!signal.aborted) {
       // An answer that the session ended throws, and the catch below logs it out here too.
       if (Date.now() - checkedAt >= (deps.checkMs ?? 60_000)) {
-        await waitingOutFloods(() => client.call({ _: "updates.getState" }));
+        await waitingOutFloods(() => client.call({ _: "updates.getState" }, { abortSignal: signal }));
         checkedAt = Date.now();
       }
       const [still] = await db.select({ id: telegramSession.id }).from(telegramSession).where(live);
