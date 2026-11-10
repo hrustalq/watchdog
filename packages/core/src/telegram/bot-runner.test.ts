@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { type BotChat, runBot } from "./bot-runner.ts";
+import type { BotUpdate } from "./update.ts";
 
 const botToken = "123456:secret-token";
 const requestBody = z.looseObject({
@@ -11,8 +12,10 @@ const requestBody = z.looseObject({
 
 const startMessage = (updateId: number, text: string, chat: object = { id: 42, type: "private" }) => ({
   update_id: updateId,
-  message: { message_id: updateId, text, chat },
+  message: { message_id: updateId, date: 1_700_000_000, text, chat },
 });
+
+const linked = (name: string) => Promise.resolve(`Linked to ${name} in Watchdog`);
 
 /**
  * A fake Bot API. Each getUpdates takes the next batch, and once they run out it stops the runner the way
@@ -48,10 +51,11 @@ function fakeTelegram(batches: unknown[][], answers: Partial<Record<string, () =
 
 function run(
   telegram: ReturnType<typeof fakeTelegram>,
-  linkChat: (code: string, chat: BotChat) => Promise<string | undefined> = () => Promise.resolve(undefined),
+  linkChat: (code: string, chat: BotChat) => Promise<string> = () => Promise.resolve("That code is unknown"),
   pingDatabase: () => Promise<unknown> = () => Promise.resolve(),
+  intake: (update: BotUpdate) => Promise<unknown> = () => Promise.resolve(),
 ) {
-  return runBot({ botToken, fetch: telegram.fetch, linkChat, pingDatabase, retryMs: 1 }, telegram.signal);
+  return runBot({ botToken, fetch: telegram.fetch, linkChat, intake, pingDatabase, retryMs: 1 }, telegram.signal);
 }
 
 describe("the Telegram bot runner", () => {
@@ -59,33 +63,80 @@ describe("the Telegram bot runner", () => {
     vi.restoreAllMocks();
   });
 
-  it("links the chat for a valid code and replies with the Destination's name", async () => {
+  it("links the chat for a code and replies with what linking said", async () => {
     const telegram = fakeTelegram([[startMessage(10, "/start abc")]]);
-    const linkChat = vi.fn(() => Promise.resolve("Ops alerts"));
+    const linkChat = vi.fn(() => linked("Ops alerts"));
 
     await run(telegram, linkChat);
 
-    expect(linkChat).toHaveBeenCalledExactlyOnceWith("abc", { id: "42", title: "Private chat" });
+    expect(linkChat).toHaveBeenCalledExactlyOnceWith("abc", { id: "42", title: "Private chat", type: "private" });
     expect(telegram.replies()).toMatchObject([{ chat_id: 42, text: "Linked to Ops alerts in Watchdog" }]);
   });
 
-  it("says so when the code is unknown or expired, for either of which linkChat finds nothing", async () => {
-    const telegram = fakeTelegram([[startMessage(10, "/start stale")]]);
+  it("asks for the updates that intake reads", async () => {
+    const telegram = fakeTelegram([]);
 
     await run(telegram);
 
-    expect(telegram.replies()).toHaveLength(1);
-    expect(telegram.replies()[0]?.text).toMatch(/unknown or has expired/);
+    expect(telegram.polls()[0]?.["allowed_updates"]).toEqual(["message", "channel_post", "my_chat_member"]);
+  });
+
+  it("takes a code posted in a channel", async () => {
+    const channel = { id: -100300, type: "channel", title: "News" };
+    const post = { message_id: 1, date: 1_700_000_000, text: "/start@WatchdogBot abc", chat: channel };
+    const telegram = fakeTelegram([[{ update_id: 10, channel_post: post }]]);
+    const linkChat = vi.fn(() => linked("News"));
+    const intake = vi.fn(() => Promise.resolve());
+
+    await run(telegram, linkChat, undefined, intake);
+
+    expect(linkChat).toHaveBeenCalledExactlyOnceWith("abc", { id: "-100300", title: "News", type: "channel" });
+    expect(intake).not.toHaveBeenCalled();
+  });
+
+  it("hands every update but a code to intake", async () => {
+    const group = { id: -100200, type: "supergroup", title: "Ops room" };
+    const member = { chat: group, new_chat_member: { status: "left" } };
+    const updates = [
+      startMessage(10, "Deploy failed", group),
+      { update_id: 11, channel_post: { message_id: 2, date: 1_700_000_000, chat: group, caption: "A photo" } },
+      { update_id: 12, my_chat_member: member },
+      startMessage(13, "/start abc", group),
+    ];
+    const telegram = fakeTelegram([updates]);
+    const intake = vi.fn((_update: BotUpdate) => Promise.resolve());
+
+    await run(telegram, () => linked("Ops"), undefined, intake);
+
+    expect(intake.mock.calls.map(([update]) => update.update_id)).toEqual([10, 11, 12]);
+    expect(intake.mock.calls[0]?.[0].message).toMatchObject({ text: "Deploy failed", chat: group });
+    expect(intake.mock.calls[2]?.[0].my_chat_member).toMatchObject(member);
+  });
+
+  it("skips an update whose intake keeps failing, and hands on the one behind it (#242)", async () => {
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const batch = [startMessage(10, "breaks", { id: -5, type: "group" }), startMessage(11, "fine", { id: -5, type: "group" })];
+    const telegram = fakeTelegram([batch, batch, batch]);
+    const intake = vi.fn((update: BotUpdate) =>
+      update.update_id === 10 ? Promise.reject(new Error("a bad row")) : Promise.resolve(),
+    );
+
+    await run(telegram, undefined, undefined, intake);
+
+    expect(intake.mock.calls.map(([update]) => update.update_id)).toEqual([10, 10, 10, 11]);
+    expect(telegram.polls().at(-1)?.offset).toBe(12);
+    // A message that isn't a code gets no reply, skipped or not.
+    expect(telegram.replies()).toEqual([]);
   });
 
   it("names a group by its title, and takes the command addressed to this bot in any case", async () => {
     const group = { id: -100200, type: "supergroup", title: "Ops room" };
     const telegram = fakeTelegram([[startMessage(10, "/start@watchdogBOT abc", group)]]);
-    const linkChat = vi.fn(() => Promise.resolve("Ops alerts"));
+    const linkChat = vi.fn(() => linked("Ops alerts"));
 
     await run(telegram, linkChat);
 
-    expect(linkChat).toHaveBeenCalledExactlyOnceWith("abc", { id: "-100200", title: "Ops room" });
+    expect(linkChat).toHaveBeenCalledExactlyOnceWith("abc", { id: "-100200", title: "Ops room", type: "supergroup" });
     expect(telegram.replies()).toMatchObject([{ chat_id: -100200 }]);
   });
 
@@ -95,9 +146,9 @@ describe("the Telegram bot runner", () => {
     ["a command for another bot", "/start@OtherBot abc"],
     ["more than a code", "/start abc def"],
     ["a command in the middle of a message", "see /start abc"],
-  ])("ignores %s", async (_name, text) => {
+  ])("doesn't take %s as a code", async (_name, text) => {
     const telegram = fakeTelegram([[startMessage(10, text)]]);
-    const linkChat = vi.fn(() => Promise.resolve("Ops alerts"));
+    const linkChat = vi.fn(() => linked("Ops alerts"));
 
     await run(telegram, linkChat);
 
@@ -105,7 +156,7 @@ describe("the Telegram bot runner", () => {
     expect(telegram.replies()).toEqual([]);
   });
 
-  it("ignores an update that isn't a text message, and still moves past it", async () => {
+  it("passes an update it can't read, and still moves past it", async () => {
     const telegram = fakeTelegram([
       [{ update_id: 10, message: { message_id: 1, chat: { id: 42 }, photo: [] } }, { update_id: 11, poll: {} }],
     ]);
@@ -130,11 +181,11 @@ describe("the Telegram bot runner", () => {
     const stopping = new AbortController();
     const linkChat = vi.fn(() => {
       stopping.abort();
-      return Promise.resolve("Ops alerts");
+      return linked("Ops alerts");
     });
 
     await runBot(
-      { botToken, fetch: telegram.fetch, linkChat, pingDatabase: () => Promise.resolve(), retryMs: 1 },
+      { botToken, fetch: telegram.fetch, linkChat, intake: () => Promise.resolve(), pingDatabase: () => Promise.resolve(), retryMs: 1 },
       stopping.signal,
     );
 
@@ -146,7 +197,7 @@ describe("the Telegram bot runner", () => {
     const telegram = fakeTelegram([[startMessage(10, "/start abc")]], {
       sendMessage: () => Response.json({ ok: false, description: "Forbidden" }, { status: 403 }),
     });
-    const linkChat = vi.fn(() => Promise.resolve("Ops alerts"));
+    const linkChat = vi.fn(() => linked("Ops alerts"));
 
     await run(telegram, linkChat);
 
@@ -158,9 +209,9 @@ describe("the Telegram bot runner", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const telegram = fakeTelegram([[startMessage(10, "/start abc")], [startMessage(10, "/start abc")]]);
     const linkChat = vi
-      .fn<(code: string, chat: BotChat) => Promise<string | undefined>>()
+      .fn<(code: string, chat: BotChat) => Promise<string>>()
       .mockRejectedValueOnce(new Error("the database went away"))
-      .mockResolvedValue("Ops alerts");
+      .mockResolvedValue("Linked to Ops alerts in Watchdog");
 
     await run(telegram, linkChat);
 
@@ -174,7 +225,7 @@ describe("the Telegram bot runner", () => {
     const batch = [startMessage(10, "/start broken"), startMessage(11, "/start abc", { id: 7, type: "private" })];
     const telegram = fakeTelegram([batch, batch, batch]);
     const linkChat = vi.fn((code: string) =>
-      code === "broken" ? Promise.reject(new Error("a bad row")) : Promise.resolve("Ops alerts"),
+      code === "broken" ? Promise.reject(new Error("a bad row")) : linked("Ops alerts"),
     );
 
     await run(telegram, linkChat);
@@ -202,11 +253,11 @@ describe("the Telegram bot runner", () => {
     const start = startMessage(10, "/start abc");
     const telegram = fakeTelegram([[start], [start], [start], [startMessage(11, "/start abc")]]);
     const linkChat = vi
-      .fn<(code: string, chat: BotChat) => Promise<string | undefined>>()
+      .fn<(code: string, chat: BotChat) => Promise<string>>()
       .mockRejectedValueOnce(new Error("a bad row"))
       .mockRejectedValueOnce(new Error("a bad row"))
       .mockRejectedValueOnce(new Error("a bad row"))
-      .mockResolvedValue("Ops alerts");
+      .mockResolvedValue("Linked to Ops alerts in Watchdog");
 
     await run(telegram, linkChat);
 
@@ -214,7 +265,7 @@ describe("the Telegram bot runner", () => {
       "Watchdog couldn't link this chat. Try the same link again.",
       "Linked to Ops alerts in Watchdog",
     ]);
-    expect(linkChat).toHaveBeenLastCalledWith("abc", { id: "42", title: "Private chat" });
+    expect(linkChat).toHaveBeenLastCalledWith("abc", { id: "42", title: "Private chat", type: "private" });
   });
 
   it("logs which update it skipped and why, without the message's text or the bot's token", async () => {

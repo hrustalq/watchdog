@@ -1,24 +1,17 @@
-// The Telegram bot's one getUpdates loop, which links chats to Destinations (docs: Actions and delivery,
-// "Telegram chats"; ADR 0029). It handles `/start <code>` and ignores the rest. M4 widens it into intake.
+// The Telegram bot's one getUpdates loop (ADR 0029). It links chats to Destinations and Sources through
+// `/start <code>` (docs: Actions and delivery, "Telegram chats"), and hands every other update to intake
+// (docs: Sources and ingestion, "Telegram bot intake").
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
 import { botApiUrl, refusal } from "../delivery/telegram.ts";
 import { unreachable } from "../delivery/deliver.ts";
 import type { createEgressFetch } from "../egress/egress.ts";
+import { type BotUpdate, botUpdate } from "./update.ts";
 
 type BotFetch = ReturnType<typeof createEgressFetch>;
 
 /** Under the egress guard's 30 seconds, so a quiet poll ends before the guard calls it too slow. */
 const pollSeconds = 25;
-
-const update = z.object({
-  update_id: z.number(),
-  // Anything else Telegram can send, such as a photo, isn't for the runner, and the loop still has to pass it.
-  message: z
-    .object({ text: z.string(), chat: z.object({ id: z.number(), title: z.string().optional() }) })
-    .optional()
-    .catch(undefined),
-});
 
 /**
  * In a group, Telegram's privacy mode only promises a bot the command addressed to it, `/start@bot <code>`,
@@ -63,6 +56,8 @@ export async function botUsername(botToken: string, fetch: BotFetch, signal?: Ab
 export interface BotChat {
   id: string;
   title: string;
+  /** Telegram's chat type: private, group, supergroup or channel. */
+  type: string;
 }
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -72,21 +67,23 @@ const messageOf = (error: unknown) => (error instanceof Error ? error.message : 
  * Telegram resends everything from the offset of the last poll on. So a failure, logged here, tries again
  * after `retryMs`, and a stop in the middle of a batch can bring a `/start` back with a reply that the code is gone.
  * An update that fails `attemptsPerUpdate` times while the database answers is skipped, so it can't hold up
- * the ones behind it. While the database is down every update waits, so an outage loses no `/start`.
+ * the ones behind it. While the database is down every update waits, so an outage loses none.
  */
 export async function runBot(
   deps: {
     botToken: string;
     fetch: BotFetch;
-    /** Spends a code on a chat, and gives the Destination's name, or undefined for an unknown or expired code. */
-    linkChat: (code: string, chat: BotChat) => Promise<string | undefined>;
+    /** Spends a code on a chat, and gives the reply for the chat. */
+    linkChat: (code: string, chat: BotChat) => Promise<string>;
+    /** Every update that isn't a code: messages to capture, and changes to the bot's place in a chat. */
+    intake: (update: BotUpdate) => Promise<unknown>;
     /** Rejects when the database can't be reached. */
     pingDatabase: () => Promise<unknown>;
     retryMs?: number;
   },
   signal: AbortSignal,
 ) {
-  const { linkChat, pingDatabase, retryMs = 15_000 } = deps;
+  const { linkChat, intake, pingDatabase, retryMs = 15_000 } = deps;
   let username: string | undefined;
   let offset: number | undefined;
   let failedId: number | undefined;
@@ -101,22 +98,18 @@ export async function runBot(
     );
   };
 
-  const startOf = ({ message }: z.output<typeof update>, bot: string) => {
-    const [, addressedTo, code] = startCommand.exec(message?.text ?? "") ?? [];
-    if (message === undefined || code === undefined) return undefined;
+  const startOf = (update: BotUpdate, bot: string) => {
+    // A channel's admins post the command, which comes as a channel post.
+    const post = update.message ?? update.channel_post;
+    const [, addressedTo, code] = startCommand.exec(post?.text ?? "") ?? [];
+    if (post === undefined || code === undefined) return undefined;
     if (addressedTo !== undefined && addressedTo.toLowerCase() !== bot.toLowerCase()) return undefined;
-    return { code, chat: message.chat };
+    return { code, chat: post.chat };
   };
 
   const link = async ({ code, chat }: NonNullable<ReturnType<typeof startOf>>) => {
-    const { id, title = "Private chat" } = chat;
-    const name = await linkChat(code, { id: String(id), title });
-    await reply(
-      id,
-      name === undefined
-        ? "That code is unknown or has expired. Get a new link on the Destinations page in Watchdog."
-        : `Linked to ${name} in Watchdog`,
-    );
+    const { id, title = "Private chat", type } = chat;
+    await reply(id, await linkChat(code, { id: String(id), title, type }));
   };
 
   // A function, because TypeScript would otherwise take `aborted` as still false inside the loop.
@@ -127,15 +120,19 @@ export async function runBot(
       const updates = await callBot(
         deps,
         "getUpdates",
-        { ...(offset !== undefined && { offset }), timeout: pollSeconds, allowed_updates: ["message"] },
-        z.array(update),
+        {
+          ...(offset !== undefined && { offset }),
+          timeout: pollSeconds,
+          allowed_updates: ["message", "channel_post", "my_chat_member"],
+        },
+        z.array(botUpdate),
         signal,
       );
       for (const next of updates) {
         if (stopped()) return;
         const start = startOf(next, bot);
         try {
-          if (start !== undefined) await link(start);
+          await (start === undefined ? intake(next) : link(start));
         } catch (error) {
           if (!(await pingDatabase().then(() => true, () => false))) throw error;
           attempts = failedId === next.update_id ? attempts + 1 : 1;

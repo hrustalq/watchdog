@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { check, foreignKey, index, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { source } from "./source.ts";
 import { workspace } from "./workspace.ts";
 
 /**
@@ -60,16 +61,20 @@ export const destinationConfirmation = pgTable("destination_confirmation", {
 });
 
 /**
- * A code from a Telegram deep link, waiting for the bot to be sent `/start <code>` (ADR 0029).
- * Only the SHA-256 hash is stored, as for the setup token. A used code is deleted.
+ * A code from a Telegram deep link, waiting for the bot to be sent `/start <code>` (ADR 0029). It links
+ * a chat to a Destination, or binds one to a Telegram bot Source (docs: Sources and ingestion, "Telegram
+ * bot intake"). Only the SHA-256 hash is stored, as for the setup token. A used code is deleted.
  */
-export const telegramLinkCode = pgTable("telegram_link_code", {
-  codeHash: text("code_hash").primaryKey(),
-  destinationId: uuid("destination_id")
-    .notNull()
-    .references(() => destination.id, { onDelete: "cascade" }),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-});
+export const telegramLinkCode = pgTable(
+  "telegram_link_code",
+  {
+    codeHash: text("code_hash").primaryKey(),
+    destinationId: uuid("destination_id").references(() => destination.id, { onDelete: "cascade" }),
+    sourceId: uuid("source_id").references(() => source.id, { onDelete: "cascade" }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [check("telegram_link_code_target_check", sql`num_nonnulls(${table.destinationId}, ${table.sourceId}) = 1`)],
+);
 
 /**
  * The Workspace's Health alerts setting: the Destinations that Source failing and Source recovered

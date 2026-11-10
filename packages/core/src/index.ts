@@ -19,6 +19,7 @@ export { createSenders } from "./delivery/senders.ts";
 export { sendTestAlert, type TestAlertDeps, type TestAlertResult } from "./delivery/test-alert.ts";
 export { botUsername, runBot } from "./telegram/bot-runner.ts";
 export { issueLinkCode, linkChat, linkCodeMinutes, liveLinkCode } from "./telegram/link.ts";
+export { telegramIntake } from "./sources/telegram/intake.ts";
 export { checkUnsubscribeToken, unsubscribeUrl } from "./delivery/unsubscribe.ts";
 export { verifyWebhookSignature } from "./delivery/verify-signature.ts";
 export {
