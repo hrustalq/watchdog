@@ -47,6 +47,9 @@ export async function startTelegramSessions(
     if (job !== undefined) await run.revoke(job.data.id);
   });
   await boss.createQueue(sessionQueue, runnerQueue);
+  // Its policy can't change after creation, so only the rest is updated.
+  const { policy: _, ...runnerOptions } = runnerQueue;
+  await boss.updateQueue(sessionQueue, runnerOptions);
   // Each turn holds its connection for the hour, so a worker runs this many sessions at once.
   await boss.work<{ id: string }>(sessionQueue, { localConcurrency: 20 }, async ([job]) => {
     if (job === undefined) return;

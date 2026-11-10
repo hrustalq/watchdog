@@ -356,7 +356,8 @@ export async function addTelegramSource(db: Db, workspaceId: string, input: Pick
 }
 
 /** A bot Source with no chat bound yet, or one that lost access, which a new link binds again. */
-const unbound = sql`(${source.config}->>'chatId' is null or ${source.health} = 'failing')`;
+// Bot Sources only: a session Source has no link, and binding one would make it a bot Source.
+const unbound = sql`${source.config}->>'via' = 'bot' and (${source.config}->>'chatId' is null or ${source.health} = 'failing')`;
 
 /** A new code for the Workspace's Telegram bot Source while it waits or lost access, else undefined. */
 export async function newSourceLink(db: Db, workspaceId: string, sourceId: string) {

@@ -4,9 +4,12 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { type ITelegramClient, tl } from "@mtcute/node";
 
-/** `get…` methods read; `getMessagesViews` is one that doesn't, because its flag counts a view. */
-const reads = (method: string) =>
-  (/^\w+\.get/.test(method) && method !== "messages.getMessagesViews") || method === "contacts.resolveUsername";
+/**
+ * `get…` methods read. A few act for the user even so: counting a view, pressing a bot's button,
+ * querying an inline bot, and sharing the user's location with people nearby.
+ */
+const acts = new Set(["messages.getMessagesViews", "messages.getBotCallbackAnswer", "messages.getInlineBotResults", "contacts.getLocated"]);
+const reads = (method: string) => (/^\w+\.get/.test(method) && !acts.has(method)) || method === "contacts.resolveUsername";
 
 /** A FLOOD_WAIT that lasts past the turn's end, which then ends so the next turn starts after it. */
 export class FloodWaitTooLong extends Error {

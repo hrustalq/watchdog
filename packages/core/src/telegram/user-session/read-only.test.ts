@@ -35,6 +35,9 @@ describe("the read-only Telegram client", () => {
     createStub("channels.joinChannel"),
     createStub("channels.leaveChannel"),
     createStub("messages.getMessagesViews"),
+    createStub("messages.getBotCallbackAnswer"),
+    createStub("messages.getInlineBotResults"),
+    createStub("contacts.getLocated"),
     createStub("auth.logOut"),
   ])("refuses $_", async (request) => {
     const client = readOnly(stub());

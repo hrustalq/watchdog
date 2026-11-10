@@ -46,6 +46,7 @@ describe("a Telegram user session's runner", () => {
   let history: tl.TypeMessage[];
   let historyAsked: { minId: number; limit: number }[];
   let enqueued: string[];
+  let failCaptures: boolean;
   let stopping: AbortController;
 
   beforeAll(async () => {
@@ -67,6 +68,7 @@ describe("a Telegram user session's runner", () => {
     history = [];
     historyAsked = [];
     enqueued = [];
+    failCaptures = false;
     stopping = new AbortController();
     // Node's crypto, because the stub's default is the browser's, which loads its WebAssembly through fetch.
     telegram = new StubTelegramClient({ crypto: new NodeCryptoProvider() });
@@ -84,10 +86,11 @@ describe("a Telegram user session's runner", () => {
         users: [ada],
       }),
     );
-    telegram.respondWith("messages.getHistory", ({ minId, limit }) => {
+    telegram.respondWith("updates.getState", () => createStub("updates.state"));
+    telegram.respondWith("messages.getHistory", ({ minId, limit, offsetId }) => {
       historyAsked.push({ minId, limit });
       const messages = history
-        .filter((sent) => sent.id > minId)
+        .filter((sent) => sent.id > minId && (offsetId === 0 || sent.id < offsetId))
         .toSorted((a, b) => b.id - a.id)
         .slice(0, limit);
       return createStub("messages.channelMessages", { messages, chats: [opsRoom], users: [ada], count: messages.length });
@@ -107,10 +110,15 @@ describe("a Telegram user session's runner", () => {
     encryptionKey,
     createClient: () => telegram,
     enqueueItems: (_tx: unknown, ids: string[]) => {
+      if (failCaptures) {
+        failCaptures = false;
+        return Promise.reject(new Error("the database went away"));
+      }
       enqueued.push(...ids);
       return Promise.resolve();
     },
     tickMs: 10,
+    checkMs: 50,
   });
   const run = (until = new Date(Date.now() + 60 * 60 * 1000)) => runSession(db, deps(), sessionId, { signal: stopping.signal, until });
   const sessionRow = async () => (await db.select().from(telegramSession).where(eq(telegramSession.id, sessionId)))[0];
@@ -186,18 +194,24 @@ describe("a Telegram user session's runner", () => {
     await turn;
   });
 
-  it("catches up on what came in between turns, from the last message it read", async () => {
+  it("catches up on everything that came in between turns, from the last message it read, a page at a time", async () => {
     const watching = await sessionSource({ backfilledAt: new Date(), fetchState: { lastMessageId: "10" } });
-    history = Array.from({ length: 12 }, (_, index) => message(index + 1, `Message ${String(index + 1)}`));
+    history = Array.from({ length: 160 }, (_, index) => message(index + 1, `Message ${String(index + 1)}`));
 
     const turn = run();
 
     await vi.waitFor(async () => {
-      expect((await itemsOf(watching.id)).map(({ title }) => title).toSorted()).toEqual(["Message 11", "Message 12"]);
+      expect(await itemsOf(watching.id)).toHaveLength(150);
     }, waitLong);
-    expect(historyAsked).toEqual([{ minId: 10, limit: 50 }]);
+    const titles = (await itemsOf(watching.id)).map(({ title }) => title);
+    expect(titles).toContain("Message 11");
+    expect(titles).not.toContain("Message 10");
+    expect(historyAsked).toEqual([
+      { minId: 10, limit: 100 },
+      { minId: 10, limit: 100 },
+    ]);
     await vi.waitFor(async () => {
-      expect((await db.select().from(source).where(eq(source.id, watching.id)))[0]?.fetchState).toEqual({ lastMessageId: "12" });
+      expect((await db.select().from(source).where(eq(source.id, watching.id)))[0]?.fetchState).toEqual({ lastMessageId: "160" });
     }, waitLong);
     stopping.abort();
     await turn;
@@ -221,6 +235,94 @@ describe("a Telegram user session's runner", () => {
     }, waitLong);
     stopping.abort();
     await turn;
+  });
+
+  it("keeps where it read from after a capture fails, so the next turn reads that message again", async () => {
+    const watching = await sessionSource({ backfilledAt: new Date(), fetchState: { lastMessageId: "61" } });
+    const turn = run();
+    await vi.waitFor(() => {
+      expect(historyAsked).toHaveLength(1);
+    }, waitLong);
+
+    // The capture of the next message fails once, as if the database went away for it.
+    failCaptures = true;
+    arrives(message(62, "Lost to an outage"));
+    arrives(message(63, "After the outage"));
+    await vi.waitFor(async () => {
+      expect((await itemsOf(watching.id)).map(({ title }) => title)).toEqual(["After the outage"]);
+    }, waitLong);
+
+    expect((await db.select().from(source).where(eq(source.id, watching.id)))[0]?.fetchState).toEqual({ lastMessageId: "61" });
+    stopping.abort();
+    await turn;
+  });
+
+  it("follows a group that became a supergroup, reading the supergroup from its first message", async () => {
+    const team = createStub("chat", { id: 4001, title: "Team" });
+    await telegram.registerPeers(team);
+    const watching = await sessionSource({ config: { via: "session", chatId: -4001, title: "Team" }, backfilledAt: new Date(), fetchState: { lastMessageId: "500" } });
+    const turn = run();
+    await vi.waitFor(() => {
+      expect(historyAsked).toHaveLength(1);
+    }, waitLong);
+
+    telegram.onRawUpdate.emit(
+      new RawUpdateInfo(
+        createStub("updateNewMessage", {
+          message: createStub("messageService", {
+            id: 501,
+            peerId: { _: "peerChat", chatId: team.id },
+            date: now(),
+            action: { _: "messageActionChatMigrateTo", channelId },
+          }),
+        }),
+        PeersIndex.from({ chats: [team], users: [] }),
+      ),
+    );
+
+    await vi.waitFor(async () => {
+      expect((await db.select().from(source).where(eq(source.id, watching.id)))[0]).toMatchObject({
+        config: { chatId },
+        fetchState: { lastMessageId: "0" },
+      });
+    }, waitLong);
+    stopping.abort();
+    await turn;
+  });
+
+  it("makes a Source failing when Telegram can't find its chat, and goes on reading the others", async () => {
+    const gone = await sessionSource({ config: { via: "session", chatId: -1_000_000_000_999, title: "Gone" }, backfilledAt: new Date() });
+    const watching = await sessionSource({ name: "Ops room", backfilledAt: new Date() });
+    telegram.respondWith("channels.getChannels", () => {
+      throw new tl.RpcError(400, "CHANNEL_INVALID");
+    });
+    const turn = run();
+
+    await vi.waitFor(async () => {
+      expect((await db.select().from(source).where(eq(source.id, gone.id)))[0]?.health).toBe("failing");
+    }, waitLong);
+    arrives(message(9, "Still here"));
+    await vi.waitFor(async () => {
+      expect((await itemsOf(watching.id)).map(({ title }) => title)).toEqual(["Still here"]);
+    }, waitLong);
+    stopping.abort();
+    await turn;
+  });
+
+  it("notices in the middle of a turn that Telegram logged the session out", async () => {
+    const watching = await sessionSource();
+    const turn = run();
+    await vi.waitFor(() => {
+      expect(historyAsked).toHaveLength(1);
+    }, waitLong);
+
+    telegram.respondWith("updates.getState", () => {
+      throw new tl.RpcError(401, "AUTH_KEY_UNREGISTERED");
+    });
+    await turn;
+
+    expect(await sessionRow()).toBeUndefined();
+    expect((await db.select().from(source).where(eq(source.id, watching.id)))[0]?.lastError).toBe(loggedOutError);
   });
 
   it("makes a Source failing when the account can't read its chat, and ok again once it can", async () => {

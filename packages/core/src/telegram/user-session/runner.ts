@@ -4,7 +4,7 @@
 // since the last turn, then captures new messages as they arrive, until the turn ends or the session
 // is revoked.
 import { setTimeout as sleep } from "node:timers/promises";
-import { type Chat, type ITelegramClient, Message, tl } from "@mtcute/node";
+import { type Chat, getMarkedPeerId, type ITelegramClient, Message, MtPeerNotFoundError, parseMarkedPeerId, tl, toggleChannelIdMark } from "@mtcute/node";
 import { getHistory, iterDialogs } from "@mtcute/node/methods.js";
 import { and, type Db, eq, isNull, or, source, sql, type TelegramDialog, telegramSession } from "@watchdog/db";
 import { captureItems, type CaptureDeps } from "../../pipeline/capture.ts";
@@ -17,8 +17,11 @@ import { FloodWaitTooLong, readOnly } from "./read-only.ts";
 export const loggedOutError = "The Telegram session was logged out";
 const unreadable = "The Telegram session can't read this chat. The account may have left it, or been removed from it.";
 
-/** A Backfill's read and a catch-up's: Telegram's newest 50, which capture cuts to the Backfill's window. */
-const historyLimit = 50;
+/** A Backfill reads Telegram's newest 50, which capture cuts to the Backfill's window. */
+const backfillLimit = 50;
+/** A catch-up reads back to the last message read, a page at a time, up to 1,000 messages. */
+const catchUpPage = 100;
+const catchUpPages = 10;
 /** A list of more dialogs than this is cut, so one turn's start costs at most a few calls. */
 const dialogLimit = 500;
 
@@ -28,6 +31,8 @@ export interface RunnerDeps extends CaptureDeps {
   createClient: () => ITelegramClient;
   /** How often the runner checks the session and its Sources. */
   tickMs?: number;
+  /** How often it asks Telegram whether the session still works, since a quiet one makes no calls. */
+  checkMs?: number;
 }
 
 /** The sessions whose turn the tick starts: not being revoked, and not waiting out a FLOOD_WAIT. */
@@ -74,6 +79,8 @@ interface Watched {
   sourceId: string;
   /** The newest message id read, where the next turn's catch-up starts. */
   lastId: number;
+  /** A capture failed this turn, so lastId stays put and the next turn's catch-up reads it again. */
+  held?: true;
 }
 
 /**
@@ -105,37 +112,78 @@ export async function runSession(db: Db, deps: RunnerDeps, sessionId: string, { 
       const draft = asBotMessage(message);
       return draft === undefined ? [] : (telegramDraft(draft) ?? []);
     });
-    into.lastId = Math.max(into.lastId, ...messages.map(({ id }) => id));
-    const fetchState = { lastMessageId: String(into.lastId) };
+    const lastId = into.held ? into.lastId : Math.max(into.lastId, ...messages.map(({ id }) => id));
+    const fetchState = { lastMessageId: String(lastId) };
     await captureItems(db, into.sourceId, drafts, { at: deps.now?.() ?? new Date(), polled: false, fetchState }, deps);
+    into.lastId = lastId;
+  };
+
+  /** A group that became a supergroup: its Source follows it, unless the Workspace already watches that. */
+  const migrate = async (into: Watched, from: number, to: number) => {
+    const watchesIt = sql`exists (select 1 from source s where s.workspace_id = ${source.workspaceId}
+      and s.type = 'telegram' and s.dedup_key = ${String(to)})`;
+    // The supergroup numbers its messages afresh.
+    await db
+      .update(source)
+      .set({ config: sql`jsonb_set(${source.config}, '{chatId}', to_jsonb(${to}::bigint))`, fetchState: { lastMessageId: "0" } })
+      .where(and(eq(source.id, into.sourceId), sql`not ${watchesIt}`));
+    // The next tick reads it under its new id.
+    watched.delete(from);
   };
 
   client.onRawUpdate.add(({ update, peers }) => {
     // New messages only: an edit is never captured again.
     if (update._ !== "updateNewMessage" && update._ !== "updateNewChannelMessage") return;
-    const message = new Message(update.message, peers);
-    const into = watched.get(message.chat.id);
+    const sent = update.message;
+    if (sent._ === "messageEmpty") return;
+    // Looked up by the raw peer first, so a chat nobody watches, such as a private one, is never parsed.
+    const chatId = getMarkedPeerId(sent.peerId);
+    const into = watched.get(chatId);
     if (into === undefined) return;
-    serially(() => take(into, [message])).catch((error: unknown) => {
+    let work = () => take(into, [new Message(sent, peers)]);
+    if (sent._ === "messageService" && sent.action._ === "messageActionChatMigrateTo") {
+      const to = toggleChannelIdMark(sent.action.channelId);
+      work = () => migrate(into, chatId, to);
+    }
+    serially(work).catch((error: unknown) => {
+      into.held = true;
       process.stderr.write(`Capturing a Telegram message failed: ${error instanceof Error ? error.message : String(error)}\n`);
     });
   });
+
+  /** The Backfill's newest 50, or everything after `minId`, newest first, a page at a time. */
+  const history = async (chatId: number, minId?: number) => {
+    if (minId === undefined) return waitingOutFloods(() => getHistory(client, chatId, { limit: backfillLimit }));
+    const messages: Message[] = [];
+    let offset: { id: number; date: number } | undefined;
+    for (let page = 0; page < catchUpPages; page += 1) {
+      const from = offset;
+      const got = await waitingOutFloods(() => getHistory(client, chatId, { limit: catchUpPage, minId, ...(from && { offset: from }) }));
+      messages.push(...got);
+      if (got.length < catchUpPage) break;
+      offset = got.next;
+    }
+    return messages;
+  };
 
   /** A new Source's Backfill, or what came in since the last turn's newest message. */
   const read = async (row: Pick<typeof source.$inferSelect, "id" | "config" | "backfilledAt" | "fetchState">) => {
     const chatId = "chatId" in row.config ? row.config.chatId : undefined;
     if (chatId === undefined) return;
     const into = { sourceId: row.id, lastId: Number(row.fetchState.lastMessageId ?? 0) };
-    const minId = row.backfilledAt === null ? 0 : into.lastId;
     // Watched from before the read, so nothing that arrives during it is missed.
     watched.set(chatId, into);
     try {
-      await serially(async () => take(into, await waitingOutFloods(() => getHistory(client, chatId, { limit: historyLimit, minId }))));
+      // mtcute polls a supergroup's or channel's updates only once it's told the chat is open.
+      const [kind, bareId] = parseMarkedPeerId(chatId);
+      if (kind === "channel") await client.notifyChannelOpened(bareId);
+      await serially(async () => take(into, await history(chatId, row.backfilledAt === null ? undefined : into.lastId)));
       // Read again, such as after the account rejoined the chat or signed in again.
       await db.update(source).set({ health: "ok" }).where(and(eq(source.id, row.id), eq(source.health, "failing")));
     } catch (error) {
       watched.delete(chatId);
-      if (error instanceof FloodWaitTooLong || endedByTelegram(error) || !tl.RpcError.is(error)) throw error;
+      if (error instanceof FloodWaitTooLong || endedByTelegram(error)) throw error;
+      if (!tl.RpcError.is(error) && !(error instanceof MtPeerNotFoundError)) throw error;
       // The chat is gone from the account, or Telegram won't say: the Source shows it.
       unread.add(row.id);
       await db.update(source).set({ health: "failing", lastError: unreadable, lastErrorAt: new Date() }).where(eq(source.id, row.id));
@@ -156,7 +204,13 @@ export async function runSession(db: Db, deps: RunnerDeps, sessionId: string, { 
     await db.update(telegramSession).set({ dialogs }).where(live);
     await client.startUpdatesLoop();
 
+    let checkedAt = Date.now();
     while (!signal.aborted) {
+      // An answer that the session ended throws, and the catch below logs it out here too.
+      if (Date.now() - checkedAt >= (deps.checkMs ?? 60_000)) {
+        await waitingOutFloods(() => client.call({ _: "updates.getState" }));
+        checkedAt = Date.now();
+      }
       const [still] = await db.select({ id: telegramSession.id }).from(telegramSession).where(live);
       if (still === undefined) return;
       const rows = await db
