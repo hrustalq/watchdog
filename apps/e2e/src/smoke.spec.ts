@@ -566,6 +566,7 @@ test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours ho
   await test.step("a Severity 5 Item sends one Telegram alert and one mail, and its Log says so", async () => {
     await publishEntry("first");
     await checkNow(page, feed);
+    await page.getByRole("link", { name: "Workspace" }).click();
     await expect.poll(() => botSent(alerted), { ...untilPolled, message: "no Telegram alert arrived" }).toHaveLength(1);
     await expect.poll(() => mailed(alerted), { message: "no alert mail arrived" }).toHaveLength(1);
     await openItem(alerted);
