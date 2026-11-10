@@ -28,6 +28,8 @@ export const revokedError = "The Telegram session was revoked";
 const refusals = {
   phoneInvalid: "Telegram doesn't take that phone number. Check it and start again.",
   phoneBanned: "Telegram has banned that phone number.",
+  apiInvalid:
+    "Telegram refused this install's TELEGRAM_API_ID and TELEGRAM_API_HASH. Whoever runs this Watchdog can check them at my.telegram.org.",
   tooMany: "Telegram asks to wait before another login. Try again later.",
   codeWrong: "That code is wrong. Check it in Telegram and enter it again.",
   codeExpired: "That code expired. Start again, and Telegram sends a new one.",
@@ -41,6 +43,7 @@ const floodWait = (error: unknown) => is(error, "FLOOD_WAIT_%d", "PHONE_NUMBER_F
 function sendCodeRefusal(error: unknown) {
   if (is(error, "PHONE_NUMBER_INVALID")) return refusals.phoneInvalid;
   if (is(error, "PHONE_NUMBER_BANNED")) return refusals.phoneBanned;
+  if (is(error, "API_ID_INVALID", "API_ID_PUBLISHED_FLOOD")) return refusals.apiInvalid;
   return floodWait(error) ? refusals.tooMany : refusals.failed;
 }
 

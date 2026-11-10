@@ -252,18 +252,20 @@ describe("a Telegram user session", () => {
     expect(await loginState(db, workspaceId)).toEqual({ step: "failed", phone, refusal: loginLost });
   });
 
-  it("passes Telegram's refusal of the phone number to the screen as a fixed sentence", async () => {
+  it.each([
+    ["PHONE_NUMBER_INVALID", "Telegram doesn't take that phone number. Check it and start again."],
+    ["API_ID_INVALID", /^Telegram refused this install's TELEGRAM_API_ID and TELEGRAM_API_HASH\./],
+    ["SOMETHING_NEW", "Telegram didn't finish the login. Start again in a few minutes."],
+  ])("passes Telegram's %s refusal to the screen as a fixed sentence", async (text, refusal) => {
     telegram.respondWith("auth.sendCode", () => {
-      throw rpcError("PHONE_NUMBER_INVALID");
+      throw rpcError(text);
     });
     const { job } = await login();
     await job;
 
-    expect(await loginState(db, workspaceId)).toEqual({
-      step: "failed",
-      phone,
-      refusal: "Telegram doesn't take that phone number. Check it and start again.",
-    });
+    const state = await loginState(db, workspaceId);
+    expect(state).toMatchObject({ step: "failed", phone });
+    expect(state?.refusal).toMatch(refusal);
   });
 
   it("refuses a phone number that isn't one, and a login while the Workspace has a session", async () => {
