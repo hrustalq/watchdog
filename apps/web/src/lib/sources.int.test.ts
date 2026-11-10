@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { createEgressFetch, decryptSecret, loadConfig, pollSource } from "@watchdog/core";
+import { createEgressFetch, decryptSecret, linkChat, loadConfig, pollSource } from "@watchdog/core";
 import {
   account,
   closeDb,
@@ -23,14 +23,18 @@ import {
   addGithubMentionsSource,
   addGithubReleasesSource,
   addRssSource,
+  addTelegramSource,
   addValues,
   addWebsiteSource,
   type AddProblem,
   listSources,
+  newSourceLink,
   problemField,
   problemMessage,
   removeSource,
   type SourceDeps,
+  sourceLinkCookieValue,
+  sourceLinkInCookie,
   watchedSourceName,
 } from "./sources.ts";
 
@@ -733,6 +737,60 @@ describe("Sources", () => {
       const values = { ...addValues(() => ""), url: at("/page.html"), ...input, type: "website" as const };
       expect(problemMessage(problem, { ...values, status: "", mode: "hosted" })).toBe(message);
       expect(await sourcesIn(ours)).toHaveLength(before);
+    });
+  });
+  describe("Telegram bot", () => {
+    const key = Buffer.alloc(32);
+    const group = (id: string) => ({ id, title: "Ops room", type: "supergroup" });
+    const rowOf = async (id: string) => (await listSources(db, ours)).find((row) => row.id === id);
+
+    it("saves a Source waiting for the bot, with no schedule, and a code that binds a group to it", async () => {
+      const { source: telegram, code } = await addTelegramSource(db, ours, { name: "" });
+
+      expect(await rowOf(telegram.id)).toMatchObject({ type: "telegram", name: "Telegram chat", config: { via: "bot" }, schedule: null });
+      expect(await linkChat(db, key, code, group("-100900"))).toBe("Watching this chat for Telegram chat in Watchdog");
+      expect((await rowOf(telegram.id))?.config).toEqual({ via: "bot", chatId: -100900, title: "Ops room" });
+    });
+
+    it("shows the link from the cookie while the Source waits, and that it's bound once the bot has the code", async () => {
+      const { source: telegram, code } = await addTelegramSource(db, ours, { name: "Ops" });
+      const cookie = sourceLinkCookieValue(telegram.id, code);
+
+      expect(await sourceLinkInCookie(db, await listSources(db, ours), cookie)).toMatchObject({
+        status: "pending",
+        id: telegram.id,
+        name: "Ops",
+        code,
+      });
+      await linkChat(db, key, code, group("-100901"));
+      expect(await sourceLinkInCookie(db, await listSources(db, ours), cookie)).toEqual({
+        status: "linked",
+        id: telegram.id,
+        name: "Ops",
+      });
+      // Another Workspace's list doesn't have the Source.
+      expect(await sourceLinkInCookie(db, await listSources(db, theirs), cookie)).toBeUndefined();
+    });
+
+    it("gives a new code to a Source that waits or lost access, in this Workspace only", async () => {
+      const { source: telegram, code } = await addTelegramSource(db, ours, { name: "" });
+
+      expect(await newSourceLink(db, theirs, telegram.id)).toBeUndefined();
+      expect(await newSourceLink(db, ours, "not-a-uuid")).toBeUndefined();
+      await linkChat(db, key, code, group("-100902"));
+      expect(await newSourceLink(db, ours, telegram.id)).toBeUndefined();
+
+      await db.update(source).set({ health: "failing", lastError: "The bot was removed" }).where(eq(source.id, telegram.id));
+      const again = await newSourceLink(db, ours, telegram.id);
+      expect(again).toMatch(/^[\w-]{22}$/);
+      expect(await linkChat(db, key, again ?? "", group("-100902"))).toMatch(/^Watching this chat/);
+      expect(await rowOf(telegram.id)).toMatchObject({ health: "ok", lastError: null });
+    });
+
+    it("never takes a new code for a Source of another type", async () => {
+      const rss = await added(ours, { url: at("/news.rss?telegram-test") });
+
+      expect(await newSourceLink(db, ours, rss.id)).toBeUndefined();
     });
   });
 });

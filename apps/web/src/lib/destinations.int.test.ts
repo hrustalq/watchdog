@@ -115,7 +115,7 @@ describe("Destinations", () => {
       if ("problem" in added) throw new Error(`Not added: ${added.problem}`);
       return added;
     };
-    const chat = { id: "42", title: "private chat" };
+    const chat = { id: "42", title: "Private chat", type: "private" };
     const rowsOf = (workspaceId: string) => listDestinations(db, workspaceId, { telegramAvailable: true });
     const expire = (id: string) =>
       db
@@ -136,7 +136,7 @@ describe("Destinations", () => {
     it("is confirmed and shows its chat's title once the bot has the code", async () => {
       const { destination: added, code } = await addTelegram();
 
-      await linkChat(db, deps.encryptionKey, code, { id: "-100200", title: "Ops room" });
+      await linkChat(db, deps.encryptionKey, code, { id: "-100200", title: "Ops room", type: "supergroup" });
 
       expect((await rowsOf(ours)).find(({ id }) => id === added.id)).toMatchObject({
         state: "confirmed",
@@ -152,7 +152,7 @@ describe("Destinations", () => {
       const { destination: added, code } = await addTelegram();
       await expire(added.id);
 
-      expect(await linkChat(db, deps.encryptionKey, code, chat)).toBeUndefined();
+      expect(await linkChat(db, deps.encryptionKey, code, chat)).toMatch(/unknown or has expired/);
       expect(await stateOf(added.id)).toBe("waiting-bot");
       expect(await telegramLinkInCookie(db, await rowsOf(ours), telegramLinkCookieValue(added.id, code))).toBeUndefined();
 

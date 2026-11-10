@@ -9,6 +9,8 @@ import {
   FeedHttpError,
   fetchFeed,
   fetchReleases,
+  issueLinkCode,
+  liveLinkCode,
   mappingError,
   MissingRepoError,
   NotAFeedError,
@@ -20,7 +22,7 @@ import {
   renderModes,
   signInToken,
 } from "@watchdog/core";
-import { and, type Db, eq, source } from "@watchdog/db";
+import { and, type Db, eq, source, sql } from "@watchdog/db";
 import { newInboxToken } from "./inbox.ts";
 import { isUuid } from "./uuid.ts";
 
@@ -43,7 +45,7 @@ export interface Renderers {
 export type RenderMode = (typeof renderModes)[number];
 
 /** The kinds of Source the form adds. */
-export const addTypes = ["rss", "website", "github-releases", "github-issues", "github-mentions", "webhook"] as const;
+export const addTypes = ["rss", "website", "github-releases", "github-issues", "github-mentions", "webhook", "telegram"] as const;
 export type AddType = (typeof addTypes)[number];
 
 /**
@@ -128,7 +130,8 @@ export const addProblems = [
 export type AddProblem = (typeof addProblems)[number];
 
 export type AddSourceResult =
-  | { source: { id: string } }
+  /** `code` binds a chat to a Telegram bot Source. */
+  | { source: { id: string }; code?: string }
   /** `status` is the HTTP status for "answered". */
   | { problem: AddProblem; status?: string };
 
@@ -157,6 +160,8 @@ export function addFormSource(db: Db, deps: SourceDeps, workspaceId: string, val
       return addGithubIssuesSource(db, deps, workspaceId, values);
     case "github-mentions":
       return addGithubMentionsSource(db, deps, workspaceId, values);
+    case "telegram":
+      return addTelegramSource(db, workspaceId, values);
   }
 }
 
@@ -338,6 +343,53 @@ export async function addWebhookSource(
   });
 }
 
+/**
+ * Saves a Telegram bot Source waiting for the bot, with the code that binds a chat to it. It has no
+ * schedule, and no chat, so no dedup key, until the bot binds one.
+ */
+export async function addTelegramSource(db: Db, workspaceId: string, input: Pick<AddValues, "name">): Promise<{ source: { id: string }; code: string }> {
+  const name = cleanName(input.name) || "Telegram chat";
+  const values = { workspaceId, type: "telegram", name, config: { via: "bot" }, schedule: null, nextPollAt: null } as const;
+  const [saved] = await db.insert(source).values(values).returning({ id: source.id });
+  if (saved === undefined) throw new Error("The Source wasn't saved");
+  return { source: saved, code: await issueLinkCode(db, { sourceId: saved.id }) };
+}
+
+/** A bot Source with no chat bound yet, or one that lost access, which a new link binds again. */
+const unbound = sql`(${source.config}->>'chatId' is null or ${source.health} = 'failing')`;
+
+/** A new code for the Workspace's Telegram bot Source while it waits or lost access, else undefined. */
+export async function newSourceLink(db: Db, workspaceId: string, sourceId: string) {
+  if (!isUuid(sourceId)) return undefined;
+  const [waiting] = await db
+    .select({ id: source.id })
+    .from(source)
+    .where(and(eq(source.workspaceId, workspaceId), eq(source.id, sourceId), eq(source.type, "telegram"), unbound));
+  return waiting && issueLinkCode(db, { sourceId: waiting.id });
+}
+
+/** Keeps a code in the browser that asked for it, as the Destinations page does (telegramLinkInCookie). */
+export const sourceLinkCookie = "telegram-source-link";
+export const sourceLinkCookieValue = (sourceId: string, code: string) => `${sourceId}.${code}`;
+
+/**
+ * What this browser's cookie says about binding a chat: a code that still works for one of these Sources,
+ * or the Source the bot has bound since.
+ */
+export async function sourceLinkInCookie(
+  db: Db,
+  sources: Awaited<ReturnType<typeof listSources>>,
+  cookie: string | undefined,
+) {
+  const [sourceId, code] = (cookie ?? "").split(".");
+  const row = sources.find(({ id, type }) => id === sourceId && type === "telegram");
+  if (row === undefined || code === undefined) return undefined;
+  const { id, name } = row;
+  const live = await liveLinkCode(db, code);
+  if (live?.sourceId === id) return { status: "pending", id, name, code, expiresAt: live.expiresAt } as const;
+  return "chatId" in row.config && row.health !== "failing" ? ({ status: "linked", id, name } as const) : undefined;
+}
+
 const cleanPath = (path: string) => path.replaceAll("\0", "").trim();
 /** A mapping path that's filled in but can't run. */
 const badPath = (path: string) => cleanPath(path) !== "" && mappingError(cleanPath(path)) !== undefined;
@@ -425,8 +477,8 @@ export async function watchedSourceName(
   workspaceId: string,
   values: Pick<AddValues, "type" | "url" | "repo"> & Partial<Pick<AddValues, "term" | "within" | "region">>,
 ) {
-  // Every inbox is a new Source, so none is ever watched already.
-  if (values.type === "webhook") return undefined;
+  // Every inbox is a new Source, and a bot Source has no chat until the bot binds one.
+  if (values.type === "webhook" || values.type === "telegram") return undefined;
   if (values.type === "website") {
     const href = URL.parse(values.url.trim())?.href;
     const key = `${href ?? ""} ${cleanRegion(values.region ?? "")}`;
@@ -538,6 +590,7 @@ export function problemMessage(
         "github-issues": `watches the issues of ${repo}`,
         "github-mentions": `searches GitHub for ${shownTerm}`,
         webhook: "has that inbox",
+        telegram: "watches that chat",
       }[type];
       return watching === undefined
         ? `This Workspace already ${what}.`
@@ -590,6 +643,7 @@ export function listSources(db: Db, workspaceId: string) {
       lastPolledAt: true,
       lastError: true,
       lastErrorAt: true,
+      health: true,
     },
     orderBy: (table, { desc }) => [desc(table.createdAt), desc(table.id)],
   });

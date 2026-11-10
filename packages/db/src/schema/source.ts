@@ -124,6 +124,8 @@ export const source = pgTable(
     check("source_health_check", sql`${table.health} in ('ok', 'degraded', 'failing')`),
     check("source_consecutive_failures_check", sql`${table.consecutiveFailures} >= 0`),
     index("source_next_poll_at_idx").on(table.nextPollAt),
+    // The bot runner looks up a chat's Sources for every message it reads, across every Workspace.
+    index("source_telegram_chat_idx").on(table.dedupKey).where(sql`${table.type} = 'telegram'`),
     // Lists a Workspace's Sources, and lets item reference (workspace_id, id) so an Item's
     // denormalised workspace_id can only be its Source's.
     unique("source_workspace_id_id_key").on(table.workspaceId, table.id),

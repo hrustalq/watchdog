@@ -14,6 +14,7 @@ const types: { value: AddType; title: string }[] = [
   { value: "github-issues", title: "GitHub issues" },
   { value: "github-mentions", title: "GitHub mentions" },
   { value: "webhook", title: "Webhook inbox" },
+  { value: "telegram", title: "Telegram chat" },
 ];
 
 const renders: { value: AddValues["render"]; title: string }[] = [
@@ -47,14 +48,15 @@ const choice =
 const shownFor = {
   // Shown unless another type is checked, so RSS still works in a browser without :has(). A website
   // uses it too.
-  url: "flex [form:has(#type-github-releases:checked)_&]:hidden [form:has(#type-github-issues:checked)_&]:hidden [form:has(#type-github-mentions:checked)_&]:hidden [form:has(#type-webhook:checked)_&]:hidden",
+  url: "flex [form:has(#type-github-releases:checked)_&]:hidden [form:has(#type-github-issues:checked)_&]:hidden [form:has(#type-github-mentions:checked)_&]:hidden [form:has(#type-webhook:checked)_&]:hidden [form:has(#type-telegram:checked)_&]:hidden",
   repo: "[form:has(#type-github-releases:checked)_&]:flex [form:has(#type-github-issues:checked)_&]:flex",
   search: "[form:has(#type-github-mentions:checked)_&]:flex",
   website: "[form:has(#type-website:checked)_&]:flex",
   token: "[form:has(#type-github-issues:checked)_&]:flex [form:has(#type-github-mentions:checked)_&]:flex",
   webhook: "[form:has(#type-webhook:checked)_&]:flex",
-  // An inbox is pushed to, so it has no schedule.
-  schedule: "flex [form:has(#type-webhook:checked)_&]:hidden",
+  telegram: "[form:has(#type-telegram:checked)_&]:flex",
+  // An inbox is pushed to, and the bot is sent messages as they're posted, so neither has a schedule.
+  schedule: "flex [form:has(#type-webhook:checked)_&]:hidden [form:has(#type-telegram:checked)_&]:hidden",
 };
 
 const empty: AddValues = {
@@ -89,7 +91,8 @@ const mappings: { id: (typeof mappingFields)[number]; label: string; placeholder
 ];
 
 /**
- * Adds an RSS feed, a website, a GitHub repo's releases or issues, a GitHub search, or a webhook inbox. The server
+ * Adds an RSS feed, a website, a GitHub repo's releases or issues, a GitHub search, a webhook inbox, or a
+ * Telegram chat the bot reads. The server
  * checks a feed or releases before saving it, and a problem comes back on the field it's about, with
  * the values that were entered. A pasted token is never sent back.
  */
@@ -101,6 +104,7 @@ export function AddSourceForm({
   githubSignIn,
   mode,
   renderers,
+  telegramAvailable,
 }: {
   values?: AddValues;
   error?: { field: FieldName; message: string };
@@ -113,6 +117,8 @@ export function AddSourceForm({
   mode?: Config["mode"];
   /** Which browsers this install runs to render a page; unknown in the static shell. */
   renderers?: Renderers;
+  /** Whether this install has a Telegram bot (TELEGRAM_BOT_TOKEN); unknown in the static shell. */
+  telegramAvailable?: boolean;
 }) {
   const errorFor = (name: FieldName) => (error?.field === name ? error.message : undefined);
   const offered = (render: AddValues["render"]) => render === "static" || renderers?.[render] !== false;
@@ -134,13 +140,36 @@ export function AddSourceForm({
                 name="type"
                 value={type.value}
                 defaultChecked={values.type === type.value}
+                disabled={type.value === "telegram" && telegramAvailable === false}
                 className="sr-only"
               />
               {type.title}
             </label>
           ))}
         </div>
+        {telegramAvailable === false ? (
+          <p className="text-xs text-muted-foreground">
+            Telegram chat is unavailable: this install has no bot. Whoever runs this Watchdog can set{" "}
+            <code className="font-mono">TELEGRAM_BOT_TOKEN</code>.
+          </p>
+        ) : null}
       </fieldset>
+      <div className={cn("hidden flex-col gap-2 text-xs text-muted-foreground", shownFor.telegram)}>
+        <p>
+          After saving, the page shows a link that adds Watchdog&apos;s bot to a group. For a channel, make the bot an
+          admin and post the command the page shows. The bot reads only what is posted after it joins, so nothing older
+          shows up.
+        </p>
+        {mode === "self-hosted" ? (
+          <p>
+            <span className="font-medium text-foreground">
+              In a group, the bot sees every message only with its privacy mode off, or as an admin.
+            </span>{" "}
+            Turn privacy mode off with BotFather before adding the bot, because the change only applies to groups it
+            joins afterwards, or make the bot an admin of the group.
+          </p>
+        ) : null}
+      </div>
       <TextField
         id="url"
         label="RSS feed URL"
@@ -428,6 +457,9 @@ export function AddSourceForm({
 
 /** What happens after an add, which depends on how the type's first poll goes. */
 function addedNotice(type: AddType) {
+  if (type === "telegram") {
+    return "Source added. It waits for the bot until the link below adds the bot to a group or channel. Each message posted there after that shows up in the Feed.";
+  }
   if (type === "website") {
     return "Source added. Its first poll, within a minute, keeps the page as the Baseline. Each change after that shows up in the Feed as one Item. If the page can't be read, its row below says why.";
   }

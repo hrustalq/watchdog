@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { Suspense } from "react";
 import { releasesFeedUrl, signInToken } from "@watchdog/core";
-import { textLink } from "@/components/field-classes";
+import { dataBox, textBox, textLink } from "@/components/field-classes";
 import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
 import {
@@ -12,10 +13,13 @@ import {
   problemField,
   problemMessage,
   schedules,
+  sourceLinkCookie,
+  sourceLinkInCookie,
   watchedSourceName,
 } from "@/lib/sources";
+import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
-import { removeSourceAction } from "./actions";
+import { newSourceLinkAction, removeSourceAction } from "./actions";
 import { AddSourceForm } from "./add-source-form";
 
 export const metadata: Metadata = { title: "Sources · Watchdog" };
@@ -62,7 +66,7 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
     return typeof value === "string" ? value : "";
   };
   const values = addValues(param);
-  const { db, mode, renderers } = server();
+  const { db, mode, renderers, telegramAvailable } = server();
   const { workspace } = await requireWorkspace();
   // The token field says whether it's needed, which depends on a GitHub sign-in.
   const githubSignIn = (await signInToken(db, workspace.id)) !== undefined;
@@ -73,13 +77,16 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
         githubSignIn={githubSignIn}
         mode={mode}
         renderers={renderers}
+        telegramAvailable={telegramAvailable}
         values={{ ...addValues(() => ""), type: values.type }}
       />
     );
   }
   // The code comes from the URL, so only a known one counts.
   const problem = addProblems.find((known) => known === param("error"));
-  if (problem === undefined) return <AddSourceForm githubSignIn={githubSignIn} mode={mode} renderers={renderers} />;
+  if (problem === undefined) {
+    return <AddSourceForm githubSignIn={githubSignIn} mode={mode} renderers={renderers} telegramAvailable={telegramAvailable} />;
+  }
   // Only the code travels in the URL, so the Source it's already watched as is looked up.
   const watching = problem === "duplicate" ? await watchedSourceName(db, workspace.id, values) : undefined;
   const shown = { ...values, status: param("status"), mode, source: watching };
@@ -89,6 +96,7 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
       githubSignIn={githubSignIn}
       mode={mode}
       renderers={renderers}
+      telegramAvailable={telegramAvailable}
       tokenDropped={param("pasted") !== ""}
       error={{ field: problemField(problem, values.type, values), message: problemMessage(problem, shown) }}
     />
@@ -97,9 +105,15 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
 
 async function SourceList() {
   const { workspace } = await requireWorkspace();
-  const sources = await listSources(server().db, workspace.id);
+  const { db, telegramAvailable, telegramBotName } = server();
+  const sources = await listSources(db, workspace.id);
+  const link = telegramAvailable
+    ? await sourceLinkInCookie(db, sources, (await cookies()).get(sourceLinkCookie)?.value)
+    : undefined;
+  const bot = link?.status === "pending" ? await telegramBotName() : undefined;
   const scheduleLabel = (cron: string | null) => schedules.find((preset) => preset.cron === cron)?.label;
-  // RSS and website Sources watch a URL, a GitHub Source a repo's releases or issues, or a search.
+  // RSS and website Sources watch a URL, a GitHub Source a repo's releases or issues, or a search. An
+  // inbox and a Telegram chat have none.
   const urlOf = ({ config }: (typeof sources)[number]) => {
     if ("url" in config) return config.url;
     if (!("kind" in config)) return null;
@@ -121,6 +135,13 @@ async function SourceList() {
   };
 
   return (
+    <>
+    {link?.status === "pending" ? <TelegramLinkPanel link={link} bot={bot} /> : null}
+    {link?.status === "linked" ? (
+      <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+        The bot is in the chat. {link.name} captures each message posted there from now on.
+      </Notice>
+    ) : null}
     <section aria-labelledby="watched" className="flex flex-col gap-3">
         <h2 id="watched" className="text-title">
           Watching <span className="tabular-nums">{sources.length}</span>{" "}
@@ -128,8 +149,8 @@ async function SourceList() {
         </h2>
         {sources.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            None yet. Add a feed, a page, a GitHub repo, a GitHub search or a webhook inbox above, and every Item it captures shows up
-            in the Feed.
+            None yet. Add a feed, a page, a GitHub repo, a GitHub search, a webhook inbox or a Telegram chat above, and every
+            Item it captures shows up in the Feed.
           </p>
         ) : (
           <ul className="divide-y rounded-lg border">
@@ -137,6 +158,11 @@ async function SourceList() {
               <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex min-w-0 flex-col gap-1">
                   <h3 className="text-title break-words">{row.name}</h3>
+                  {row.type === "telegram" ? (
+                    <p className="text-sm text-muted-foreground">
+                      Telegram · <TelegramState config={row.config} available={telegramAvailable} />
+                    </p>
+                  ) : null}
                   {row.type === "webhook" ? (
                     <p className="text-sm text-muted-foreground">
                       Webhook inbox ·{" "}
@@ -145,7 +171,8 @@ async function SourceList() {
                         <span className="sr-only"> for {row.name}</span>
                       </Link>
                     </p>
-                  ) : (
+                  ) : null}
+                  {urlOf(row) === null ? null : (
                     <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{urlOf(row)}</p>
                   )}
                   {"region" in row.config ? (
@@ -169,7 +196,7 @@ async function SourceList() {
                     <p className="flex items-start gap-2 text-sm text-alarm">
                       <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
                       <span className="min-w-0 break-words">
-                        Last poll failed
+                        {row.type === "telegram" ? "Lost access" : "Last poll failed"}
                         {row.lastErrorAt === null ? null : (
                           <>
                             {" "}
@@ -181,12 +208,90 @@ async function SourceList() {
                     </p>
                   )}
                 </div>
-                <RemoveSource id={row.id} name={row.name} />
+                <div className="flex shrink-0 flex-wrap items-start gap-2">
+                  {telegramAvailable &&
+                  row.type === "telegram" &&
+                  link?.id !== row.id &&
+                  (!("chatId" in row.config) || row.health === "failing") ? (
+                    <form action={newSourceLinkAction.bind(null, row.id)}>
+                      <SubmitButton variant="outline" pendingLabel="Getting a link…">
+                        Get a new link<span className="sr-only"> for {row.name}</span>
+                      </SubmitButton>
+                    </form>
+                  ) : null}
+                  <RemoveSource id={row.id} name={row.name} />
+                </div>
               </li>
             ))}
           </ul>
         )}
       </section>
+    </>
+  );
+}
+
+/** A Telegram Source's chat, or why it has none, with a caution lamp as on the Destinations screen. */
+function TelegramState({ config, available }: { config: object; available: boolean }) {
+  if (available && "title" in config && typeof config.title === "string") return config.title;
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-caution" />
+      {available ? "Waiting for the bot" : "Unavailable: this install has no TELEGRAM_BOT_TOKEN"}
+    </span>
+  );
+}
+
+/** How to bring the bot into a chat. It works without JavaScript, and the text box copies from a keyboard. */
+function TelegramLinkPanel({
+  link: { name, code, expiresAt },
+  bot,
+}: {
+  link: { name: string; code: string; expiresAt: Date };
+  bot: string | undefined;
+}) {
+  return (
+    <section aria-labelledby="telegram-link" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
+      <h2 id="telegram-link" className="text-title">
+        Bring the bot into a chat for {name}
+      </h2>
+      {bot === undefined ? (
+        <Notice role="alert" className="text-sm text-alarm">
+          Watchdog couldn&apos;t reach Telegram to get the bot&apos;s name, so the link isn&apos;t ready. Reload this page
+          in a moment.
+        </Notice>
+      ) : (
+        <>
+          {/* Keyed by the code, so a new link is announced even though the rest of the page stays. */}
+          <Notice key={code} role="status" className="text-sm">
+            The code in this link and command works once and expires at <Timestamp at={expiresAt} className="whitespace-nowrap" />.
+          </Notice>
+          <p className="text-sm">
+            For a group,{" "}
+            <a href={`https://t.me/${bot}?startgroup=${code}`} target="_blank" rel="noreferrer" className={textLink}>
+              choose it in Telegram
+            </a>
+            . The bot joins it and starts watching.
+          </p>
+          <div className="flex flex-col gap-1 text-sm">
+            <label htmlFor="telegram-command">For a channel, make @{bot} an admin and post this there:</label>
+            {/* @bot in the command, because a bot in a group is only sure to get commands addressed to it. */}
+            <textarea
+              id="telegram-command"
+              readOnly
+              rows={2}
+              value={`/start@${bot} ${code}`}
+              className={`${textBox} ${dataBox} resize-none py-1.5 field-sizing-content`}
+            />
+          </div>
+          <p className="text-sm text-muted-foreground">
+            <Link href="/sources" prefetch={false} className={textLink}>
+              Reload this page
+            </Link>{" "}
+            after the bot replies. No reply within a minute? Get a new link, which replaces this one, and try again.
+          </p>
+        </>
+      )}
+    </section>
   );
 }
 

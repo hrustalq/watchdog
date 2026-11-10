@@ -9,6 +9,7 @@ import {
   loadConfig,
   runBot,
   sendEmailCapNotice,
+  telegramIntake,
 } from "@watchdog/core";
 // Apart from the main entry, which web imports too, so only the worker loads playwright-core.
 import { createChromiumRenderer, createObscuraRenderer } from "@watchdog/core/render";
@@ -81,6 +82,7 @@ const stopTelegramBot =
             botToken,
             fetch: egressFetch,
             linkChat: (code, chat) => linkChat(db, config.encryptionKey, code, chat),
+            intake: telegramIntake(db, { enqueueItems: itemEnqueuer(boss) }),
             pingDatabase: () => db.$client.query("select 1"),
           },
           signal,
