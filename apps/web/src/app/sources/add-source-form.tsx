@@ -1,7 +1,7 @@
 import type { ComponentProps, ReactNode } from "react";
 import { dataBox, field, fieldError, label, textBox } from "@/components/field-classes";
 import { type Config, maxRegionLength } from "@watchdog/core";
-import { type AddType, type AddValues, type Renderers, schedules } from "@/lib/sources";
+import { type AddType, type AddValues, type mappingFields, type Renderers, schedules } from "@/lib/sources";
 import { cn } from "@/lib/utils";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
@@ -13,6 +13,7 @@ const types: { value: AddType; title: string }[] = [
   { value: "github-releases", title: "GitHub releases" },
   { value: "github-issues", title: "GitHub issues" },
   { value: "github-mentions", title: "GitHub mentions" },
+  { value: "webhook", title: "Webhook inbox" },
 ];
 
 const renders: { value: AddValues["render"]; title: string }[] = [
@@ -21,7 +22,17 @@ const renders: { value: AddValues["render"]; title: string }[] = [
   { value: "chromium", title: "Rendered in Chromium" },
 ];
 
-type FieldName = "url" | "region" | "ignore" | "render" | "repo" | "term" | "within" | "token" | "schedule";
+type FieldName =
+  | "url"
+  | "region"
+  | "ignore"
+  | "render"
+  | "repo"
+  | "term"
+  | "within"
+  | "token"
+  | "schedule"
+  | (typeof mappingFields)[number];
 
 /**
  * A choice in a row of them, its radio hidden. Forced colors drop the fill, which would leave the
@@ -36,11 +47,14 @@ const choice =
 const shownFor = {
   // Shown unless another type is checked, so RSS still works in a browser without :has(). A website
   // uses it too.
-  url: "flex [form:has(#type-github-releases:checked)_&]:hidden [form:has(#type-github-issues:checked)_&]:hidden [form:has(#type-github-mentions:checked)_&]:hidden",
+  url: "flex [form:has(#type-github-releases:checked)_&]:hidden [form:has(#type-github-issues:checked)_&]:hidden [form:has(#type-github-mentions:checked)_&]:hidden [form:has(#type-webhook:checked)_&]:hidden",
   repo: "[form:has(#type-github-releases:checked)_&]:flex [form:has(#type-github-issues:checked)_&]:flex",
   search: "[form:has(#type-github-mentions:checked)_&]:flex",
   website: "[form:has(#type-website:checked)_&]:flex",
   token: "[form:has(#type-github-issues:checked)_&]:flex [form:has(#type-github-mentions:checked)_&]:flex",
+  webhook: "[form:has(#type-webhook:checked)_&]:flex",
+  // An inbox is pushed to, so it has no schedule.
+  schedule: "flex [form:has(#type-webhook:checked)_&]:hidden",
 };
 
 const empty: AddValues = {
@@ -53,12 +67,29 @@ const empty: AddValues = {
   repo: "",
   term: "",
   within: "",
+  mapTitle: "",
+  mapBody: "",
+  mapUrl: "",
+  mapExternalId: "",
   name: "",
   schedule: "",
 };
 
+/** The inbox mapping's fields, each a JSONPath into the payload. */
+const mappings: { id: (typeof mappingFields)[number]; label: string; placeholder: string; help: string }[] = [
+  { id: "mapTitle", label: "Title", placeholder: "$.alert.title", help: "Without it, the title is “Webhook to” and the Source's name." },
+  { id: "mapBody", label: "Body", placeholder: "$.alert.message", help: "Without it, the body is the whole JSON." },
+  { id: "mapUrl", label: "URL", placeholder: "$.alert.url", help: "An http or https link the Item opens." },
+  {
+    id: "mapExternalId",
+    label: "External ID",
+    placeholder: "$.alert.id",
+    help: "What makes two requests the same Item. Without it, the same body sent twice is one Item.",
+  },
+];
+
 /**
- * Adds an RSS feed, a website, a GitHub repo's releases or issues, or a GitHub search. The server
+ * Adds an RSS feed, a website, a GitHub repo's releases or issues, a GitHub search, or a webhook inbox. The server
  * checks a feed or releases before saving it, and a problem comes back on the field it's about, with
  * the values that were entered. A pasted token is never sent back.
  */
@@ -319,6 +350,33 @@ export function AddSourceForm({
         data-lpignore="true"
         inputClassName={dataBox}
       />
+      <fieldset className={cn("hidden flex-col gap-4", shownFor.webhook)}>
+        <legend className={cn(label, "mb-1")}>
+          Mapping <span className="font-normal text-muted-foreground">(optional)</span>
+        </legend>
+        <p className="-mt-2 text-xs text-muted-foreground">
+          JSONPaths that pick the Item&apos;s fields out of each request&apos;s JSON. Each takes the first value its
+          path finds. The whole JSON is kept on the Item either way, for Rules to read.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {mappings.map((mapping) => (
+            <TextField
+              key={mapping.id}
+              id={mapping.id}
+              label={mapping.label}
+              className="flex"
+              error={errorFor(mapping.id)}
+              help={mapping.help}
+              autoCapitalize="off"
+              autoComplete="off"
+              placeholder={mapping.placeholder}
+              maxLength={1000}
+              defaultValue={values[mapping.id]}
+              inputClassName={dataBox}
+            />
+          ))}
+        </div>
+      </fieldset>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-2">
           <label htmlFor="name" className={label}>
@@ -329,12 +387,12 @@ export function AddSourceForm({
             name="name"
             type="text"
             maxLength={200}
-            placeholder="Taken from the feed, page, repo or search"
+            placeholder="Taken from what it watches"
             defaultValue={values.name}
             className={field}
           />
         </div>
-        <div className="flex flex-col gap-2">
+        <div className={cn("flex-col gap-2", shownFor.schedule)}>
           <label htmlFor="schedule" className={label}>
             Schedule
           </label>

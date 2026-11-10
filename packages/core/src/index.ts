@@ -29,11 +29,14 @@ export {
   type PollSourceDeps,
 } from "./pipeline/capture.ts";
 export { runExtractorRuleByHand } from "./pipeline/manual-run.ts";
+export { itemEnqueuer, processItemQueue } from "./pipeline/queue.ts";
 export { processItem, type ProcessItemDeps } from "./pipeline/process-item.ts";
 export { githubToken, signInToken } from "./sources/github/client.ts";
 export { parseWithin } from "./sources/github/mentions.ts";
 export { fetchReleases, MissingRepoError, parseRepo, releasesFeedUrl } from "./sources/github/releases.ts";
 export type { ItemDraft } from "./sources/item.ts";
+export { mappingError, webhookDraft, type WebhookMapping } from "./sources/webhook/draft.ts";
+export { webhookConfig } from "./sources/webhook/source-type.ts";
 export {
   FeedHttpError,
   fetchFeed,

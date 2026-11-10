@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { pollSource } from "@watchdog/core";
+import { itemEnqueuer, pollSource, processItemQueue } from "@watchdog/core";
 import {
   action,
   classifier,
@@ -25,7 +25,6 @@ import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { PgBoss } from "pg-boss";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { deliverQueue, deliveryEnqueuer } from "./delivery.ts";
-import { itemEnqueuer, processItemQueue } from "./pipeline.ts";
 import { readyFile } from "./ready.ts";
 import { botQueue } from "./telegram.ts";
 

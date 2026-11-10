@@ -1,4 +1,4 @@
-import { pollSource } from "@watchdog/core";
+import { itemEnqueuer, pollSource, processItemQueue } from "@watchdog/core";
 import { fakeLlm } from "@watchdog/core/testing";
 import {
   action,
@@ -24,7 +24,7 @@ import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { PgBoss } from "pg-boss";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createDeliveryQueue, deliverQueue } from "./delivery.ts";
-import { createPipelineQueue, itemEnqueuer, processItemQueue, startPipeline } from "./pipeline.ts";
+import { createPipelineQueue, startPipeline } from "./pipeline.ts";
 
 /** The value, which the test expects to be there. */
 function present<T>(value: T | undefined): T {

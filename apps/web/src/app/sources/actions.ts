@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { requireWorkspace, server } from "@/lib/server";
+import { replaceInboxToken } from "@/lib/inbox";
 import { addFormSource, addValues, removeSource } from "@/lib/sources";
 
 // Both actions end in a redirect. Without JavaScript that's a 303 to a page the browser renders;
@@ -25,6 +26,8 @@ export async function addSource(formData: FormData) {
   const token = text(formData, "token");
   const { db, fetch, mode, encryptionKey, renderers } = server();
   const result = await addFormSource(db, { fetch, mode, encryptionKey, renderers }, workspace.id, { ...values, token });
+  // An inbox's page shows its URL, once. The id in the URL is all it carries.
+  if ("source" in result && values.type === "webhook") redirect(`/sources/${result.source.id}/inbox`);
   // The type stays chosen, so a second repo or feed can follow without choosing it again.
   if ("source" in result) redirect(`/sources?${new URLSearchParams({ added: "1", type: values.type })}`);
   const back = new URLSearchParams({ error: result.problem, ...values });
@@ -40,4 +43,13 @@ export async function removeSourceAction(sourceId: unknown) {
   const { workspace } = await requireWorkspace();
   if (typeof sourceId === "string") await removeSource(server().db, workspace.id, sourceId);
   redirect("/sources");
+}
+
+/** Gives an inbox a new token, which its page then shows once. The old URL stops working at once. */
+export async function replaceInboxTokenAction(sourceId: unknown) {
+  const { workspace } = await requireWorkspace();
+  const { db, encryptionKey } = server();
+  const id = typeof sourceId === "string" ? sourceId : "";
+  if (!(await replaceInboxToken(db, encryptionKey, workspace.id, id))) redirect("/sources");
+  redirect(`/sources/${id}/inbox`);
 }

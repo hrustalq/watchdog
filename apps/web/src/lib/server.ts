@@ -8,6 +8,7 @@ import {
   loadConfig,
 } from "@watchdog/core";
 import { createDb } from "@watchdog/db";
+import { PgBoss } from "pg-boss";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { createAuth, enabledProviders } from "./auth.ts";
@@ -29,6 +30,7 @@ function start() {
   });
   const fetch = createEgressFetch(config);
   let botName: string | undefined;
+  let boss: Promise<PgBoss> | undefined;
   return {
     db,
     auth,
@@ -77,6 +79,28 @@ function start() {
       }
       return botName;
     },
+    /**
+     * A pg-boss client that only sends, for the webhook inbox's process-item jobs. It runs no jobs,
+     * no maintenance and no migrations, which are the worker's. Started on first use; a failed start
+     * is tried again on the next.
+     */
+    boss: () =>
+      (boss ??= (async () => {
+        const client = new PgBoss({
+          connectionString: config.databaseUrl,
+          max: 2,
+          supervise: false,
+          schedule: false,
+          migrate: false,
+        });
+        client.on("error", (error) => {
+          process.stderr.write(`pg-boss error: ${error.message}\n`);
+        });
+        return client.start();
+      })().catch((error: unknown) => {
+        boss = undefined;
+        throw error;
+      })),
     /** The OAuth providers the sign-in page offers. Names only: secrets never leave the server. */
     providers: enabledProviders(config.oauth),
   };

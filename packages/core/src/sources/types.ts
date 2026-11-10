@@ -9,6 +9,7 @@ import type { Deferred, GithubSecrets } from "./github/client.ts";
 import { github } from "./github/source-type.ts";
 import { rss } from "./rss/source-type.ts";
 import type { FetchFeedDeps } from "./rss/fetch-feed.ts";
+import { webhook } from "./webhook/source-type.ts";
 import { website } from "./website/source-type.ts";
 
 /** A first capture's limits: the newest dated drafts within `window` ms, at most `max` of them. */
@@ -64,4 +65,4 @@ export interface SourceTypeImpl {
 }
 
 /** The types implemented so far. A Source of any other type polls nothing and takes no Backfill. */
-export const sourceTypes: Partial<Record<SourceType, SourceTypeImpl>> = { rss, github, website };
+export const sourceTypes: Partial<Record<SourceType, SourceTypeImpl>> = { rss, github, website, webhook };
