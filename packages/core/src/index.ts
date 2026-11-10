@@ -35,7 +35,7 @@ export { githubToken, signInToken } from "./sources/github/client.ts";
 export { parseWithin } from "./sources/github/mentions.ts";
 export { fetchReleases, MissingRepoError, parseRepo, releasesFeedUrl } from "./sources/github/releases.ts";
 export type { ItemDraft } from "./sources/item.ts";
-export { mappingError, webhookDraft, type WebhookMapping } from "./sources/webhook/draft.ts";
+export { cleanPayload, mappingError, webhookDraft, type WebhookMapping } from "./sources/webhook/draft.ts";
 export { webhookConfig } from "./sources/webhook/source-type.ts";
 export {
   FeedHttpError,

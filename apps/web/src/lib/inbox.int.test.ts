@@ -135,9 +135,19 @@ describe("webhook inbox", () => {
     expect((await post(token, stream, "application/json", streamed)).status).toBe(413);
   });
 
-  it("answers 400 to a body that isn't valid JSON", async () => {
+  it("answers 400 to a body that isn't valid JSON, or nests too deeply", async () => {
     const { token } = await newInbox();
     expect((await post(token, "{nope")).status).toBe(400);
+    expect((await post(token, "[".repeat(400_000) + "]".repeat(400_000))).status).toBe(400);
+  });
+
+  it("captures a body with a NUL in a key or a lone surrogate, which jsonb refuses as sent", async () => {
+    const { token } = await newInbox();
+    const response = await post(token, String.raw`{"a\u0000":1,"t":"\ud800"}`);
+    expect(response.status).toBe(202);
+    expect(await db.query.item.findFirst({ where: eq(item.id, await idOf(response)) })).toMatchObject({
+      raw: { a: 1, t: "�" },
+    });
   });
 
   it("answers 429 with Retry-After past 60 requests a minute, and takes requests again the next minute", async () => {

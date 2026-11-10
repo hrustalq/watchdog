@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { maxBodyBytes } from "../item.ts";
-import { mappingError, webhookDraft } from "./draft.ts";
+import { cleanPayload, mappingError, webhookDraft } from "./draft.ts";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -67,6 +67,35 @@ describe("webhookDraft", () => {
     const payload = { text: "é".repeat(maxBodyBytes) };
     const draft = webhookDraft(payload, bytes(JSON.stringify(payload)), "Hook", { body: "$.text" });
     expect(new TextEncoder().encode(draft.body).length).toBeLessThanOrEqual(maxBodyBytes);
+  });
+});
+
+describe("webhookDraft's limits", () => {
+  it("treats a blank mapped value as no value", () => {
+    const payload = { id: " ", title: "" };
+    const body = JSON.stringify(payload);
+    const draft = webhookDraft(payload, bytes(body), "Hook", { externalId: "$.id", title: "$.title" });
+    expect(draft.externalId).toBe(sha256(body));
+    expect(draft.title).toBe("Webhook to Hook");
+  });
+
+  it("hashes a mapped external ID too long for the index, and caps the title", () => {
+    const long = "x".repeat(5000);
+    const payload = { id: long, title: long };
+    const draft = webhookDraft(payload, bytes(JSON.stringify(payload)), "Hook", { externalId: "$.id", title: "$.title" });
+    expect(draft.externalId).toBe(sha256(long));
+    expect(draft.title?.length).toBeLessThanOrEqual(500);
+  });
+});
+
+describe("cleanPayload", () => {
+  it("drops NUL and lone surrogates from keys and strings, which Postgres jsonb refuses", () => {
+    expect(cleanPayload({ "a\0": "b\0c", list: ["\ud800x"] })).toEqual({ a: "bc", list: ["\ufffdx"] });
+  });
+
+  it("refuses JSON nested more deeply than a Rule's JSONPath or Postgres would walk", () => {
+    expect(cleanPayload(JSON.parse("[".repeat(500_000) + "]".repeat(500_000)))).toBeUndefined();
+    expect(cleanPayload(JSON.parse("[".repeat(64) + "]".repeat(64)))).toBeDefined();
   });
 });
 

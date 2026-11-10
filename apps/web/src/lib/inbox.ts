@@ -2,7 +2,7 @@
 // is shown and replaced (docs: Actions and delivery, "Webhook inbox (intake)"; Security and privacy,
 // "Source credentials").
 import { createHash, randomBytes } from "node:crypto";
-import { captureItems, type CaptureDeps, decryptSecret, encryptSecret, webhookConfig, webhookDraft } from "@watchdog/core";
+import { captureItems, type CaptureDeps, cleanPayload, decryptSecret, encryptSecret, webhookConfig, webhookDraft } from "@watchdog/core";
 import { and, type Db, eq, isNotNull, item, source, sql } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
@@ -68,21 +68,23 @@ export async function receiveInbox(
   }
   const body = await readCapped(request);
   if (body === undefined) return answer(413, { error: "The body is over 1 MB" });
-  let payload: unknown;
+  let parsed: unknown;
   try {
-    payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(body));
   } catch {
     return answer(400, { error: "The body isn't valid JSON" });
   }
+  const payload = cleanPayload(parsed);
+  if (payload === undefined) return answer(400, { error: "The JSON nests more than 100 levels deep" });
 
   const mapping = webhookConfig.safeParse(inbox.config).data?.mapping;
   const draft = webhookDraft(payload, body, inbox.name, mapping);
   const { captured } = await captureItems(db, inbox.id, [draft], { at, polled: false }, deps);
-  // Capture strips NUL, which Postgres text refuses, from the external ID it stores.
+  // The payload is clean, so the external ID is stored as it is.
   const [found] = await db
     .select({ id: item.id })
     .from(item)
-    .where(and(eq(item.sourceId, inbox.id), eq(item.externalId, draft.externalId.replaceAll("\0", ""))));
+    .where(and(eq(item.sourceId, inbox.id), eq(item.externalId, draft.externalId)));
   // Only when the Source was removed while the request ran.
   if (found === undefined) return answer(401, { error: "Unknown inbox" });
   return answer(captured > 0 ? 202 : 200, { id: found.id });

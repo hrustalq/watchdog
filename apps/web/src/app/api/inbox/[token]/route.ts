@@ -7,5 +7,6 @@ import { server } from "@/lib/server";
 export async function POST(request: Request, { params }: RouteContext<"/api/inbox/[token]">) {
   const { token } = await params;
   const { db, boss } = server();
-  return receiveInbox(db, { enqueueItems: itemEnqueuer(await boss()) }, token, request);
+  // pg-boss starts only when an Item needs its job, so a failed start can't turn a 401 into a 500.
+  return receiveInbox(db, { enqueueItems: async (tx, ids) => itemEnqueuer(await boss())(tx, ids) }, token, request);
 }
