@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { createEgressFetch, decryptSecret, linkChat, loadConfig, pollSource } from "@watchdog/core";
 import {
   account,
+  and,
   closeDb,
   createDb,
   type Db,
@@ -12,6 +13,7 @@ import {
   lte,
   migrate,
   source,
+  sql,
   user,
   workspace,
 } from "@watchdog/db";
@@ -27,6 +29,8 @@ import {
   addValues,
   addWebsiteSource,
   type AddProblem,
+  checkGapMinutes,
+  checkSourceNow,
   listSources,
   newSourceLink,
   problemField,
@@ -245,6 +249,68 @@ describe("Sources", () => {
     const listed = (await listSources(db, ours)).map((row) => row.id);
     expect(listed).toContain(mine.id);
     expect(listed).not.toContain(other.id);
+  });
+
+  it("lists a Source's Health, its last success and whether a poll is due", async () => {
+    const { id } = await added(ours, { url: newFeed(), name: "Flaky" });
+    const lastSuccessAt = new Date("2026-11-09T08:00:00Z");
+    const later = new Date(Date.now() + 3_600_000);
+    await db.update(source).set({ health: "failing", lastSuccessAt, nextPollAt: later }).where(eq(source.id, id));
+
+    const listed = (await listSources(db, ours)).find((row) => row.id === id);
+    expect(listed).toMatchObject({ health: "failing", lastSuccessAt, due: false });
+  });
+
+  it("makes a Schedule Source due on Check now, so the worker's next tick polls it", async () => {
+    const { id } = await added(ours, { url: newFeed(), name: "Checked" });
+    // A failing Source waits an hour between polls, and Check now doesn't.
+    const later = new Date(Date.now() + 3_600_000);
+    await db.update(source).set({ health: "failing", nextPollAt: later }).where(eq(source.id, id));
+
+    expect(await checkSourceNow(db, ours, id)).toBe(true);
+
+    expect(await db.select({ id: source.id }).from(source).where(and(eq(source.id, id), lte(source.nextPollAt, sql`now()`)))).toHaveLength(1);
+    expect((await listSources(db, ours)).find((row) => row.id === id)?.due).toBe(true);
+  });
+
+  it("on hosted, takes Check now only once the shortest schedule has passed since the last poll", async () => {
+    const { id } = await added(ours, { url: newFeed(), name: "Hosted" });
+    const later = new Date(Date.now() + 3_600_000);
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+    const gap = checkGapMinutes("hosted");
+    expect(gap).toBe(15);
+    expect(checkGapMinutes("self-hosted")).toBe(0);
+    const listed = async () => (await listSources(db, ours, gap)).find((row) => row.id === id);
+    // Never polled, so there is no poll to wait after.
+    expect((await listed())?.checkable).toBe(true);
+
+    await db.update(source).set({ nextPollAt: later, lastErrorAt: minutesAgo(5), lastSuccessAt: minutesAgo(60) }).where(eq(source.id, id));
+    expect((await listed())?.checkable).toBe(false);
+    expect(await checkSourceNow(db, ours, id, gap)).toBe(false);
+    expect((await listed())?.due).toBe(false);
+    // Self-hosted has no gap.
+    expect((await listSources(db, ours)).find((row) => row.id === id)?.checkable).toBe(true);
+
+    await db.update(source).set({ lastErrorAt: minutesAgo(16) }).where(eq(source.id, id));
+    expect((await listed())?.checkable).toBe(true);
+    expect(await checkSourceNow(db, ours, id, gap)).toBe(true);
+    expect((await listed())?.due).toBe(true);
+  });
+
+  it("checks nothing for another Workspace's Source, an id that isn't one, or a Source that isn't polled", async () => {
+    const other = await added(theirs, { url: newFeed(), name: "Not ours" });
+    const later = new Date(Date.now() + 3_600_000);
+    await db.update(source).set({ nextPollAt: later }).where(eq(source.id, other.id));
+    const { source: telegram } = await addTelegramSource(db, ours, { name: "Never polled" });
+
+    expect(await checkSourceNow(db, ours, other.id)).toBe(false);
+    expect(await checkSourceNow(db, ours, "not-an-id")).toBe(false);
+    expect(await checkSourceNow(db, ours, telegram.id)).toBe(false);
+
+    const [theirsAfter] = await db.select().from(source).where(eq(source.id, other.id));
+    expect(theirsAfter?.nextPollAt).toEqual(later);
+    const [telegramAfter] = await db.select().from(source).where(eq(source.id, telegram.id));
+    expect(telegramAfter?.nextPollAt).toBeNull();
   });
 
   it("removes a Source with its Items and their Logs", async () => {

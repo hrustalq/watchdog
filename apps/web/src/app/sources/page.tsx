@@ -5,11 +5,13 @@ import { Suspense } from "react";
 import { releasesFeedUrl, sessionOf, signInToken } from "@watchdog/core";
 import { buttonVariants } from "@/components/ui/button";
 import { dataBox, textBox, textLink } from "@/components/field-classes";
+import { HealthChip } from "@/components/health";
 import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
 import {
   addProblems,
   addValues,
+  checkGapMinutes,
   listSources,
   problemField,
   problemMessage,
@@ -20,8 +22,9 @@ import {
 } from "@/lib/sources";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
-import { newSourceLinkAction, removeSourceAction } from "./actions";
+import { checkSourceNowAction, newSourceLinkAction, removeSourceAction } from "./actions";
 import { AddSourceForm } from "./add-source-form";
+import { DueRefresher } from "./due-refresher";
 
 export const metadata: Metadata = { title: "Sources · Watchdog" };
 
@@ -106,9 +109,9 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
 
 async function SourceList() {
   const { workspace } = await requireWorkspace();
-  const { db, telegramAvailable, telegramBotName, telegramSessionAvailable } = server();
+  const { db, mode, telegramAvailable, telegramBotName, telegramSessionAvailable } = server();
   const [sources, session] = await Promise.all([
-    listSources(db, workspace.id),
+    listSources(db, workspace.id, checkGapMinutes(mode)),
     telegramSessionAvailable ? sessionOf(db, workspace.id) : undefined,
   ]);
   const link = telegramAvailable
@@ -162,7 +165,11 @@ async function SourceList() {
             {sources.map((row) => (
               <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex min-w-0 flex-col gap-1">
-                  <h3 className="text-title break-words">{row.name}</h3>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <h3 className="text-title min-w-0 break-words">{row.name}</h3>
+                    {/* A bot Source with no chat watches nothing yet, so it has no Health to read. */}
+                    {row.type === "telegram" && !("chatId" in row.config) ? null : <HealthChip health={row.health} />}
+                  </div>
                   {row.type === "telegram" ? (
                     <p className="text-sm text-muted-foreground">
                       Telegram · <TelegramState config={row.config} available={telegramAvailable} />
@@ -188,32 +195,44 @@ async function SourceList() {
                   {row.schedule === null ? null : <p className="text-sm text-muted-foreground">
                     {scheduleLabel(row.schedule) ?? <span className="font-mono">{row.schedule}</span>}
                     {" · "}
-                    {row.lastPolledAt === null ? (
-                      // A poll that failed doesn't set lastPolledAt.
-                      `${row.lastError === null ? "Not polled" : "No successful poll"} yet`
-                    ) : (
-                      <>
-                        Last polled <Timestamp at={row.lastPolledAt} />
-                      </>
-                    )}
+                    {lastSuccess(row) ?? `${row.lastError === null ? "Not polled" : "No successful poll"} yet`}
                   </p>}
+                  {row.schedule !== null || row.lastSuccessAt === null ? null : (
+                    <p className="text-sm text-muted-foreground">{lastSuccess(row)}</p>
+                  )}
                   {row.lastError === null ? null : (
-                    <p className="flex items-start gap-2 text-sm text-alarm">
-                      <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
-                      <span className="min-w-0 break-words">
-                        {row.type === "telegram" ? "Lost access" : "Last poll failed"}
-                        {row.lastErrorAt === null ? null : (
-                          <>
-                            {" "}
-                            at <Timestamp at={row.lastErrorAt} />
-                          </>
-                        )}
-                        : {withoutUrl(row, row.lastError)}
-                      </span>
+                    // The chip has the lamp. One failed poll isn't an alarm, so the error is red only once the Source is failing.
+                    <p className={`text-sm break-words ${errorTone[row.health]}`}>
+                      {row.type === "telegram" ? "Lost access" : "Last poll failed"}
+                      {row.lastErrorAt === null ? null : (
+                        <>
+                          {" "}
+                          at <Timestamp at={row.lastErrorAt} className="whitespace-nowrap" />
+                        </>
+                      )}
+                      : {withoutUrl(row, row.lastError)}
                     </p>
                   )}
+                  {row.due ? (
+                    <p role="status" className="text-sm text-muted-foreground">
+                      A poll is due, and the worker usually runs it within a minute.{" "}
+                      <Link href="/sources" prefetch={false} className={textLink}>
+                        Reload this page
+                        <span className="sr-only"> to see {row.name}&apos;s poll</span>
+                      </Link>{" "}
+                      to see how it went.
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-start gap-2">
+                  {/* On hosted, not until the shortest schedule has passed since the last poll. */}
+                  {row.schedule === null || !row.checkable ? null : (
+                    <form action={checkSourceNowAction.bind(null, row.id)}>
+                      <SubmitButton variant="outline" pendingLabel="Asking…">
+                        Check now<span className="sr-only"> for {row.name}</span>
+                      </SubmitButton>
+                    </form>
+                  )}
                   {telegramAvailable &&
                   row.type === "telegram" &&
                   !isSession(row.config) &&
@@ -231,10 +250,20 @@ async function SourceList() {
             ))}
           </ul>
         )}
+        <DueRefresher due={sources.some((row) => row.due)} />
       </section>
     </>
   );
 }
+
+const lastSuccess = ({ lastSuccessAt }: { lastSuccessAt: Date | null }) =>
+  lastSuccessAt === null ? null : (
+    <>
+      Last success <Timestamp at={lastSuccessAt} className="whitespace-nowrap" />
+    </>
+  );
+
+const errorTone = { ok: "text-foreground", degraded: "text-caution", failing: "text-alarm" };
 
 /** A Source that reads through the Telegram user session rather than the bot. */
 const isSession = (config: object) => "via" in config && config.via === "session";

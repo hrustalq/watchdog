@@ -85,13 +85,3 @@ export async function publishEntry(name: "first" | "second") {
 
 /** A feed the fixtures container serves, at the address a Source is added with. */
 export const fixtureFeed = (path: string) => `http://fixtures/${path}`;
-
-/**
- * Makes the Source of the fixture feed at `path` due, so the worker's tick polls it within a minute. Its
- * schedule waits at least 5 minutes between polls, and two such waits would use up most of the CI job's time.
- */
-export async function pollNow(path: string) {
-  const sql = `update source set next_poll_at = now() where config->>'url' = '${fixtureFeed(path)}'`;
-  const said = await compose("exec", "-T", "postgres", "psql", "-U", "watchdog", "-d", "watchdog", "-c", sql);
-  if (!/^UPDATE 1$/m.test(said)) throw new Error(`Not one Source has the feed ${path}: psql said ${said}`);
-}

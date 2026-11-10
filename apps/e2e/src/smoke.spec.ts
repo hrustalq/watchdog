@@ -4,7 +4,6 @@ import {
   confirmationLink,
   fixtureFeed,
   magicLink,
-  pollNow,
   publishEntry,
   sendToBot,
   setupLink,
@@ -89,6 +88,23 @@ async function addRssSource(page: Page, path: string) {
   }).toPass({ timeout: 30_000 });
   // The notice could be left over from the Source before this one, and the list can't.
   await expect(page.getByText(url, { exact: true })).toBeVisible();
+}
+
+/**
+ * On the Sources screen, asks for a poll of the fixture feed's Source with Check now, so a test doesn't
+ * wait out its schedule, and waits until the worker's tick has started it, within a minute. A click the
+ * tick answers before the page says a poll is due is clicked again, and the second poll finds nothing new.
+ */
+async function checkNow(page: Page, path: string) {
+  await page.goto(new URL("/sources", page.url()).href);
+  const row = page.getByRole("listitem").filter({ hasText: fixtureFeed(path) });
+  const due = row.getByRole("status").filter({ hasText: "A poll is due" });
+  await expect(row.getByText("Health: ok", { exact: true })).toBeAttached();
+  await expect(async () => {
+    await row.getByRole("button", { name: /^Check now/ }).click();
+    await expect(due).toBeVisible({ timeout: 5_000 });
+  }).toPass({ timeout: 30_000 });
+  await expect(due, "the worker never took the poll").toHaveCount(0, untilPolled);
 }
 
 // A new self-hosted install with no mail server, end to end: claim it with the setup link, sign in
@@ -478,8 +494,8 @@ test("a Correction changes the Rating the Agent gives a later, similar Item", as
 // The M3 demo: a high-Severity Item sends a Telegram alert. Telegram is the fake-telegram container
 // (compose.smoke.yaml), and mail goes to the worker's log, because the install has no mail server. The
 // fake model rates an Item whose title says "outage" Severity 5. Backfill Items never fire Actions, so
-// the feed's alerting entries appear after the Backfill, and the test asks for each poll rather than
-// wait out the Source's schedule. The model is the one the M2 test added, so it runs after that test, and
+// the feed's alerting entries appear after the Backfill, and the test asks for each poll with Check now rather
+// than wait out the Source's schedule. The model is the one the M2 test added, so it runs after that test, and
 // before the rate limit test below, which uses up the sign-in bucket.
 test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours hold the next one", async ({ page }) => {
   // Three polls, each waiting for the worker's tick, and the Feed's refresh after two of them.
@@ -549,7 +565,8 @@ test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours ho
 
   await test.step("a Severity 5 Item sends one Telegram alert and one mail, and its Log says so", async () => {
     await publishEntry("first");
-    await pollNow(feed);
+    await checkNow(page, feed);
+    await page.getByRole("link", { name: "Workspace" }).click();
     await expect.poll(() => botSent(alerted), { ...untilPolled, message: "no Telegram alert arrived" }).toHaveLength(1);
     await expect.poll(() => mailed(alerted), { message: "no alert mail arrived" }).toHaveLength(1);
     await openItem(alerted);
@@ -574,7 +591,7 @@ test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours ho
     await expect(page.getByRole("status").filter({ hasText: "Settings saved." })).toBeVisible();
 
     await publishEntry("second");
-    await pollNow(feed);
+    await checkNow(page, feed);
     await page.getByRole("link", { name: "Workspace" }).click();
     await openItem(held);
     await untilActionsSay(`${chat} · Held until`);
