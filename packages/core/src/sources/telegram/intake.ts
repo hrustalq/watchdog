@@ -15,11 +15,15 @@ export function telegramIntake(db: Db, deps: CaptureDeps) {
   return async ({ message, channel_post: post = message, my_chat_member: member }: BotUpdate) => {
     const at = deps.now?.() ?? new Date();
     if (post?.migrate_to_chat_id !== undefined) {
-      // The group's last message: it is a supergroup now, with a new id, so its Sources follow it.
+      // The group's last message: it is a supergroup now, with a new id, so its Sources follow it. A
+      // Workspace that already watches the supergroup keeps its old Source, so the move can't break the key.
+      const to = post.migrate_to_chat_id;
+      const watchesIt = sql`exists (select 1 from source s where s.workspace_id = ${source.workspaceId}
+        and s.type = 'telegram' and s.dedup_key = ${String(to)})`;
       await db
         .update(source)
-        .set({ config: sql`jsonb_set(${source.config}, '{chatId}', to_jsonb(${post.migrate_to_chat_id}::bigint))` })
-        .where(boundTo(post.chat.id));
+        .set({ config: sql`jsonb_set(${source.config}, '{chatId}', to_jsonb(${to}::bigint))` })
+        .where(and(boundTo(post.chat.id), sql`not ${watchesIt}`));
       return;
     }
     const draft = post && telegramDraft(post);
@@ -27,18 +31,23 @@ export function telegramIntake(db: Db, deps: CaptureDeps) {
       const bound = await db.select({ id: source.id }).from(source).where(boundTo(post.chat.id));
       for (const { id } of bound) await captureItems(db, id, [draft], { at, polled: false }, deps);
     }
-    const lost = member && lostAccess(member);
-    if (member !== undefined && lost !== undefined) {
-      await db.update(source).set({ health: "failing", lastError: lost, lastErrorAt: at }).where(boundTo(member.chat.id));
-    }
+    if (member === undefined) return;
+    const lost = lostAccess(member);
+    // The bot back in the chat, through a new link or not, is access returned.
+    await db
+      .update(source)
+      .set(lost === undefined ? { health: "ok", lastError: null, lastErrorAt: null } : { health: "failing", lastError: lost, lastErrorAt: at })
+      .where(boundTo(member.chat.id));
   };
 }
 
 /** Why the bot can't read the chat any more, or undefined while it still can. */
-function lostAccess({ chat, new_chat_member: { status } }: ChatMemberUpdate) {
+function lostAccess({ chat, new_chat_member: { status, is_member: isMember } }: ChatMemberUpdate) {
   const again = " Add it back, then bind the chat again with a new link from this Source.";
   if (status === "kicked") return `The bot was removed from this chat and banned from it.${again}`;
-  if (status === "left") return `The bot was removed from this chat, or left it.${again}`;
+  if (status === "left" || (status === "restricted" && isMember === false)) {
+    return `The bot was removed from this chat, or left it.${again}`;
+  }
   // A bot reads a channel's posts only as one of its admins.
   if (chat.type === "channel" && status !== "administrator" && status !== "creator") {
     return "The bot is no longer an admin of this channel, so it can't read the posts. Make it an admin again, then bind the channel again with a new link from this Source.";

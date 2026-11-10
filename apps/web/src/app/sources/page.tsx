@@ -263,7 +263,7 @@ function TelegramLinkPanel({
         <>
           {/* Keyed by the code, so a new link is announced even though the rest of the page stays. */}
           <Notice key={code} role="status" className="text-sm">
-            The code in these works once and expires at <Timestamp at={expiresAt} className="whitespace-nowrap" />.
+            The code in this link and command works once and expires at <Timestamp at={expiresAt} className="whitespace-nowrap" />.
           </Notice>
           <p className="text-sm">
             For a group,{" "}

@@ -275,7 +275,7 @@ describe("linking a Telegram chat", () => {
       expect((await liveLinkCode(db, code))?.sourceId).toBe(id);
     });
 
-    it("names the Source that already watches the chat, and the new one keeps waiting", async () => {
+    it("names the Source that already watches the chat, spends the code posted there, and the new one keeps waiting", async () => {
       const watching = await waitingSource("Ops chat");
       await linkChat(db, encryptionKey, await issueLinkCode(db, { sourceId: watching.id }), group("-100701"));
       const { id } = await waitingSource();
@@ -286,7 +286,8 @@ describe("linking a Telegram chat", () => {
       );
 
       expect((await readSource(id))?.config).toEqual({ via: "bot" });
-      expect(await liveLinkCode(db, code)).toBeDefined();
+      // Everyone in that chat saw the code, so it mustn't bind their own chat later.
+      expect(await liveLinkCode(db, code)).toBeUndefined();
     });
 
     it("makes a Source that lost access ok again when it is bound again", async () => {

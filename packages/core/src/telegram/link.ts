@@ -89,8 +89,9 @@ function linkDestination(db: Db, encryptionKey: Buffer, code: string, destinatio
 }
 
 /**
- * The Source watches the chat from now on, and is ok again if it had lost access. A private chat, or a
- * chat the Workspace already watches, spends nothing, so the same link still works in the right chat.
+ * The Source watches the chat from now on, and is ok again if it had lost access. A private chat spends
+ * nothing, so the same link still works in a group. A chat the Workspace already watches spends the code,
+ * because everyone there saw it.
  */
 function bindSource(db: Db, code: string, sourceId: string, chat: BotChat) {
   if (chat.type === "private") {
@@ -115,9 +116,9 @@ function bindSource(db: Db, code: string, sourceId: string, chat: BotChat) {
           ne(source.id, sourceId),
         ),
       );
-    if (watching !== undefined) return `This chat is already watched by ${watching.name} in Watchdog`;
     const spent = await tx.delete(telegramLinkCode).where(liveCode(code)).returning({ codeHash: telegramLinkCode.codeHash });
     if (spent.length === 0) return unknownCode;
+    if (watching !== undefined) return `This chat is already watched by ${watching.name} in Watchdog`;
     await tx
       .update(source)
       .set({

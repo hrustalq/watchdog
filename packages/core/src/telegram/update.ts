@@ -24,7 +24,8 @@ export type BotMessage = z.output<typeof botMessage>;
 
 const chatMember = z.looseObject({
   chat,
-  new_chat_member: z.looseObject({ status: z.string() }),
+  /** `is_member` is false for a restricted member that is no longer in the chat. */
+  new_chat_member: z.looseObject({ status: z.string(), is_member: z.boolean().optional().catch(undefined) }),
 });
 export type ChatMemberUpdate = z.output<typeof chatMember>;
 

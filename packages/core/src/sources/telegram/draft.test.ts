@@ -51,10 +51,15 @@ describe("a Telegram message as a draft", () => {
     expect(telegramDraft({ ...post, text: "Out now" })?.author).toBeNull();
   });
 
-  it("cuts the title at 200 characters", () => {
-    const draft = telegramDraft(message({ text: "x".repeat(300) }));
+  it("cuts the title at 200 characters, never inside an emoji", () => {
+    expect(telegramDraft(message({ text: "x".repeat(300) }))?.title).toHaveLength(200);
+    expect(telegramDraft(message({ text: `${"x".repeat(199)}🚀🚀` }))?.title).toBe(`${"x".repeat(199)}🚀`);
+  });
 
-    expect(draft?.title).toHaveLength(200);
+  it("keeps a message that only starts like a command", () => {
+    expect(telegramDraft(message({ text: "/r/selfhosted has a thread on this" }))?.title).toBe(
+      "/r/selfhosted has a thread on this",
+    );
   });
 
   it.each([
@@ -64,6 +69,7 @@ describe("a Telegram message as a draft", () => {
     ["a blank text", { text: "  \n " }],
     ["a command to the bot", { text: "/start@WatchdogBot abc" }],
     ["any other command", { text: "/help" }],
+    ["a command with words after it", { text: "/poll Which day?" }],
   ])("skips %s", (_name, fields) => {
     expect(telegramDraft(message(fields))).toBeUndefined();
   });

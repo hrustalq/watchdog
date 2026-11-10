@@ -3,8 +3,8 @@ import type { BotMessage } from "../../telegram/update.ts";
 import { capBody, type ItemDraft, tidyText } from "../item.ts";
 
 const maxTitle = 200;
-/** A bot command, such as `/start@bot <code>`, is for a bot, not news. */
-const command = /^\/\w/;
+/** A bot command, such as `/start@bot <code>`, is for a bot, not news. `/r/selfhosted …` isn't one. */
+const command = /^\/\w+(?:@\w+)?(?:\s|$)/;
 
 /** The draft for a message with text or a caption, or undefined for anything else. */
 export function telegramDraft(message: BotMessage): ItemDraft | undefined {
@@ -15,7 +15,8 @@ export function telegramDraft(message: BotMessage): ItemDraft | undefined {
   return {
     externalId: `${String(chat.id)}:${String(id)}`,
     url: messageUrl(chat, id),
-    title: (text.split("\n")[0] ?? "").slice(0, maxTitle),
+    // By code point, so the cut can't split an emoji.
+    title: Array.from(text.split("\n")[0] ?? "").slice(0, maxTitle).join(""),
     author: author ?? null,
     body: capBody(text),
     publishedAt: new Date(message.date * 1000),

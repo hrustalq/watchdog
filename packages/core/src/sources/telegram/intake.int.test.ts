@@ -142,10 +142,13 @@ describe("Telegram bot intake", () => {
     ["removed from the group", "supergroup", "left", /The bot was removed from this chat/],
     ["banned from the group", "supergroup", "kicked", /The bot was removed from this chat and banned/],
     ["no longer an admin of the channel", "channel", "member", /The bot is no longer an admin of this channel/],
+    ["restricted and out of the group", "supergroup", "restricted", /The bot was removed from this chat/],
   ])("makes the Source failing with a readable last error when the bot is %s", async (_name, type, status, error) => {
     const { watching, chat } = await boundSource(undefined, { ...group(), type });
 
-    await botReads({ my_chat_member: { chat, from: { id: 1 }, date: 1, new_chat_member: { status, user: { id: 2 } } } });
+    await botReads({
+      my_chat_member: { chat, from: { id: 1 }, date: 1, new_chat_member: { status, is_member: false, user: { id: 2 } } },
+    });
 
     const failing = await readSource(watching.id);
     expect(failing?.health).toBe("failing");
@@ -160,6 +163,29 @@ describe("Telegram bot intake", () => {
     await botReads({ my_chat_member: { chat, from: { id: 1 }, date: 1, new_chat_member: { status: "administrator" } } });
 
     expect(await readSource(watching.id)).toMatchObject({ health: "ok", lastError: null });
+  });
+
+  it("makes the Source ok again when the bot is back in the chat", async () => {
+    const { watching, chat } = await boundSource();
+    const status = (to: string) => ({ my_chat_member: { chat, from: { id: 1 }, date: 1, new_chat_member: { status: to } } });
+
+    await botReads(status("left"), status("member"));
+
+    expect(await readSource(watching.id)).toMatchObject({ health: "ok", lastError: null, lastErrorAt: null });
+  });
+
+  it("moves the other Workspaces' Sources when one already watches the supergroup", async () => {
+    const basic = { id: (nextChat -= 1), type: "group", title: "Team" };
+    const supergroup = { id: (nextChat -= 1), type: "supergroup", title: "Team" };
+    const workspaceId = await newWorkspace();
+    const stays = await boundSource(workspaceId, basic);
+    await boundSource(workspaceId, supergroup);
+    const moves = await boundSource(undefined, basic);
+
+    await botReads(message(basic, { migrate_to_chat_id: supergroup.id }));
+
+    expect((await readSource(moves.watching.id))?.config).toMatchObject({ chatId: supergroup.id });
+    expect((await readSource(stays.watching.id))?.config).toMatchObject({ chatId: basic.id });
   });
 
   it("moves the Source to the new chat when its group becomes a supergroup", async () => {
