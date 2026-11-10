@@ -31,7 +31,6 @@ const refusals = {
   codeWrong: "That code is wrong. Check it in Telegram and enter it again.",
   codeExpired: "That code expired. Start again, and Telegram sends a new one.",
   passwordWrong: "That password is wrong. Enter it again.",
-  alreadySignedIn: "This Workspace already has a Telegram session.",
   failed: "Telegram didn't finish the login. Start again in a few minutes.",
 };
 
@@ -143,30 +142,12 @@ async function claim(db: Db, loginId: string) {
 }
 
 /** Stores the session encrypted as the Workspace's one, and ends the login. */
-async function finish(
-  db: Db,
-  deps: SessionDeps,
-  client: ITelegramClient,
-  login: typeof telegramLogin.$inferSelect,
-  user: User,
-) {
+async function finish(db: Db, deps: SessionDeps, client: ITelegramClient, login: typeof telegramLogin.$inferSelect, user: User) {
   const secretCiphertext = encryptSecret(await client.exportSession(), deps.encryptionKey);
-  const stored = await db.transaction(async (tx) => {
-    const [row] = await tx
-      .insert(telegramSession)
-      .values({ workspaceId: login.workspaceId, account: accountName(user), secretCiphertext })
-      .onConflictDoNothing()
-      .returning({ id: telegramSession.id });
-    if (row !== undefined) await tx.delete(telegramLogin).where(eq(telegramLogin.id, login.id));
-    return row !== undefined;
+  await db.transaction(async (tx) => {
+    await tx.insert(telegramSession).values({ workspaceId: login.workspaceId, account: accountName(user), secretCiphertext });
+    await tx.delete(telegramLogin).where(eq(telegramLogin.id, login.id));
   });
-  if (stored) return;
-  // A session from another tab won the race. This one mustn't stay signed in where nobody can revoke it.
-  await logOut(client).catch(() => undefined);
-  await db
-    .update(telegramLogin)
-    .set({ step: "failed", refusal: refusals.alreadySignedIn })
-    .where(eq(telegramLogin.id, login.id));
 }
 
 /**

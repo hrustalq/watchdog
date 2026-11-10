@@ -9,7 +9,7 @@ export const telegramLoginQueue = "telegram-login";
 export const telegramRevokeQueue = "telegram-revoke";
 
 /** A heartbeat older than this means the worker holding the login's client is gone. */
-export const loginHeartbeatSeconds = 10;
+const loginHeartbeatSeconds = 10;
 
 export const loginExpired = "The login took longer than 5 minutes, so it ended. Start again.";
 export const loginLost =
@@ -30,7 +30,7 @@ export type LoginState =
   | { step: "failed"; phone: string; refusal: string };
 
 /** Spaces, dashes, dots and brackets, as people write numbers. Telegram takes 7 to 15 digits. */
-export function normalizePhone(input: string): string | undefined {
+function normalizePhone(input: string): string | undefined {
   const digits = input.replaceAll(/[\s().-]/g, "");
   return /^\+?\d{7,15}$/.test(digits) ? `+${digits.replace(/^\+/, "")}` : undefined;
 }
