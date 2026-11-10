@@ -49,7 +49,7 @@ describe("the Telegram user session jobs", () => {
 
     stop();
     await vi.waitFor(async () => {
-      expect((await boss.getJobById(telegramLoginQueue, jobId ?? ""))?.state).toBe("failed");
+      expect((await boss.findJobs(telegramLoginQueue, { id: jobId ?? "" }))[0]?.state).toBe("failed");
     }, waitLong);
     expect(logins).toEqual(["login-1"]);
   });
