@@ -425,7 +425,7 @@ export async function addTelegramDestination(db: Db, workspaceId: string, input:
     .onConflictDoNothing()
     .returning({ id: destination.id });
   if (saved === undefined) return { problem: "duplicate-name" } as const;
-  return { destination: saved, code: await issueLinkCode(db, saved.id) };
+  return { destination: saved, code: await issueLinkCode(db, { destinationId: saved.id }) };
 }
 
 /** A new code for a Telegram Destination still waiting for the bot. Undefined for anything else in the Workspace. */
@@ -442,7 +442,7 @@ export async function newTelegramLink(db: Db, workspaceId: string, destinationId
         isNull(destination.confirmedAt),
       ),
     );
-  return waiting && issueLinkCode(db, waiting.id);
+  return waiting && issueLinkCode(db, { destinationId: waiting.id });
 }
 
 /** Keeps a code in the browser that asked for it, for telegramLinkInCookie. */

@@ -1,7 +1,8 @@
 // The smoke run's Telegram Bot API (compose.smoke.yaml). Watchdog calls the fixed host api.telegram.org,
 // which the fixtures container answers with TLS and passes on to here, so the real bot loop and senders
-// run with no way out. The test talks to it on /fake/: it posts what a person sends the bot, and reads
-// the text of every sendMessage the fake received, the bot's replies included.
+// run with no way out. The test talks to it on /fake/: it posts what a person sends the bot, or any other
+// update such as a group's message or the bot's removal, and reads the text of every sendMessage the fake
+// received, the bot's replies included.
 import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
 import { json } from "node:stream/consumers";
@@ -52,8 +53,10 @@ createServer(async (request, response) => {
   }
   const body = await json(request).catch(() => ({}));
   if (pathname === "/fake/updates") {
-    const { chat, text } = body;
-    updates.push({ update_id: updates.length + 1, message: { chat, text } });
+    // `{ chat, text }` is a message; `{ update }` is a whole update, such as { my_chat_member }.
+    const { chat, text, update } = body;
+    const message = { message_id: updates.length + 1, date: Math.floor(Date.now() / 1000), chat, text };
+    updates.push({ update_id: updates.length + 1, ...(update ?? { message }) });
     arrived.emit("update");
     send(response, 200, {});
     return;

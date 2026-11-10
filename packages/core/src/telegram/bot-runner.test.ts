@@ -78,7 +78,7 @@ describe("the Telegram bot runner", () => {
 
     await run(telegram);
 
-    expect(telegram.polls()[0]?.["allowed_updates"]).toEqual(["message", "channel_post", "my_chat_member"]);
+    expect(telegram.polls()[0]?.allowed_updates).toEqual(["message", "channel_post", "my_chat_member"]);
   });
 
   it("takes a code posted in a channel", async () => {
@@ -104,7 +104,7 @@ describe("the Telegram bot runner", () => {
       startMessage(13, "/start abc", group),
     ];
     const telegram = fakeTelegram([updates]);
-    const intake = vi.fn((_update: BotUpdate) => Promise.resolve());
+    const intake = vi.fn<(update: BotUpdate) => Promise<void>>(() => Promise.resolve());
 
     await run(telegram, () => linked("Ops"), undefined, intake);
 

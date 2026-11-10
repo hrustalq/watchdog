@@ -148,7 +148,8 @@ describe("Telegram bot intake", () => {
     await botReads({ my_chat_member: { chat, from: { id: 1 }, date: 1, new_chat_member: { status, user: { id: 2 } } } });
 
     const failing = await readSource(watching.id);
-    expect(failing).toMatchObject({ health: "failing", lastError: expect.stringMatching(error) });
+    expect(failing?.health).toBe("failing");
+    expect(failing?.lastError).toMatch(error);
     expect(failing?.lastError).toMatch(/new link/);
     expect(failing?.lastErrorAt).toBeInstanceOf(Date);
   });

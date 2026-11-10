@@ -54,9 +54,9 @@ export async function liveLinkCode(db: Db, code: string) {
 
 /** Spends a code on the chat it came from, and gives the bot's reply there. */
 export async function linkChat(db: Db, encryptionKey: Buffer, code: string, chat: BotChat) {
-  const live = await liveLinkCode(db, code);
-  if (live?.sourceId != null) return bindSource(db, code, live.sourceId, chat);
-  const name = live?.destinationId == null ? undefined : await linkDestination(db, encryptionKey, code, live.destinationId, chat);
+  const { sourceId = null, destinationId = null } = (await liveLinkCode(db, code)) ?? {};
+  if (sourceId !== null) return bindSource(db, code, sourceId, chat);
+  const name = destinationId === null ? undefined : await linkDestination(db, encryptionKey, code, destinationId, chat);
   return name === undefined ? unknownCode : `Linked to ${name} in Watchdog`;
 }
 
