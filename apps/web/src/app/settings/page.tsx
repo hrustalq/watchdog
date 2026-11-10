@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { dataBox, field, label } from "@/components/field-classes";
+import { dataBox, field, label, textLink } from "@/components/field-classes";
 import { requireWorkspace, server } from "@/lib/server";
 import {
   type AlertSettingsField,
@@ -8,6 +8,7 @@ import {
   alertsPerHourRange,
   burstWindowRange,
   loadAlertSettings,
+  loadHealthAlertDestinations,
   parseAlertSettings,
   quietHoursSentence,
   readAlertSettingsForm,
@@ -17,7 +18,7 @@ import { cn } from "@/lib/utils";
 import { FieldError } from "../destinations/field-error";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
-import { saveSettingsAction, setSignup } from "./actions";
+import { saveHealthAlertsAction, saveSettingsAction, setSignup } from "./actions";
 import { ZoneSuggestion } from "./zone-suggestion";
 
 export const metadata: Metadata = { title: "Settings · Watchdog" };
@@ -31,7 +32,7 @@ const checkbox =
 const help = "text-xs text-muted-foreground";
 
 export default async function SettingsPage({ searchParams }: PageProps<"/settings">) {
-  const [{ workspace, admin }, params] = await Promise.all([requireWorkspace(), searchParams]);
+  const [{ user, workspace, admin }, params] = await Promise.all([requireWorkspace(), searchParams]);
   const { db, mode } = server();
   const saved = await loadAlertSettings(db, workspace.id);
 
@@ -90,6 +91,11 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
         {params.saved === "1" && refused === undefined ? (
           <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
             Settings saved. The next alert follows them.
+          </Notice>
+        ) : null}
+        {params.saved === "health" ? (
+          <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+            Source Health alerts saved. The next one follows them.
           </Notice>
         ) : null}
         {firstError === undefined ? null : (
@@ -274,9 +280,72 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
           </div>
         </form>
 
+        <HealthAlertsSection workspaceId={workspace.id} email={user.email} />
+
         {admin ? <SignupSection /> : null}
       </main>
     </div>
+  );
+}
+
+const destinationKind = { telegram: "Telegram chat", email: "Email address", webhook: "Webhook" } as const;
+
+/**
+ * Where Source failing and Source recovered alerts go. A form of its own, so saving it can't be refused
+ * by a field of the alert settings, and the other way round.
+ */
+async function HealthAlertsSection({ workspaceId, email }: { workspaceId: string; email: string }) {
+  const options = await loadHealthAlertDestinations(server().db, workspaceId);
+  return (
+    <section aria-labelledby="health-alerts-heading" className="flex flex-col gap-4 rounded-lg border p-4">
+      <div className="flex flex-col gap-1">
+        <h2 id="health-alerts-heading" className="text-title">
+          Source Health alerts
+        </h2>
+        <p className="max-w-[70ch] text-sm text-muted-foreground">
+          One alert goes out when a Source becomes failing, and one when it recovers. They wait for quiet hours and
+          the hourly limit like any alert, and each goes as its own message.
+        </p>
+      </div>
+      {options.length === 0 ? (
+        <p className="max-w-[70ch] text-sm">
+          They go to <span className="break-all">{email}</span>, the address you sign in with. To send them somewhere
+          else, add a Telegram chat or an email address on{" "}
+          <Link href="/destinations" className={textLink}>
+            Destinations
+          </Link>
+          , and it appears here once it&apos;s confirmed.
+        </p>
+      ) : (
+        <form action={saveHealthAlertsAction} className="flex flex-col gap-4">
+          <fieldset aria-describedby="health-alerts-help" className="flex flex-col gap-2">
+            <legend className={cn(label, "mb-2")}>Send them to</legend>
+            {options.map(({ id, name, type, named }) => (
+              <label key={id} htmlFor={`health-alerts-${id}`} className={cn(label, "flex min-h-6 items-center gap-2")}>
+                <input
+                  id={`health-alerts-${id}`}
+                  name="destination"
+                  value={id}
+                  type="checkbox"
+                  defaultChecked={named}
+                  className={checkbox}
+                />
+                {/* One run of text with a real space: Chrome drops the gap between sibling spans from the name. */}
+                <span className="min-w-0 break-words">
+                  {name} <span className="pl-1 font-normal text-muted-foreground">{destinationKind[type]}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          <p id="health-alerts-help" className={cn(help, "max-w-[70ch]")}>
+            With none ticked, they go to <span className="break-all">{email}</span>, the address you sign in with.
+          </p>
+          <SubmitButton variant="outline" pendingLabel="Saving…" className="sm:w-auto sm:self-start">
+            Save Health alerts
+          </SubmitButton>
+        </form>
+      )}
+    </section>
   );
 }
 

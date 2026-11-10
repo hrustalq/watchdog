@@ -4,7 +4,12 @@ import { refresh } from "next/cache";
 import { redirect, RedirectType } from "next/navigation";
 import { setSignupOpen } from "@/lib/instance";
 import { requireWorkspace, server } from "@/lib/server";
-import { alertSettingsQuery, readAlertSettingsForm, saveAlertSettings } from "@/lib/settings";
+import {
+  alertSettingsQuery,
+  readAlertSettingsForm,
+  saveAlertSettings,
+  saveHealthAlertDestinations,
+} from "@/lib/settings";
 
 /**
  * Saves the alert settings of the user's Workspace, which comes from the session and never from the form.
@@ -20,6 +25,17 @@ export async function saveSettingsAction(formData: FormData) {
   // refusal is replaced too, or a save after it would leave that page one Back away.
   if ("saved" in result) redirect("/settings?saved=1", RedirectType.replace);
   redirect(`/settings?${alertSettingsQuery(form)}`, RedirectType.replace);
+}
+
+/**
+ * Saves which Destinations Source Health alerts go to. Nothing in the form can be wrong in a way the user
+ * could fix: a ticked box is a Destination the page offered, and anything else is left out.
+ */
+export async function saveHealthAlertsAction(formData: FormData) {
+  const { workspace } = await requireWorkspace();
+  const ids = formData.getAll("destination").filter((value) => typeof value === "string");
+  await saveHealthAlertDestinations(server().db, workspace.id, ids);
+  redirect("/settings?saved=health", RedirectType.replace);
 }
 
 /** Opens or closes sign-up. Only the instance admin may; anyone else is sent to their Workspace. */

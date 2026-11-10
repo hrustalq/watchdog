@@ -6,6 +6,7 @@ import { Timestamp } from "@/components/timestamp";
 import {
   actionNames,
   actionsOnlyOn,
+  healthAlertsOnlyOn,
   addProblems,
   type DestinationState,
   listDestinations,
@@ -61,6 +62,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
   const secretFor = destinations.find(({ id }) => id === param("secret"));
   const refused = await actionsOnlyOn(db, workspace.id, param("refused"));
   const refusedName = destinations.find(({ id }) => id === param("refused"))?.name;
+  const refusedBySetting = await healthAlertsOnlyOn(db, workspace.id, param("refused"));
   const left = await actionNames(db, workspace.id, param("left").split(","));
   const tested = destinations.find(({ id }) => id === param("test"));
   // Last, because a read that fails after this would lose a secret nobody saw.
@@ -108,6 +110,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
           left={left}
           refused={refused}
           refusedName={refusedName}
+          refusedBySetting={refusedBySetting}
           mailGoesToLog={mailGoesToLog}
         />
         {tested === undefined ? null : (
@@ -424,6 +427,7 @@ function Outcome({
   left,
   refused,
   refusedName,
+  refusedBySetting,
   mailGoesToLog,
 }: {
   added: string;
@@ -433,6 +437,7 @@ function Outcome({
   left: string[];
   refused: string[];
   refusedName: string | undefined;
+  refusedBySetting: boolean;
   mailGoesToLog: boolean;
 }) {
   const quietly = "rounded-lg bg-muted px-3 py-2 text-sm";
@@ -441,6 +446,21 @@ function Outcome({
     ? "This install has no mail server, so the confirmation link is in the web container's log."
     : "A confirmation link is on its way, and it stays waiting until that link is opened. The link lasts 24 hours.";
 
+  if (refusedBySetting) {
+    return (
+      <Notice role="alert" className={failed}>
+        {refusedName ?? "That Destination"} can&apos;t be removed, because it&apos;s the only Destination Source Health
+        alerts go to{refused.length > 0 ? `, and the only Destination of ${refused.join(", ")}` : ""}. Choose another
+        for them, or untick this one, on <Link href="/settings" className={textLink}>
+          Settings
+        </Link>{" "}
+        first.
+        {refused.length > 0
+          ? ` Give ${refused.length === 1 ? "that Action" : "those Actions"} another Destination, or disable ${refused.length === 1 ? "it" : "them"}, too.`
+          : ""}
+      </Notice>
+    );
+  }
   if (refused.length > 0) {
     return (
       <Notice role="alert" className={failed}>

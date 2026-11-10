@@ -22,6 +22,7 @@ import {
   destinationConfirmation,
   eq,
   gt,
+  healthAlertDestination,
   inArray,
   isNotNull,
   isNull,
@@ -330,6 +331,17 @@ export async function actionsOnlyOn(reader: Db | Tx, workspaceId: string, destin
   return rows.map(({ name }) => name);
 }
 
+/** Whether the Health alerts setting names this Destination and no other. */
+export async function healthAlertsOnlyOn(reader: Db | Tx, workspaceId: string, destinationId: string) {
+  if (!isUuid(destinationId)) return false;
+  // Not locked: two removes at once can leave the setting naming none, and then the sign-in address gets them.
+  const named = await reader
+    .select({ id: healthAlertDestination.destinationId })
+    .from(healthAlertDestination)
+    .where(eq(healthAlertDestination.workspaceId, workspaceId));
+  return named.length === 1 && named[0]?.id === destinationId;
+}
+
 /** The names of the Workspace's Actions with these ids. The ids come from a URL, so others are ignored. */
 export async function actionNames(db: Db, workspaceId: string, actionIds: string[]) {
   const ids = actionIds.filter(isUuid);
@@ -344,8 +356,9 @@ export async function actionNames(db: Db, workspaceId: string, actionIds: string
 
 /**
  * Removes a Destination (docs: Actions and delivery, "Deleting a Destination"). `refused` names the
- * enabled Actions that point only at it. Otherwise it leaves the Actions that used it, whose ids are in
- * `changed`, and a disabled one can be left with none. Undefined when the Workspace has no such Destination.
+ * enabled Actions that point only at it, and `healthAlerts` says the Health alerts setting names only it.
+ * Otherwise it leaves the Actions that used it, whose ids are in `changed`, and the setting, and a
+ * disabled Action can be left with none. Undefined when the Workspace has no such Destination.
  *
  * Its Deliveries go with it, because their foreign key would refuse the delete. The Log keeps what was
  * sent, and gets a row for each alert that now never will be.
@@ -378,7 +391,8 @@ export async function removeDestination(db: Db, workspaceId: string, destination
       .orderBy(action.id)
       .for("no key update", { of: action });
     const refused = await actionsOnlyOn(tx, workspaceId, destinationId);
-    if (refused.length > 0) return { refused };
+    const healthAlerts = await healthAlertsOnlyOn(tx, workspaceId, destinationId);
+    if (refused.length > 0 || healthAlerts) return { refused, ...(healthAlerts && { healthAlerts }) };
 
     const changed = using.map(({ id }) => id);
     if (changed.length > 0) {

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
-import { closeDb, createDb, type Db, eq, item, migrate, source, user, workspace } from "@watchdog/db";
+import { closeDb, createDb, type Db, eq, item, migrate, source, sourceAlert, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it, onTestFinished } from "vitest";
 import { z } from "zod";
@@ -350,5 +350,81 @@ describe("pollSource", () => {
     expect(items.every((captured) => captured.log.length === 1)).toBe(true);
     expect(await push([...drafts, draft("new", null)])).toEqual({ captured: 1 });
     expect((await reload(src.id)).backfilledAt).toBeNull();
+  });
+
+  /** A poll at a time of its own, so a run of them can cross the Health thresholds. */
+  const pollAt = (sourceId: string, at: Date) => pollSource(db, sourceId, { ...deps, now: () => at });
+  const minutesLater = (minutes: number) => new Date(now.getTime() + minutes * 60_000);
+  const alertsOf = (sourceId: string) =>
+    db.select().from(sourceAlert).where(eq(sourceAlert.sourceId, sourceId)).orderBy(sourceAlert.createdAt);
+
+  it("makes a Source degraded at three failed polls, failing at ten, and ok at one success", async () => {
+    const src = await newSource();
+    const healthAfter = async (polls: number, from: number) => {
+      for (let i = 0; i < polls; i += 1) await pollAt(src.id, minutesLater(from + i));
+      const { health, consecutiveFailures } = await reload(src.id);
+      return { health, consecutiveFailures };
+    };
+
+    expect(await healthAfter(2, 0)).toEqual({ health: "ok", consecutiveFailures: 2 });
+    expect(await healthAfter(1, 2)).toEqual({ health: "degraded", consecutiveFailures: 3 });
+    expect(await healthAfter(6, 3)).toEqual({ health: "degraded", consecutiveFailures: 9 });
+    expect(await alertsOf(src.id)).toEqual([]);
+    expect(await healthAfter(1, 9)).toEqual({ health: "failing", consecutiveFailures: 10 });
+    expect(await healthAfter(5, 10)).toEqual({ health: "failing", consecutiveFailures: 15 });
+
+    serve(src.url, rss(hourly("h", 1)));
+    const recoveredAt = minutesLater(20);
+    await pollAt(src.id, recoveredAt);
+    expect(await reload(src.id)).toMatchObject({ health: "ok", consecutiveFailures: 0, lastSuccessAt: recoveredAt });
+
+    // One alert for the change to failing and one for the recovery, never one per failed poll. With no
+    // Destination named in the Health alerts setting, each is for the sign-in address.
+    expect(await alertsOf(src.id)).toMatchObject([
+      { kind: "failing", destinationId: null, status: "held", error: "connect ECONNREFUSED" },
+      { kind: "recovered", destinationId: null, status: "held", error: null },
+    ]);
+  });
+
+  it("counts a 304 as a success", async () => {
+    const src = await newSource();
+    for (let i = 0; i < 3; i += 1) await pollAt(src.id, minutesLater(i));
+    expect((await reload(src.id)).health).toBe("degraded");
+    responses.set(src.url, () => new Response(null, { status: 304 }));
+    await pollAt(src.id, minutesLater(3));
+    expect(await reload(src.id)).toMatchObject({ health: "ok", consecutiveFailures: 0, lastSuccessAt: minutesLater(3) });
+  });
+
+  it("polls a failing Source with a 15-minute schedule at most once an hour", async () => {
+    const src = await newSource();
+    // As the worker's poll job does: the schedule's next time is set before each poll.
+    const scheduledPoll = async (at: Date) => {
+      await db.update(source).set({ nextPollAt: new Date(at.getTime() + 15 * 60_000) }).where(eq(source.id, src.id));
+      await pollAt(src.id, at);
+      return (await reload(src.id)).nextPollAt;
+    };
+
+    for (let i = 0; i < 9; i += 1) {
+      // Not failing yet, so the schedule stands.
+      expect(await scheduledPoll(minutesLater(i * 15))).toEqual(minutesLater(i * 15 + 15));
+    }
+    const failingAt = minutesLater(9 * 15);
+    expect(await scheduledPoll(failingAt)).toEqual(new Date(failingAt.getTime() + 60 * 60_000));
+    const nextAt = new Date(failingAt.getTime() + 60 * 60_000);
+    expect(await scheduledPoll(nextAt)).toEqual(new Date(nextAt.getTime() + 60 * 60_000));
+
+    // Recovered, it is back on its schedule.
+    serve(src.url, rss(hourly("r", 1)));
+    const recoveredAt = new Date(nextAt.getTime() + 60 * 60_000);
+    expect(await scheduledPoll(recoveredAt)).toEqual(new Date(recoveredAt.getTime() + 15 * 60_000));
+  });
+
+  it("keeps a failing Source's schedule when its next time is more than an hour away", async () => {
+    const src = await newSource();
+    await db.update(source).set({ health: "failing" }).where(eq(source.id, src.id));
+    const tomorrow = minutesLater(24 * 60);
+    await db.update(source).set({ nextPollAt: tomorrow }).where(eq(source.id, src.id));
+    await pollAt(src.id, now);
+    expect((await reload(src.id)).nextPollAt).toEqual(tomorrow);
   });
 });

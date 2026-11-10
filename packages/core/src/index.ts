@@ -11,9 +11,10 @@ export {
   type EgressRule,
   urlIpLiteral,
 } from "./egress/egress.ts";
-export { deliver, type DeliverDeps, purgeSentMessages, releaseDueDeliveries, type Sender } from "./delivery/deliver.ts";
+export { type AlertSender, deliver, type DeliverDeps, purgeSentMessages, releaseDueDeliveries, type Sender } from "./delivery/deliver.ts";
 export { type DigestDeps, dueDigests, sendDigest } from "./delivery/digest.ts";
 export { type EmailCap, sendEmailCapNotice } from "./delivery/email-cap.ts";
+export { releaseDueSourceAlerts, sendSourceAlert, type SourceAlertDeps } from "./delivery/source-alert.ts";
 export { emailDestinationConfig } from "./delivery/email.ts";
 export { createSenders } from "./delivery/senders.ts";
 export { sendTestAlert, type TestAlertDeps, type TestAlertResult } from "./delivery/test-alert.ts";

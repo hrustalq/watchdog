@@ -1,7 +1,8 @@
 // The Workspace's alert settings, as the Settings screen changes them (docs: Actions and delivery,
 // "Grouping and rate limits", "Quiet hours" and "Workspace timezone"). Delivery reads them each time it
 // decides, so a save applies to the next decision.
-import { type Db, eq, workspace } from "@watchdog/db";
+import { and, type Db, destination, eq, healthAlertDestination, inArray, isNotNull, workspace } from "@watchdog/db";
+import { isUuid } from "./uuid.ts";
 
 /**
  * Every timezone the form offers, UTC first. Postgres can't check a name, so this list is the check.
@@ -157,4 +158,65 @@ export function alertSettingsQuery(form: AlertSettingsForm) {
     ...(form.quietHours ? { quietHours: "on" } : {}),
     ...(form.severity5Bypasses ? { severity5Bypasses: "on" } : {}),
   }).toString();
+}
+
+/**
+ * The Destinations the Health alerts setting can name: the Workspace's confirmed Telegram chats and email
+ * addresses (docs: Actions and delivery, "Source Health alerts"). `named` says the setting names it now.
+ */
+export async function loadHealthAlertDestinations(db: Db, workspaceId: string) {
+  const rows = await db
+    .select({
+      id: destination.id,
+      name: destination.name,
+      type: destination.type,
+      named: healthAlertDestination.destinationId,
+    })
+    .from(destination)
+    .leftJoin(healthAlertDestination, eq(healthAlertDestination.destinationId, destination.id))
+    .where(
+      and(
+        eq(destination.workspaceId, workspaceId),
+        inArray(destination.type, ["telegram", "email"]),
+        isNotNull(destination.confirmedAt),
+      ),
+    )
+    .orderBy(destination.name);
+  return rows.map((row) => ({ ...row, named: row.named !== null }));
+}
+
+/**
+ * Names these Destinations in the Health alerts setting, and no others. The ids come from a form, so any
+ * that isn't one of the Workspace's confirmed Telegram chats or email addresses is left out. With none,
+ * the alerts go to the sign-in address.
+ */
+export async function saveHealthAlertDestinations(db: Db, workspaceId: string, destinationIds: string[]) {
+  const ids = destinationIds.filter(isUuid);
+  await db.transaction(async (tx) => {
+    // The Destinations first, as a remove takes them, so the two can't deadlock. Shared, so a remove
+    // of one waits rather than fail this insert's foreign key.
+    const allowed =
+      ids.length === 0
+        ? []
+        : await tx
+            .select({ destinationId: destination.id })
+            .from(destination)
+            .where(
+              and(
+                eq(destination.workspaceId, workspaceId),
+                inArray(destination.id, ids),
+                inArray(destination.type, ["telegram", "email"]),
+                isNotNull(destination.confirmedAt),
+              ),
+            )
+            .orderBy(destination.id)
+            .for("key share");
+    await tx.delete(healthAlertDestination).where(eq(healthAlertDestination.workspaceId, workspaceId));
+    if (allowed.length === 0) return;
+    // Two saves at once can both insert a row, and either is what the user asked for.
+    await tx
+      .insert(healthAlertDestination)
+      .values(allowed.map(({ destinationId }) => ({ workspaceId, destinationId })))
+      .onConflictDoNothing();
+  });
 }

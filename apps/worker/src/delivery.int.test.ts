@@ -1,4 +1,4 @@
-import type { Sender } from "@watchdog/core";
+import type { AlertSender } from "@watchdog/core";
 import {
   action,
   actionDestination,
@@ -13,6 +13,7 @@ import {
   itemLog,
   migrate,
   source,
+  sourceAlert,
   user,
   workspace,
 } from "@watchdog/db";
@@ -116,7 +117,7 @@ describe("the deliver queue", () => {
   const enqueue = (deliveryId: string) =>
     db.transaction((tx) => deliveryEnqueuer(boss)(tx, [deliveryId]));
 
-  async function startWorker(send: Sender["send"]) {
+  async function startWorker(send: AlertSender["send"]) {
     worker = new PgBoss({ connectionString: postgres.url, schedule: false, supervise: false });
     await worker.start();
     const sender = { send };
@@ -179,7 +180,7 @@ describe("the deliver queue", () => {
 
   it("sends a queued Delivery in its job", async () => {
     const { deliveryId, itemId } = await seed();
-    const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+    const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
     await startWorker(send);
 
     await enqueue(deliveryId);
@@ -194,7 +195,7 @@ describe("the deliver queue", () => {
   it("retries through new jobs at the times the Log names, and sends once on the third attempt", async () => {
     const { deliveryId, itemId } = await seed();
     let failures = 2;
-    const send = vi.fn<Sender["send"]>(() =>
+    const send = vi.fn<AlertSender["send"]>(() =>
       failures-- > 0 ? Promise.reject(new Error("Chat unreachable")) : Promise.resolve(),
     );
     await startWorker(send);
@@ -277,7 +278,7 @@ describe("the deliver queue", () => {
     await boss.supervise(deliverQueue);
     expect((await jobsOf(deliveryId)).map((job) => job.state)).toEqual(["retry"]);
 
-    const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+    const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
     await startWorker(send);
 
     await vi.waitFor(async () => {
@@ -351,7 +352,7 @@ describe("the deliver queue", () => {
 
     it("queues one job for a due Digest however many sweeps run, and its job sends it once", async () => {
       const { itemId, actionId } = await seedDigest();
-      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+      const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
       await startWorker(send);
 
       await enqueueDueDigests(db, boss);
@@ -394,7 +395,7 @@ describe("the deliver queue", () => {
     it("sends a held Delivery whose time passed while no worker ran, once one starts", async () => {
       const { deliveryId, itemId } = await seed();
       await wait(deliveryId, "held", new Date(Date.now() - 60_000));
-      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+      const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
 
       await startWorker(send);
 
@@ -462,7 +463,7 @@ describe("the deliver queue", () => {
         await wait(id, "grouped", closed);
         await db.update(delivery).set({ groupId }).where(eq(delivery.id, id));
       }
-      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+      const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
 
       await startWorker(send);
 
@@ -485,7 +486,7 @@ describe("the deliver queue", () => {
       );
       const ids = [deliveryId, ...others];
       await db.transaction((tx) => deliveryEnqueuer(boss)(tx, ids));
-      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+      const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
 
       await startWorker(send);
 
@@ -510,7 +511,7 @@ describe("the deliver queue", () => {
       );
       const ids = [deliveryId, ...others];
       await db.transaction((tx) => deliveryEnqueuer(boss)(tx, ids));
-      const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+      const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
 
       await startWorker(send);
 
@@ -525,10 +526,43 @@ describe("the deliver queue", () => {
     });
   });
 
+  it("sends a new Source Health alert from the sweep, once", async () => {
+    const ownerId = crypto.randomUUID();
+    await db.insert(user).values({ id: ownerId, name: "Owner", email: `${ownerId}@example.com` });
+    const [ws] = await db.insert(workspace).values({ name: "Workspace", ownerUserId: ownerId }).returning();
+    const workspaceId = present(ws).id;
+    const [src] = await db
+      .insert(source)
+      .values({ workspaceId, type: "rss", name: "Feed", config: { url: "https://feeds.test/feed.rss" }, schedule: "*/15 * * * *" })
+      .returning();
+    // As a failed poll writes it: held and due, with no job.
+    const [alert] = await db
+      .insert(sourceAlert)
+      .values({ workspaceId, sourceId: present(src).id, kind: "failing", error: "The feed answered 500" })
+      .returning();
+    const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
+
+    // The sweep runs once when the worker starts.
+    await startWorker(send);
+
+    await vi.waitFor(async () => {
+      const [row] = await db.select().from(sourceAlert).where(eq(sourceAlert.id, present(alert).id));
+      expect(row).toMatchObject({ status: "sent", attempts: 1 });
+    }, waitLong);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send.mock.calls[0]?.[0]).toMatchObject({ type: "email", config: { address: `${ownerId}@example.com` } });
+    expect(send.mock.calls[0]?.[1]).toEqual({
+      health: "failing",
+      source: "Feed",
+      error: "The feed answered 500",
+      link: "https://watchdog.test/sources",
+    });
+  });
+
   it("ends the job quietly when the Delivery is gone", async () => {
     const { deliveryId, itemId } = await seed();
     await db.delete(item).where(eq(item.id, itemId));
-    const send = vi.fn<Sender["send"]>(() => Promise.resolve());
+    const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
     await startWorker(send);
 
     await enqueue(deliveryId);

@@ -31,6 +31,7 @@ import { alertContent, type AlertMessage, type WebhookMessage } from "./content.
 import { capReason, type EmailCap, emailCapEnd, queueCapNoticeOnce, takeEmailCapTurn } from "./email-cap.ts";
 import { type GroupedAlert, groupedAlert } from "./group.ts";
 import { localTime, scheduleDelivery } from "./schedule-delivery.ts";
+import type { SourceAlertMessage } from "./source-alert-content.ts";
 
 export type Destination = typeof destination.$inferSelect;
 
@@ -46,6 +47,9 @@ export interface Sender<Message = AlertMessage | GroupedAlert> {
     onChatMoved?: (secretCiphertext: string) => Promise<void>,
   ) => Promise<void>;
 }
+
+/** The Telegram and email senders, which take a Source Health alert as well as what a Delivery sends. */
+export type AlertSender = Sender<AlertMessage | GroupedAlert | SourceAlertMessage>;
 
 /** A refusal no later attempt can get past, so the Delivery fails at once. */
 export class FinalSendError extends Error {
@@ -97,6 +101,22 @@ const reasonLength = 500;
 /** Why a send failed, as the Log and the Destination's `last_error` keep it. */
 export const failureReason = (error: unknown) =>
   storableMessage(error instanceof Error ? error.message : String(error)).slice(0, reasonLength);
+
+/**
+ * When a failed send is tried again: the wait doubles from 30 seconds, and the last retry lands on the
+ * 24 hour mark after `from`. Undefined when it isn't tried again, after a final refusal or past that mark.
+ * A told wait can pass the mark, because an attempt sooner than that would only be refused.
+ */
+export function nextRetry(error: unknown, attempts: number, from: Date, failed: Date) {
+  const windowEnd = from.getTime() + retryWindowMs;
+  if (error instanceof FinalSendError || failed.getTime() >= windowEnd) return undefined;
+  const backoff = firstRetryDelayMs * 2 ** (attempts - 1);
+  return new Date(
+    error instanceof RetryAfterSendError
+      ? failed.getTime() + error.retryAfterMs
+      : Math.min(failed.getTime() + backoff, windowEnd),
+  );
+}
 
 /**
  * The Deliveries a job should send now, as Top would list them, with unrated Items last. Anything else
@@ -338,8 +358,8 @@ async function send(
 
     for (const row of rows) {
       const attempts = row.attempts + 1;
-      const windowEnd = (row.retryFrom ?? row.createdAt).getTime() + retryWindowMs;
-      if (final || failed.getTime() >= windowEnd) {
+      const retryAt = nextRetry(error, attempts, row.retryFrom ?? row.createdAt, failed);
+      if (retryAt === undefined) {
         await recording((tx) =>
           record(
             tx,
@@ -361,13 +381,6 @@ async function send(
         continue;
       }
 
-      // A told wait can pass the 24 hour mark, because an attempt sooner than that would only be refused.
-      const backoff = firstRetryDelayMs * 2 ** (attempts - 1);
-      const retryAt = new Date(
-        error instanceof RetryAfterSendError
-          ? failed.getTime() + error.retryAfterMs
-          : Math.min(failed.getTime() + backoff, windowEnd),
-      );
       await recording((tx) =>
         record(
           tx,

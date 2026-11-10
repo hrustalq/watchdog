@@ -6,6 +6,7 @@ import { BaseTelegramClient, MemoryStorage, tl, User } from "@mtcute/node";
 import { checkPassword, logOut, sendCode, signIn } from "@mtcute/node/methods.js";
 import type { ITelegramClient } from "@mtcute/node";
 import { and, type Db, eq, getTableColumns, isNull, lt, source, sql, telegramLogin, telegramSession } from "@watchdog/db";
+import { setPushSourceHealth } from "../../delivery/source-alert.ts";
 import { decryptSecret, encryptSecret } from "../../secrets/secrets.ts";
 import { readOnly } from "./read-only.ts";
 import { loginLost, stale } from "./session.ts";
@@ -217,9 +218,6 @@ export async function revokeSession(db: Db, deps: SessionDeps, sessionId: string
   }
   await db.transaction(async (tx) => {
     await tx.delete(telegramSession).where(eq(telegramSession.id, sessionId));
-    await tx
-      .update(source)
-      .set({ health: "failing", lastError: revokedError, lastErrorAt: sql`now()` })
-      .where(sessionSources(session.workspaceId));
+    await setPushSourceHealth(tx, sessionSources(session.workspaceId), revokedError);
   });
 }

@@ -2,6 +2,7 @@
 // chat, and the bot losing its place in a chat makes those Sources failing (docs: Sources and ingestion,
 // "Telegram bot intake" and "Source Health").
 import { and, type Db, eq, source, sql } from "@watchdog/db";
+import { setPushSourceHealth } from "../../delivery/source-alert.ts";
 import { captureItems, type CaptureDeps } from "../../pipeline/capture.ts";
 import type { BotUpdate, ChatMemberUpdate } from "../../telegram/update.ts";
 import { telegramDraft } from "./draft.ts";
@@ -32,12 +33,9 @@ export function telegramIntake(db: Db, deps: CaptureDeps) {
       for (const { id } of bound) await captureItems(db, id, [draft], { at, polled: false }, deps);
     }
     if (member === undefined) return;
-    const lost = lostAccess(member);
     // The bot back in the chat, through a new link or not, is access returned.
-    await db
-      .update(source)
-      .set(lost === undefined ? { health: "ok", lastError: null, lastErrorAt: null } : { health: "failing", lastError: lost, lastErrorAt: at })
-      .where(boundTo(member.chat.id));
+    const lost = lostAccess(member) ?? null;
+    await db.transaction((tx) => setPushSourceHealth(tx, boundTo(member.chat.id), lost, at));
   };
 }
 
