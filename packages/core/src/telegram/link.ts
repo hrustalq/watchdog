@@ -3,6 +3,7 @@
 // privacy, "Destinations"; ADR 0029). Only its SHA-256 hash is stored.
 import { createHash, randomBytes } from "node:crypto";
 import { and, type Db, destination, eq, gt, ne, source, sql, telegramLinkCode } from "@watchdog/db";
+import { setPushSourceHealth } from "../delivery/source-alert.ts";
 import { encryptSecret } from "../secrets/secrets.ts";
 import type { BotChat } from "./bot-runner.ts";
 
@@ -121,14 +122,10 @@ function bindSource(db: Db, code: string, sourceId: string, chat: BotChat) {
     if (watching !== undefined) return `This chat is already watched by ${watching.name} in Watchdog`;
     await tx
       .update(source)
-      .set({
-        config: { via: "bot", chatId: Number(chat.id), title: withoutNul(chat.title) },
-        health: "ok",
-        consecutiveFailures: 0,
-        lastError: null,
-        lastErrorAt: null,
-      })
+      .set({ config: { via: "bot", chatId: Number(chat.id), title: withoutNul(chat.title) } })
       .where(eq(source.id, sourceId));
+    // Bound again after the bot lost its chat, the Source has its access back, and says so.
+    await setPushSourceHealth(tx, eq(source.id, sourceId), null);
     return `Watching this chat for ${target.name} in Watchdog`;
   });
 }

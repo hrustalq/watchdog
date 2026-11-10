@@ -1,7 +1,7 @@
 // The Workspace's alert settings, as the Settings screen changes them (docs: Actions and delivery,
 // "Grouping and rate limits", "Quiet hours" and "Workspace timezone"). Delivery reads them each time it
 // decides, so a save applies to the next decision.
-import { and, type Db, destination, eq, healthAlertDestination, inArray, isNotNull, or, workspace } from "@watchdog/db";
+import { and, type Db, destination, eq, healthAlertDestination, inArray, isNotNull, workspace } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 /**
@@ -163,7 +163,6 @@ export function alertSettingsQuery(form: AlertSettingsForm) {
 /**
  * The Destinations the Health alerts setting can name: the Workspace's confirmed Telegram chats and email
  * addresses (docs: Actions and delivery, "Source Health alerts"). `named` says the setting names it now.
- * One named before it lost its confirmation is listed too, so it can be unticked.
  */
 export async function loadHealthAlertDestinations(db: Db, workspaceId: string) {
   const rows = await db
@@ -179,7 +178,7 @@ export async function loadHealthAlertDestinations(db: Db, workspaceId: string) {
       and(
         eq(destination.workspaceId, workspaceId),
         inArray(destination.type, ["telegram", "email"]),
-        or(isNotNull(destination.confirmedAt), isNotNull(healthAlertDestination.destinationId)),
+        isNotNull(destination.confirmedAt),
       ),
     )
     .orderBy(destination.name);
@@ -194,22 +193,30 @@ export async function loadHealthAlertDestinations(db: Db, workspaceId: string) {
 export async function saveHealthAlertDestinations(db: Db, workspaceId: string, destinationIds: string[]) {
   const ids = destinationIds.filter(isUuid);
   await db.transaction(async (tx) => {
+    // The Destinations first, as a remove takes them, so the two can't deadlock. Shared, so a remove
+    // of one waits rather than fail this insert's foreign key.
+    const allowed =
+      ids.length === 0
+        ? []
+        : await tx
+            .select({ destinationId: destination.id })
+            .from(destination)
+            .where(
+              and(
+                eq(destination.workspaceId, workspaceId),
+                inArray(destination.id, ids),
+                inArray(destination.type, ["telegram", "email"]),
+                isNotNull(destination.confirmedAt),
+              ),
+            )
+            .orderBy(destination.id)
+            .for("key share");
     await tx.delete(healthAlertDestination).where(eq(healthAlertDestination.workspaceId, workspaceId));
-    if (ids.length === 0) return;
-    const allowed = await tx
-      .select({ destinationId: destination.id })
-      .from(destination)
-      .where(
-        and(
-          eq(destination.workspaceId, workspaceId),
-          inArray(destination.id, ids),
-          inArray(destination.type, ["telegram", "email"]),
-          isNotNull(destination.confirmedAt),
-        ),
-      )
-      // Shared, so a remove of the Destination waits rather than fail this insert's foreign key.
-      .for("key share");
     if (allowed.length === 0) return;
-    await tx.insert(healthAlertDestination).values(allowed.map(({ destinationId }) => ({ workspaceId, destinationId })));
+    // Two saves at once can both insert a row, and either is what the user asked for.
+    await tx
+      .insert(healthAlertDestination)
+      .values(allowed.map(({ destinationId }) => ({ workspaceId, destinationId })))
+      .onConflictDoNothing();
   });
 }

@@ -189,6 +189,38 @@ describe("source", () => {
     }
   }, 60_000);
 
+  it("applies migration 0021 to Sources polled before Health was tracked, taking the last poll as the last success", async () => {
+    await db.execute(sql`create database at_0020`);
+    const url = new URL(postgres.url);
+    url.pathname = "/at_0020";
+    await migrateFirst(url.href, 21);
+    const old = createDb(url.href);
+    try {
+      // Raw SQL, as above.
+      await old.execute(sql`insert into "user" (id, name, email) values ('a', 'A', 'a@example.com')`);
+      await old.execute(sql`
+        with ws as (insert into workspace (name, owner_user_id) values ('A', 'a') returning id)
+        insert into source (workspace_id, type, name, config, schedule, last_polled_at)
+        select id, 'rss', name, jsonb_build_object('url', 'https://example.com/' || name), '*/15 * * * *', polled::timestamptz
+        from ws, (values ('Polled', '2026-11-09T10:00:00Z'), ('Never polled', null)) as feeds (name, polled)`);
+    } finally {
+      await closeDb(old);
+    }
+
+    await migrate(url.href);
+
+    const upgraded = createDb(url.href);
+    try {
+      const rows = await upgraded.select({ name: source.name, lastSuccessAt: source.lastSuccessAt }).from(source).orderBy(source.name);
+      expect(rows).toEqual([
+        { name: "Never polled", lastSuccessAt: null },
+        { name: "Polled", lastSuccessAt: new Date("2026-11-09T10:00:00Z") },
+      ]);
+    } finally {
+      await closeDb(upgraded);
+    }
+  }, 60_000);
+
   it("applies migration 0005 to a database with duplicate Sources, keeping the oldest copy", async () => {
     await db.execute(sql`create database at_0004`);
     const url = new URL(postgres.url);

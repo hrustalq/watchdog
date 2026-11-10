@@ -121,8 +121,7 @@ describe("Source Health alerts", () => {
   }
 
   it("delivers exactly one failing alert and one recovered alert across a long failure", async () => {
-    // No burst window, which would hold the second alert for a minute after the first went.
-    const seeded = await seed({ burstWindowSeconds: 0 });
+    const seeded = await seed();
     const chat = await seeded.name({ name: "ops-chat" });
     const { deps, sent } = recording();
 
@@ -220,7 +219,7 @@ describe("Source Health alerts", () => {
     expect(await alertsOf(seeded.sourceId)).toMatchObject([{ status: "sent" }]);
   });
 
-  it("holds an alert the Destination's rate limit or burst window has no room for", async () => {
+  it("holds an alert the Destination's rate limit has no room for, and sends it inside a burst window", async () => {
     const seeded = await seed({ alertsPerHour: 1, burstWindowSeconds: 60 });
     const chat = await seeded.name({ name: "ops-chat" });
     await seeded.fail();
@@ -234,15 +233,44 @@ describe("Source Health alerts", () => {
     expect(sent).toEqual([]);
     expect(await alertsOf(seeded.sourceId)).toMatchObject([{ status: "held", nextAttemptAt: minutesLater(70) }]);
 
-    // Inside the burst window a Delivery would join a Grouped alert. A Health alert waits and goes alone.
+    // Inside the burst window a Delivery would wait to join a Grouped alert. A Health alert never joins
+    // one, so it has nothing to wait for.
     await db.update(workspace).set({ alertsPerHour: 20 }).where(eq(workspace.id, seeded.workspaceId));
     await db.update(sentMessage).set({ sentAt: new Date(now.getTime() - 20_000) }).where(eq(sentMessage.destinationId, chat));
     await db.update(sourceAlert).set({ nextAttemptAt: new Date(Date.now() - 1000) }).where(eq(sourceAlert.sourceId, seeded.sourceId));
     await deliverDue(seeded.sourceId, deps);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("sends a recovery after the failure it ends, when both were waiting", async () => {
+    const seeded = await seed();
+    const chat = await seeded.name({ name: "ops-chat" });
+    await seeded.fail();
+    seeded.state.feedUp = true;
+    await seeded.poll(minutesLater(20));
+    const [failing, recovered] = await alertsOf(seeded.sourceId);
+    const { deps, sent } = recording();
+    await db.transaction((tx) => releaseDueSourceAlerts(tx));
+
+    // The recovery's job runs first: it waits a minute for the failing alert ahead of it.
+    await sendSourceAlert(db, present(recovered).id, deps);
     expect(sent).toEqual([]);
-    expect(await alertsOf(seeded.sourceId)).toMatchObject([
-      { status: "held", nextAttemptAt: new Date(now.getTime() + 40_000) },
+    expect((await alertsOf(seeded.sourceId))[1]).toMatchObject({ kind: "recovered", status: "held" });
+
+    await sendSourceAlert(db, present(failing).id, deps);
+    await db.update(sourceAlert).set({ nextAttemptAt: new Date(Date.now() - 1000) }).where(eq(sourceAlert.id, present(recovered).id));
+    await deliverDue(seeded.sourceId, deps);
+    expect(sent.map(({ destination: to, message }) => [to.id, message.health])).toEqual([
+      [chat, "failing"],
+      [chat, "recovered"],
     ]);
+  });
+
+  it("goes to the sign-in address when none of the named Destinations is confirmed", async () => {
+    const seeded = await seed();
+    await seeded.name({ name: "Unconfirmed", type: "email", config: { address: "new@example.com" }, confirmedAt: null });
+    await seeded.fail();
+    expect(await alertsOf(seeded.sourceId)).toMatchObject([{ kind: "failing", destinationId: null }]);
   });
 
   it("holds a mail the hosted email cap has no room for, and queues the day's notice", async () => {

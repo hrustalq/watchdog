@@ -10,6 +10,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  lt,
   lte,
   or,
   sentMessage,
@@ -45,10 +46,9 @@ export async function queueSourceAlerts(
       .from(healthAlertDestination)
       .innerJoin(destination, eq(destination.id, healthAlertDestination.destinationId))
       .where(eq(healthAlertDestination.workspaceId, workspaceId));
-    const recipients =
-      named.length === 0
-        ? [null]
-        : named.filter((row) => row.type !== "webhook" && row.confirmedAt !== null).map(({ id }) => id);
+    const confirmed = named.filter((row) => row.type !== "webhook" && row.confirmedAt !== null).map(({ id }) => id);
+    // The sign-in address too when none of the named ones can receive, so a failing Source is never silent.
+    const recipients = confirmed.length === 0 ? [null] : confirmed;
     const rows = changed
       .filter((row) => row.workspaceId === workspaceId)
       .flatMap(({ id }) => recipients.map((destinationId) => ({ workspaceId, sourceId: id, destinationId, kind, error })));
@@ -120,17 +120,18 @@ export interface SourceAlertDeps {
  *
  * To a Destination, it takes the Destination's row first and holds it through the send, as a Delivery's
  * job does (ADR 0028), so the two take turns and each counts the other's message against the rate limit
- * and the burst window. It always goes as its own message: where a Delivery would join a Grouped alert,
- * it is held until the burst window ends.
+ * and the burst window. It always goes as its own message, so the burst window, which only decides what
+ * joins a Grouped alert, doesn't hold it. A Source's alerts to one recipient go in the order they were
+ * written, so a recovery never arrives before the failure it ends.
  */
 export async function sendSourceAlert(db: Db, alertId: string, deps: SourceAlertDeps): Promise<void> {
   const now = deps.now ?? (() => new Date());
   const [found] = await db
-    .select({ destinationId: sourceAlert.destinationId })
+    .select({ destinationId: sourceAlert.destinationId, workspaceId: sourceAlert.workspaceId })
     .from(sourceAlert)
     .where(eq(sourceAlert.id, alertId));
   if (found === undefined) return;
-  const { destinationId } = found;
+  const { destinationId, workspaceId } = found;
 
   await db.transaction(async (tx) => {
     const [named] =
@@ -138,6 +139,9 @@ export async function sendSourceAlert(db: Db, alertId: string, deps: SourceAlert
         ? []
         : await tx.select().from(destination).where(eq(destination.id, destinationId)).for("no key update");
     if (destinationId !== null && named === undefined) return;
+
+    // Before the settings are read, as a Delivery does, so two mails held by the cap queue one notice.
+    if (deps.emailCap !== undefined && named?.type !== "telegram") await takeEmailCapTurn(tx, workspaceId);
 
     // Queued and due by the database's clock, as a Delivery is, so a job that runs again after its
     // attempt committed finds the retry not yet due and ends.
@@ -184,6 +188,22 @@ export async function sendSourceAlert(db: Db, alertId: string, deps: SourceAlert
     }
 
     const at = now();
+    const [earlier] = await tx
+      .select({ id: sourceAlert.id })
+      .from(sourceAlert)
+      .where(
+        and(
+          eq(sourceAlert.sourceId, alert.sourceId),
+          destinationId === null ? isNull(sourceAlert.destinationId) : eq(sourceAlert.destinationId, destinationId),
+          inArray(sourceAlert.status, ["queued", "held"]),
+          lt(sourceAlert.createdAt, alert.createdAt),
+        ),
+      )
+      .limit(1);
+    if (earlier !== undefined) {
+      await hold(new Date(at.getTime() + 60_000));
+      return;
+    }
     const sends =
       named === undefined
         ? []
@@ -194,12 +214,11 @@ export async function sendSourceAlert(db: Db, alertId: string, deps: SourceAlert
             .orderBy(sentMessage.sentAt);
     // No Severity, so the Severity 5 bypass never applies.
     const decision = scheduleDelivery({ settings, now: at, severity: null, recentSends: sends.map((sent) => sent.at) });
-    if (decision.kind !== "send") {
+    if (decision.kind === "hold") {
       await hold(decision.until);
       return;
     }
     if (target.type === "email" && deps.emailCap !== undefined) {
-      await takeEmailCapTurn(tx, settings.id);
       const capEnd = await emailCapEnd(tx, settings, at);
       if (capEnd !== undefined) {
         await hold(capEnd);

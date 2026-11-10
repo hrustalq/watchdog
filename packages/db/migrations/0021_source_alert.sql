@@ -21,4 +21,7 @@ ALTER TABLE "source_alert" ADD CONSTRAINT "source_alert_source_id_source_id_fk" 
 ALTER TABLE "source_alert" ADD CONSTRAINT "source_alert_destination_id_destination_id_fk" FOREIGN KEY ("destination_id") REFERENCES "public"."destination"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "source_alert_held_next_attempt_at_idx" ON "source_alert" USING btree ("next_attempt_at") WHERE "source_alert"."status" = 'held';--> statement-breakpoint
 CREATE INDEX "source_alert_source_id_idx" ON "source_alert" USING btree ("source_id");--> statement-breakpoint
-CREATE INDEX "source_alert_destination_id_idx" ON "source_alert" USING btree ("destination_id");
+CREATE INDEX "source_alert_destination_id_idx" ON "source_alert" USING btree ("destination_id");--> statement-breakpoint
+-- Until now only a successful poll set last_polled_at, and nothing set last_success_at. Without this, a
+-- Source that has polled fine for weeks would count its 24 hours with no success from when it was created.
+UPDATE "source" SET "last_success_at" = "last_polled_at" WHERE "last_success_at" IS NULL AND "last_polled_at" IS NOT NULL;
