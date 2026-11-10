@@ -207,7 +207,7 @@ async function SourceList() {
                       {row.lastErrorAt === null ? null : (
                         <>
                           {" "}
-                          at <Timestamp at={row.lastErrorAt} />
+                          at <Timestamp at={row.lastErrorAt} className="whitespace-nowrap" />
                         </>
                       )}
                       : {withoutUrl(row, row.lastError)}
@@ -259,7 +259,7 @@ async function SourceList() {
 const lastSuccess = ({ lastSuccessAt }: { lastSuccessAt: Date | null }) =>
   lastSuccessAt === null ? null : (
     <>
-      Last success <Timestamp at={lastSuccessAt} />
+      Last success <Timestamp at={lastSuccessAt} className="whitespace-nowrap" />
     </>
   );
 
