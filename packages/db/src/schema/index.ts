@@ -12,4 +12,5 @@ export * from "./correction.ts";
 export * from "./profile.ts";
 export * from "./agent.ts";
 export * from "./github.ts";
+export * from "./telegram.ts";
 export * from "./relations.ts";

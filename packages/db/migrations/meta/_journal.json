@@ -134,6 +134,13 @@
       "when": 1794297756722,
       "tag": "0018_telegram_source_link",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1794301388768,
+      "tag": "0019_telegram_user_session",
+      "breakpoints": true
     }
   ]
 }

@@ -6,7 +6,8 @@
     ".": "./src/index.ts",
     "./rules/draft": "./src/rules/draft.ts",
     "./render": "./src/render/index.ts",
-    "./testing": "./src/agent/fake-llm.ts"
+    "./testing": "./src/agent/fake-llm.ts",
+    "./telegram-session": "./src/telegram/user-session/login.ts"
   },
   "scripts": {
     "typecheck": "tsc",
@@ -16,6 +17,8 @@
     "test:integration": "vitest run --passWithNoTests .int.test.ts"
   },
   "devDependencies": {
+    "@mtcute/test": "0.32.8",
+    "@mtcute/web": "0.32.8",
     "@types/node": "^26",
     "@types/nodemailer": "^8.0.2",
     "@watchdog/lint-config": "workspace:*",
@@ -29,6 +32,7 @@
     "@ai-sdk/anthropic": "^4.0.96",
     "@ai-sdk/google": "^4.0.111",
     "@ai-sdk/openai-compatible": "^3.0.84",
+    "@mtcute/node": "0.32.8",
     "@watchdog/db": "workspace:*",
     "ai": "^7.0.162",
     "better-auth": "^1.7.15",
