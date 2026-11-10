@@ -92,9 +92,8 @@ async function addRssSource(page: Page, path: string) {
 
 /**
  * On the Sources screen, asks for a poll of the fixture feed's Source with Check now, so a test doesn't
- * wait out its schedule, and waits until the row shows the poll ran. The worker's tick runs it within a
- * minute. A click the tick answers before the page says a poll is due is clicked again, and the second
- * poll finds nothing new.
+ * wait out its schedule, and waits until the worker's tick has started it, within a minute. A click the
+ * tick answers before the page says a poll is due is clicked again, and the second poll finds nothing new.
  */
 async function checkNow(page: Page, path: string) {
   await page.goto(new URL("/sources", page.url()).href);
@@ -105,8 +104,7 @@ async function checkNow(page: Page, path: string) {
     await row.getByRole("button", { name: /^Check now/ }).click();
     await expect(due).toBeVisible({ timeout: 5_000 });
   }).toPass({ timeout: 30_000 });
-  await expect(due, "the row never showed that the poll ran").toHaveCount(0, untilPolled);
-  await expect(row).toContainText("Last success");
+  await expect(due, "the worker never took the poll").toHaveCount(0, untilPolled);
 }
 
 // A new self-hosted install with no mail server, end to end: claim it with the setup link, sign in

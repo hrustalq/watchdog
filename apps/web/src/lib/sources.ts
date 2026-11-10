@@ -17,6 +17,7 @@ import {
   parseRepo,
   parseWithin,
   maxRegionLength,
+  minimumMinutes,
   regexError,
   regionError,
   renderModes,
@@ -631,8 +632,18 @@ export const problemField = (problem: AddProblem, type: AddType = "rss", values?
   return type === "rss" || type === "website" ? "url" : "repo";
 };
 
-/** The Workspace's Sources, newest first. */
-export function listSources(db: Db, workspaceId: string) {
+/**
+ * How long after a poll Check now waits, in minutes. Hosted shares one IP across every Workspace, so its
+ * shortest schedule is also the least time between a poll and a check. Self-hosted checks at any time.
+ */
+export const checkGapMinutes = (mode: Config["mode"]) => (mode === "hosted" ? minimumMinutes.hosted : 0);
+
+/** Whether a Source's last poll ended at least `minutes` ago, or it has never been polled. */
+const lastPollBefore = (table: Pick<typeof source, "lastSuccessAt" | "lastErrorAt">, minutes: number) =>
+  sql<boolean>`coalesce(greatest(${table.lastSuccessAt}, ${table.lastErrorAt}) <= now() - make_interval(mins => ${minutes}), true)`;
+
+/** The Workspace's Sources, newest first. `checkable` is whether Check now would be taken, given the gap. */
+export function listSources(db: Db, workspaceId: string, gapMinutes = 0) {
   return db.query.source.findMany({
     where: eq(source.workspaceId, workspaceId),
     columns: {
@@ -647,7 +658,10 @@ export function listSources(db: Db, workspaceId: string) {
       health: true,
     },
     // Whether a poll is due: asked for with Check now, or by the schedule, and not yet run.
-    extras: (table, { sql: raw }) => ({ due: raw<boolean>`coalesce(${table.nextPollAt} <= now(), false)`.as("due") }),
+    extras: (table, { sql: raw }) => ({
+      due: raw<boolean>`coalesce(${table.nextPollAt} <= now(), false)`.as("due"),
+      checkable: lastPollBefore(table, gapMinutes).as("checkable"),
+    }),
     orderBy: (table, { desc }) => [desc(table.createdAt), desc(table.id)],
   });
 }
@@ -655,14 +669,22 @@ export function listSources(db: Db, workspaceId: string) {
 /**
  * Makes a Schedule Source due, so the worker's next tick polls it, within a minute. The tick queues one
  * poll a Source at a time, so asking twice polls once. A failing Source's hour between polls doesn't
- * hold it back. Returns false for a Source the Workspace doesn't have or one that is never polled.
+ * hold it back. Returns false for a Source the Workspace doesn't have, one that is never polled, and
+ * one whose last poll ended less than `gapMinutes` ago.
  */
-export async function checkSourceNow(db: Db, workspaceId: string, sourceId: string) {
+export async function checkSourceNow(db: Db, workspaceId: string, sourceId: string, gapMinutes = 0) {
   if (!isUuid(sourceId)) return false;
   const due = await db
     .update(source)
     .set({ nextPollAt: sql`now()` })
-    .where(and(eq(source.workspaceId, workspaceId), eq(source.id, sourceId), inArray(source.type, scheduleTypes)))
+    .where(
+      and(
+        eq(source.workspaceId, workspaceId),
+        eq(source.id, sourceId),
+        inArray(source.type, scheduleTypes),
+        lastPollBefore(source, gapMinutes),
+      ),
+    )
     .returning({ id: source.id });
   return due.length > 0;
 }

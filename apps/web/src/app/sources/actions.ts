@@ -8,6 +8,7 @@ import { replaceInboxToken } from "@/lib/inbox";
 import {
   addFormSource,
   addValues,
+  checkGapMinutes,
   checkSourceNow,
   newSourceLink,
   removeSource,
@@ -73,7 +74,9 @@ export async function newSourceLinkAction(sourceId: unknown) {
 /** Check now: makes a Schedule Source of the Workspace due, and the worker's next tick polls it. */
 export async function checkSourceNowAction(sourceId: unknown) {
   const { workspace } = await requireWorkspace();
-  if (typeof sourceId === "string") await checkSourceNow(server().db, workspace.id, sourceId);
+  const { db, mode } = server();
+  // The page offers no button for a check this refuses, so there's nothing to say when it does.
+  if (typeof sourceId === "string") await checkSourceNow(db, workspace.id, sourceId, checkGapMinutes(mode));
   redirect("/sources");
 }
 

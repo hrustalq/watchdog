@@ -1,9 +1,5 @@
 // How a Source's Health reads on the Sources screen (DESIGN.md, "Health chip").
-
-const chip = "inline-flex shrink-0 items-center gap-1.5 rounded-sm border border-transparent px-1.5 py-0.5 text-xs font-medium tracking-[0.01em]";
-
-// Forced colours drop backgrounds, which would hide the lamp.
-const lamp = "size-1.5 rounded-full forced-color-adjust-none forced-colors:bg-[CanvasText]";
+import { chip, filledLamp } from "./rating.tsx";
 
 // Healthy is the expected state, so it gets a green lamp and no tint.
 const looks = {
@@ -16,8 +12,8 @@ const looks = {
 export function HealthChip({ health }: { health: keyof typeof looks }) {
   const { word, tone, light } = looks[health];
   return (
-    <span className={`${chip} ${tone}`}>
-      <span aria-hidden="true" className={`${lamp} ${light}`} />
+    <span className={`${chip} shrink-0 border-transparent ${tone}`}>
+      <span aria-hidden="true" className={`size-1.5 rounded-full ${light} ${filledLamp}`} />
       <span className="sr-only">{`Health: ${health}`}</span>
       <span aria-hidden="true">{word}</span>
     </span>

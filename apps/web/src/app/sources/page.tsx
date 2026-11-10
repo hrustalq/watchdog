@@ -11,6 +11,7 @@ import { requireWorkspace, server } from "@/lib/server";
 import {
   addProblems,
   addValues,
+  checkGapMinutes,
   listSources,
   problemField,
   problemMessage,
@@ -108,9 +109,9 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
 
 async function SourceList() {
   const { workspace } = await requireWorkspace();
-  const { db, telegramAvailable, telegramBotName, telegramSessionAvailable } = server();
+  const { db, mode, telegramAvailable, telegramBotName, telegramSessionAvailable } = server();
   const [sources, session] = await Promise.all([
-    listSources(db, workspace.id),
+    listSources(db, workspace.id, checkGapMinutes(mode)),
     telegramSessionAvailable ? sessionOf(db, workspace.id) : undefined,
   ]);
   const link = telegramAvailable
@@ -194,18 +195,10 @@ async function SourceList() {
                   {row.schedule === null ? null : <p className="text-sm text-muted-foreground">
                     {scheduleLabel(row.schedule) ?? <span className="font-mono">{row.schedule}</span>}
                     {" · "}
-                    {row.lastSuccessAt === null ? (
-                      `${row.lastError === null ? "Not polled" : "No successful poll"} yet`
-                    ) : (
-                      <>
-                        Last success <Timestamp at={row.lastSuccessAt} />
-                      </>
-                    )}
+                    {lastSuccess(row) ?? `${row.lastError === null ? "Not polled" : "No successful poll"} yet`}
                   </p>}
                   {row.schedule !== null || row.lastSuccessAt === null ? null : (
-                    <p className="text-sm text-muted-foreground">
-                      Last success <Timestamp at={row.lastSuccessAt} />
-                    </p>
+                    <p className="text-sm text-muted-foreground">{lastSuccess(row)}</p>
                   )}
                   {row.lastError === null ? null : (
                     // The chip has the lamp. One failed poll isn't an alarm, so the error is red only once the Source is failing.
@@ -222,7 +215,7 @@ async function SourceList() {
                   )}
                   {row.due ? (
                     <p role="status" className="text-sm text-muted-foreground">
-                      A poll is due, and the worker runs it within a minute.{" "}
+                      A poll is due, and the worker usually runs it within a minute.{" "}
                       <Link href="/sources" prefetch={false} className={textLink}>
                         Reload this page
                         <span className="sr-only"> to see {row.name}&apos;s poll</span>
@@ -232,10 +225,11 @@ async function SourceList() {
                   ) : null}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-start gap-2">
-                  {row.schedule === null ? null : (
+                  {/* On hosted, not until the shortest schedule has passed since the last poll. */}
+                  {row.schedule === null || !row.checkable ? null : (
                     <form action={checkSourceNowAction.bind(null, row.id)}>
                       <SubmitButton variant="outline" pendingLabel="Asking…">
-                        Check now<span className="sr-only">: {row.name}</span>
+                        Check now<span className="sr-only"> for {row.name}</span>
                       </SubmitButton>
                     </form>
                   )}
@@ -256,11 +250,18 @@ async function SourceList() {
             ))}
           </ul>
         )}
-        {sources.some((row) => row.due) ? <DueRefresher /> : null}
+        <DueRefresher due={sources.some((row) => row.due)} />
       </section>
     </>
   );
 }
+
+const lastSuccess = ({ lastSuccessAt }: { lastSuccessAt: Date | null }) =>
+  lastSuccessAt === null ? null : (
+    <>
+      Last success <Timestamp at={lastSuccessAt} />
+    </>
+  );
 
 const errorTone = { ok: "text-foreground", degraded: "text-caution", failing: "text-alarm" };
 

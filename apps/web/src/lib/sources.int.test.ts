@@ -29,6 +29,7 @@ import {
   addValues,
   addWebsiteSource,
   type AddProblem,
+  checkGapMinutes,
   checkSourceNow,
   listSources,
   newSourceLink,
@@ -270,6 +271,30 @@ describe("Sources", () => {
 
     expect(await db.select({ id: source.id }).from(source).where(and(eq(source.id, id), lte(source.nextPollAt, sql`now()`)))).toHaveLength(1);
     expect((await listSources(db, ours)).find((row) => row.id === id)?.due).toBe(true);
+  });
+
+  it("on hosted, takes Check now only once the shortest schedule has passed since the last poll", async () => {
+    const { id } = await added(ours, { url: newFeed(), name: "Hosted" });
+    const later = new Date(Date.now() + 3_600_000);
+    const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000);
+    const gap = checkGapMinutes("hosted");
+    expect(gap).toBe(15);
+    expect(checkGapMinutes("self-hosted")).toBe(0);
+    const listed = async () => (await listSources(db, ours, gap)).find((row) => row.id === id);
+    // Never polled, so there is no poll to wait after.
+    expect((await listed())?.checkable).toBe(true);
+
+    await db.update(source).set({ nextPollAt: later, lastErrorAt: minutesAgo(5), lastSuccessAt: minutesAgo(60) }).where(eq(source.id, id));
+    expect((await listed())?.checkable).toBe(false);
+    expect(await checkSourceNow(db, ours, id, gap)).toBe(false);
+    expect((await listed())?.due).toBe(false);
+    // Self-hosted has no gap.
+    expect((await listSources(db, ours)).find((row) => row.id === id)?.checkable).toBe(true);
+
+    await db.update(source).set({ lastErrorAt: minutesAgo(16) }).where(eq(source.id, id));
+    expect((await listed())?.checkable).toBe(true);
+    expect(await checkSourceNow(db, ours, id, gap)).toBe(true);
+    expect((await listed())?.due).toBe(true);
   });
 
   it("checks nothing for another Workspace's Source, an id that isn't one, or a Source that isn't polled", async () => {

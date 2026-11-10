@@ -1,9 +1,9 @@
 // How an Item's Rating and Categories read, in the Feed and on the Item (DESIGN.md, "Rating chips").
 
-const chip = "inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-0.5 text-xs font-medium tracking-[0.01em]";
+export const chip = "inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-0.5 text-xs font-medium tracking-[0.01em]";
 
 // Forced colours drop backgrounds, which would hide a filled lamp and leave only the hollow ones.
-const filledLamp = "forced-color-adjust-none forced-colors:bg-[CanvasText]";
+export const filledLamp = "forced-color-adjust-none forced-colors:bg-[CanvasText]";
 
 /** High is 4–5, the levels the scale says to act on this week or sooner. */
 function severityLook(severity: number) {
