@@ -31,9 +31,7 @@ const problems: Record<string, string> = {
   "not-listed": "That chat isn't in your account's list any more, so nothing was saved. Here is the current list.",
   watched: "This Workspace already watches that chat, so nothing was saved.",
 };
-const done: Record<string, string> = {
-  watching: "Watching the chat. Its messages from the last 7 days come in within a minute, then every new one.",
-};
+
 const phoneInvalid = "That isn't a phone number. Enter it with the country code, such as +44 20 7946 0958.";
 
 export default async function TelegramSessionPage({ searchParams }: PageProps<"/sources/telegram">) {
@@ -48,7 +46,10 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
   ]);
   const code = typeof params.problem === "string" ? params.problem : "";
   const problem = problems[code];
-  const status = typeof params.done === "string" ? done[params.done] : undefined;
+  const status =
+    params.done === "watching"
+      ? "Watching the chat. Its messages from the last 7 days come in within a minute, then every new one."
+      : undefined;
 
   return (
     <div className="flex flex-1 flex-col">

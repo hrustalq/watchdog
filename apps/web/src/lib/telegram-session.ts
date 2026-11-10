@@ -66,8 +66,6 @@ export async function revokeTelegramSession(access: SessionAccess, workspaceId: 
 /** Watches a chat picked from the session's list. The id comes from the form, so only a listed one counts. */
 export async function watchTelegramChat(access: SessionAccess, workspaceId: string, chat: string) {
   if (!access.available) return "unavailable";
-  const chatId = Number(chat);
-  if (chat.trim() === "" || !Number.isSafeInteger(chatId)) return "not-listed";
-  const result = await watchChat(access.db, workspaceId, chatId);
+  const result = await watchChat(access.db, workspaceId, Number(chat));
   return "watched" in result ? "watching" : result.refused;
 }

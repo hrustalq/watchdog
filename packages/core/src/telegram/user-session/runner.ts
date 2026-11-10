@@ -59,15 +59,13 @@ function asBotMessage(message: Message): BotMessage | undefined {
   };
 }
 
-const isFlood = (error: unknown) => tl.RpcError.is(error, "FLOOD_WAIT_%d");
-
 /** Runs again after a FLOOD_WAIT, which the read-only client waits out before the call. */
 async function waitingOutFloods<T>(read: () => Promise<T>): Promise<T> {
   for (;;) {
     try {
       return await read();
     } catch (error) {
-      if (!isFlood(error)) throw error;
+      if (!tl.RpcError.is(error, "FLOOD_WAIT_%d")) throw error;
     }
   }
 }
