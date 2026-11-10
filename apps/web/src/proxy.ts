@@ -22,8 +22,9 @@ export function proxy(request: NextRequest) {
 }
 
 // Every route needs a session except sign-in, setup, a Destination's confirmation link (whose owner may
-// have no account), a Digest mail's unsubscribe link (which a mail client POSTs to), Better Auth's own endpoints, Next's build output and public/ files (any non-API path
+// have no account), a Digest mail's unsubscribe link (which a mail client POSTs to), Better Auth's own endpoints,
+// the webhook inbox (whose token is its proof), Next's build output and public/ files (any non-API path
 // ending in an extension).
 export const config = {
-  matcher: ["/((?!sign-in(?:/|$)|setup$|destinations/confirm$|unsubscribe$|api/auth/|_next/static/|_next/image|(?!api/).*\\.\\w+$).*)"],
+  matcher: ["/((?!sign-in(?:/|$)|setup$|destinations/confirm$|unsubscribe$|api/auth/|api/inbox/|_next/static/|_next/image|(?!api/).*\\.\\w+$).*)"],
 };

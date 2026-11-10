@@ -1,21 +1,8 @@
 // Runs each captured Item through the pipeline in its own job (docs: Processing pipeline, "Stages").
-import { type PollSourceDeps, processItem, type ProcessItemDeps } from "@watchdog/core";
-import { type Db, sql } from "@watchdog/db";
-import { fromDrizzle, type PgBoss } from "pg-boss";
+import { processItem, type ProcessItemDeps, processItemQueue } from "@watchdog/core";
+import type { Db } from "@watchdog/db";
+import type { PgBoss } from "pg-boss";
 import { deliveryEnqueuer } from "./delivery.ts";
-
-export const processItemQueue = "process-item";
-
-/** Queues one job per Item over the capture's transaction, so they commit or roll back together. */
-export function itemEnqueuer(boss: PgBoss): PollSourceDeps["enqueueItems"] {
-  return async (tx, itemIds) => {
-    await boss.insert(
-      processItemQueue,
-      itemIds.map((itemId) => ({ data: { itemId } })),
-      { db: fromDrizzle(tx, sql) },
-    );
-  };
-}
 
 // Retries and concurrency: docs, Agent and LLM integration, "Limits". A job makes up to two calls of
 // two attempts at 120 seconds each, so one still active after 10 minutes belongs to a worker that

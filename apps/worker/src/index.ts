@@ -4,6 +4,7 @@ import {
   createEgressFetch,
   createMailer,
   createSenders,
+  itemEnqueuer,
   linkChat,
   loadConfig,
   runBot,
@@ -14,7 +15,7 @@ import { createChromiumRenderer, createObscuraRenderer } from "@watchdog/core/re
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { startDelivery } from "./delivery.ts";
-import { itemEnqueuer, startPipeline } from "./pipeline.ts";
+import { startPipeline } from "./pipeline.ts";
 import { readyFile } from "./ready.ts";
 import { startScheduler } from "./scheduler.ts";
 import { startTelegramBot } from "./telegram.ts";

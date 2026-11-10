@@ -5,7 +5,7 @@ import { pathHeader } from "./lib/return-to.ts";
 import { config, proxy } from "./proxy.ts";
 
 describe("proxy", () => {
-  it.each(["/", "/sources", "/destinations", "/destinations/confirm-other", "/api/sources", "/sign-out", "/settings", "/setup-other", "/api/sources/export.csv", "/unsubscribe-other"])("guards the app route %s", (url) => {
+  it.each(["/", "/sources", "/destinations", "/destinations/confirm-other", "/api/sources", "/sign-out", "/settings", "/setup-other", "/api/sources/export.csv", "/unsubscribe-other", "/api/inboxes", "/sources/3f0c2f4e-0000-4000-8000-000000000000/inbox"])("guards the app route %s", (url) => {
     expect(unstable_doesMiddlewareMatch({ config, url })).toBe(true);
   });
 
@@ -19,6 +19,7 @@ describe("proxy", () => {
     "/api/auth/sign-in/magic-link",
     "/api/auth/magic-link/verify",
     "/api/auth/callback/github",
+    "/api/inbox/an-inbox-token",
     "/_next/static/chunks/app.js",
     "/favicon.ico",
     "/robots.txt",

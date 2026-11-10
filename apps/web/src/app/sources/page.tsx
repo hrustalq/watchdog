@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { Suspense } from "react";
 import { releasesFeedUrl, signInToken } from "@watchdog/core";
+import { textLink } from "@/components/field-classes";
 import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
 import {
@@ -89,7 +90,7 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
       mode={mode}
       renderers={renderers}
       tokenDropped={param("pasted") !== ""}
-      error={{ field: problemField(problem, values.type), message: problemMessage(problem, shown) }}
+      error={{ field: problemField(problem, values.type, values), message: problemMessage(problem, shown) }}
     />
   );
 }
@@ -127,7 +128,7 @@ async function SourceList() {
         </h2>
         {sources.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            None yet. Add a feed, a page, a GitHub repo or a GitHub search above, and every Item it captures shows up
+            None yet. Add a feed, a page, a GitHub repo, a GitHub search or a webhook inbox above, and every Item it captures shows up
             in the Feed.
           </p>
         ) : (
@@ -136,13 +137,23 @@ async function SourceList() {
               <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="flex min-w-0 flex-col gap-1">
                   <h3 className="text-title break-words">{row.name}</h3>
-                  <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{urlOf(row)}</p>
+                  {row.type === "webhook" ? (
+                    <p className="text-sm text-muted-foreground">
+                      Webhook inbox ·{" "}
+                      <Link href={`/sources/${row.id}/inbox`} className={textLink}>
+                        URL and mapping
+                        <span className="sr-only"> for {row.name}</span>
+                      </Link>
+                    </p>
+                  ) : (
+                    <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{urlOf(row)}</p>
+                  )}
                   {"region" in row.config ? (
                     <p className="text-sm break-all text-muted-foreground">
                       Region <span className="font-mono text-[0.8125rem]">{row.config.region}</span>
                     </p>
                   ) : null}
-                  <p className="text-sm text-muted-foreground">
+                  {row.schedule === null ? null : <p className="text-sm text-muted-foreground">
                     {scheduleLabel(row.schedule) ?? <span className="font-mono">{row.schedule}</span>}
                     {" · "}
                     {row.lastPolledAt === null ? (
@@ -153,7 +164,7 @@ async function SourceList() {
                         Last polled <Timestamp at={row.lastPolledAt} />
                       </>
                     )}
-                  </p>
+                  </p>}
                   {row.lastError === null ? null : (
                     <p className="flex items-start gap-2 text-sm text-alarm">
                       <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />

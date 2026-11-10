@@ -9,6 +9,7 @@ import {
   FeedHttpError,
   fetchFeed,
   fetchReleases,
+  mappingError,
   MissingRepoError,
   NotAFeedError,
   parseRepo,
@@ -20,6 +21,7 @@ import {
   signInToken,
 } from "@watchdog/core";
 import { and, type Db, eq, source } from "@watchdog/db";
+import { newInboxToken } from "./inbox.ts";
 import { isUuid } from "./uuid.ts";
 
 export interface SourceDeps {
@@ -41,13 +43,13 @@ export interface Renderers {
 export type RenderMode = (typeof renderModes)[number];
 
 /** The kinds of Source the form adds. */
-export const addTypes = ["rss", "website", "github-releases", "github-issues", "github-mentions"] as const;
+export const addTypes = ["rss", "website", "github-releases", "github-issues", "github-mentions", "webhook"] as const;
 export type AddType = (typeof addTypes)[number];
 
 /**
  * What the form posts, apart from a pasted token. Each type reads its own fields: `url` for RSS,
  * `url`, `region`, `ignore`, `ignoreRobots` and `render` for a website, `repo` for GitHub releases
- * and issues, `term` and `within` for GitHub mentions.
+ * and issues, `term` and `within` for GitHub mentions, and the four JSONPaths for a webhook inbox.
  */
 export interface AddValues {
   type: AddType;
@@ -62,9 +64,17 @@ export interface AddValues {
   /** "on" when a self-hosted website Source skips robots.txt. */
   ignoreRobots: string;
   render: RenderMode;
+  /** A webhook inbox's mapping: a JSONPath for each Item field, empty for none. */
+  mapTitle: string;
+  mapBody: string;
+  mapUrl: string;
+  mapExternalId: string;
   name: string;
   schedule: string;
 }
+
+/** The mapping's form fields, in the order the form shows them. */
+export const mappingFields = ["mapTitle", "mapBody", "mapUrl", "mapExternalId"] as const;
 
 /**
  * The form's values from a posted form or the URL it was sent back to, read by field name. A pasted
@@ -81,6 +91,10 @@ export function addValues(field: (name: string) => string): AddValues {
     ignore: field("ignore"),
     ignoreRobots: field("ignoreRobots") === "on" ? "on" : "",
     render: renderModes.find((mode) => mode === field("render")) ?? "static",
+    mapTitle: field("mapTitle"),
+    mapBody: field("mapBody"),
+    mapUrl: field("mapUrl"),
+    mapExternalId: field("mapExternalId"),
     name: field("name"),
     schedule: field("schedule"),
   };
@@ -101,6 +115,7 @@ export const addProblems = [
   "invalid-within",
   "invalid-token",
   "no-token",
+  "invalid-mapping",
   "schedule",
   "duplicate",
   "blocked",
@@ -130,6 +145,8 @@ export const schedules = [
 /** Adds a Source of the type the form chose. */
 export function addFormSource(db: Db, deps: SourceDeps, workspaceId: string, values: AddValues & { token: string }) {
   switch (values.type) {
+    case "webhook":
+      return addWebhookSource(db, deps.encryptionKey, workspaceId, values);
     case "rss":
       return addRssSource(db, deps, workspaceId, values);
     case "website":
@@ -295,6 +312,36 @@ export async function addGithubMentionsSource(
   return saveWithToken(db, deps, workspaceId, { ...input, config, name: cleanName(input.name) || defaultName });
 }
 
+/**
+ * Saves a webhook inbox with a new Inbox token, for the inbox's page to show once. It has no schedule
+ * and is never polled, and a Workspace can have any number of them.
+ */
+export async function addWebhookSource(
+  db: Db,
+  encryptionKey: Buffer,
+  workspaceId: string,
+  input: Pick<AddValues, "name" | (typeof mappingFields)[number]>,
+): Promise<AddSourceResult> {
+  const paths = mappingFields.map((field) => cleanPath(input[field]));
+  if (mappingFields.some((field) => badPath(input[field]))) return { problem: "invalid-mapping" };
+  const [title, body, url, externalId] = paths.map((path) => (path === "" ? undefined : path));
+  const mapping = Object.fromEntries(Object.entries({ title, body, url, externalId }).filter(([, path]) => path !== undefined));
+  const config = Object.keys(mapping).length === 0 ? {} : { mapping };
+  return save(db, {
+    workspaceId,
+    type: "webhook",
+    name: cleanName(input.name) || "Webhook inbox",
+    config,
+    schedule: null,
+    nextPollAt: null,
+    ...newInboxToken(encryptionKey),
+  });
+}
+
+const cleanPath = (path: string) => path.replaceAll("\0", "").trim();
+/** A mapping path that's filled in but can't run. */
+const badPath = (path: string) => cleanPath(path) !== "" && mappingError(cleanPath(path)) !== undefined;
+
 /** GitHub caps a search query at 256 characters, which the term shares with its qualifiers. */
 const maxTermLength = 100;
 const cleanTerm = (term: string) => term.replaceAll("\0", "").replace(/\s+/g, " ").trim();
@@ -378,6 +425,8 @@ export async function watchedSourceName(
   workspaceId: string,
   values: Pick<AddValues, "type" | "url" | "repo"> & Partial<Pick<AddValues, "term" | "within" | "region">>,
 ) {
+  // Every inbox is a new Source, so none is ever watched already.
+  if (values.type === "webhook") return undefined;
   if (values.type === "website") {
     const href = URL.parse(values.url.trim())?.href;
     const key = `${href ?? ""} ${cleanRegion(values.region ?? "")}`;
@@ -436,7 +485,7 @@ export function problemMessage(
     source?: string | undefined;
   },
 ) {
-  const github = type !== "rss" && type !== "website";
+  const github = type.startsWith("github-");
   // Only a repo parseRepo accepts is shown, so a crafted link can't put words on the page.
   const repo = parseRepo(typed) ?? "that repo";
   const hostname = github ? "github.com" : (URL.parse(url.trim())?.hostname ?? "");
@@ -474,6 +523,8 @@ export function problemMessage(
       return "Paste the token as GitHub showed it, without spaces.";
     case "no-token":
       return "Paste a fine-grained personal access token: this Workspace has no GitHub sign-in to read GitHub's API with.";
+    case "invalid-mapping":
+      return "That isn't a JSONPath Watchdog can run. Enter one such as $.alert.title, or leave the field empty.";
     case "schedule":
       return "Choose one of the schedules in the list.";
     case "duplicate": {
@@ -486,6 +537,7 @@ export function problemMessage(
         "github-releases": `watches the releases of ${repo}`,
         "github-issues": `watches the issues of ${repo}`,
         "github-mentions": `searches GitHub for ${shownTerm}`,
+        webhook: "has that inbox",
       }[type];
       return watching === undefined
         ? `This Workspace already ${what}.`
@@ -512,9 +564,10 @@ export function problemMessage(
   }
 }
 
-/** Which form field a problem is about. */
-export const problemField = (problem: AddProblem, type: AddType = "rss") => {
+/** Which form field a problem is about: for a mapping, the first path that can't run. */
+export const problemField = (problem: AddProblem, type: AddType = "rss", values?: Partial<AddValues>) => {
   if (problem === "schedule") return "schedule";
+  if (problem === "invalid-mapping") return mappingFields.find((field) => badPath(values?.[field] ?? "")) ?? "mapTitle";
   if (problem === "no-token" || problem === "invalid-token") return "token";
   if (problem === "invalid-within") return "within";
   if (problem === "invalid-region") return "region";

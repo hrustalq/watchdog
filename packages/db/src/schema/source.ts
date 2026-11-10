@@ -89,6 +89,12 @@ export const source = pgTable(
     secretCiphertext: text("secret_ciphertext"),
     /** The SHA-256 hash of a webhook Source's Inbox token, which inbox requests are looked up by. */
     inboxTokenHash: text("inbox_token_hash").unique("source_inbox_token_hash_key"),
+    /**
+     * The minute an inbox's requests are being counted in, and how many it has had, so it answers
+     * 429 past 60 a minute across every web process.
+     */
+    inboxWindowStart: timestamp("inbox_window_start", { withTimezone: true }),
+    inboxWindowRequests: integer("inbox_window_requests").notNull().default(0),
     /** Conditional-request state from the last fetch, such as ETag and Last-Modified. */
     fetchState: jsonb("fetch_state").$type<Record<string, string>>().notNull().default({}),
     /** When the first successful fetch took the Backfill. Null until then. */
