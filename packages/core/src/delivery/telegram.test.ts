@@ -5,6 +5,7 @@ import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
 import { type Destination, FinalSendError, RetryAfterSendError } from "./deliver.ts";
 import { groupedAlert } from "./group.ts";
+import { sourceAlertContent } from "./source-alert-content.ts";
 import { createTelegramSender } from "./telegram.ts";
 
 const encryptionKey = Buffer.alloc(32, 7);
@@ -359,5 +360,23 @@ describe("createTelegramSender", () => {
       const [first, second] = telegram.requests;
       expect(Number(second?.at) - Number(first?.at)).toBeLessThan(500);
     });
+  });
+
+  it("sends a Source Health alert as its lines: the state, the last error, the Sources screen", async () => {
+    const telegram = fakeTelegram();
+    const failing = sourceAlertContent("failing", "Release\nfeed", "connect ECONNREFUSED", "https://watchdog.test");
+    await sender(telegram).send(chat(), failing);
+    await sender(telegram).send(chat(), sourceAlertContent("recovered", "Release feed", null, "https://watchdog.test"));
+
+    expect(telegram.requests.map(({ body }) => body.text)).toEqual([
+      "Source Release feed is failing\nconnect ECONNREFUSED\nhttps://watchdog.test/sources",
+      "Source Release feed recovered\nhttps://watchdog.test/sources",
+    ]);
+  });
+
+  it("cuts a Health alert's error so the message fits", async () => {
+    const telegram = fakeTelegram();
+    await sender(telegram).send(chat(), sourceAlertContent("failing", "Feed", "x".repeat(10_000), "https://watchdog.test"));
+    expect(textOf(telegram)).toBe(`Source Feed is failing\n${"x".repeat(500)}\nhttps://watchdog.test/sources`);
   });
 });

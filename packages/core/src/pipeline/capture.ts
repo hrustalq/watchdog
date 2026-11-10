@@ -1,6 +1,8 @@
 // The capture stage: drafts from any Source type become Items, whether a poll fetched them or a
 // push delivered them (docs: Processing pipeline, "Stages").
 import { and, type Db, eq, inArray, item, itemLog, source, sql, type Tx } from "@watchdog/db";
+import { queueSourceAlerts } from "../delivery/source-alert.ts";
+import { failingPollGapMs, healthAfter } from "../sources/health.ts";
 import type { ItemDraft } from "../sources/item.ts";
 import { type PollDeps, sourceTypes } from "../sources/types.ts";
 import { detectLanguage } from "./language.ts";
@@ -53,7 +55,7 @@ export async function pollSource(
     // A poll stopped with the worker isn't the Source's failure: pg-boss retries the job.
     if (deps.signal?.aborted === true) throw error;
     const message = describe(error);
-    await recordOutcome(db, sourceId, { at, error: message });
+    await db.transaction((tx) => recordOutcome(tx, sourceId, { at, error: message }));
     return { error: message };
   }
   if ("deferUntil" in polled) {
@@ -66,7 +68,7 @@ export async function pollSource(
     return { deferredUntil: until };
   }
   if ("notModified" in polled) {
-    await recordOutcome(db, sourceId, { at, polled: true });
+    await db.transaction((tx) => recordOutcome(tx, sourceId, { at, polled: true }));
     return { captured: 0 };
   }
   const outcome = { at, polled: true, fetchState: polled.fetchState };
@@ -173,28 +175,43 @@ export async function captureItems(
 }
 
 /**
- * Records how a poll or push of a Source ended. Every outcome comes through here, so this is where
- * Source Health will be updated.
+ * Records how a poll or push of a Source ended, and what that makes its Health (docs: Sources and
+ * ingestion, "Source Health"). Every outcome comes through here. A Source that becomes failing, or
+ * recovers from it, alerts once, in this transaction.
  */
 async function recordOutcome(
-  db: Db | Tx,
+  tx: Tx,
   sourceId: string,
   outcome: Outcome,
   also: { backfilledAt?: Date; backfillSkippedIds?: string[] } = {},
 ) {
+  const [before] = await tx.select().from(source).where(eq(source.id, sourceId)).for("update");
+  if (before === undefined) return;
+  const error = "error" in outcome ? outcome.error : null;
+  const after = healthAfter(before, { at: outcome.at, failed: error !== null });
+  // Only a poll fails here, so only a Schedule Source, which has a next poll, is put off.
+  const nextHourly = new Date(outcome.at.getTime() + failingPollGapMs).toISOString();
   const set =
     "error" in outcome
-      ? { lastError: outcome.error, lastErrorAt: outcome.at }
+      ? {
+          lastError: outcome.error,
+          lastErrorAt: outcome.at,
+          ...(after.health === "failing" && {
+            nextPollAt: sql`greatest(${source.nextPollAt}, ${nextHourly}::timestamptz)`,
+          }),
+        }
       : {
           lastError: null,
           lastErrorAt: null,
           ...(outcome.polled && { lastPolledAt: outcome.at }),
           ...(outcome.fetchState && { fetchState: outcome.fetchState }),
         };
-  await db
+  await tx
     .update(source)
-    .set({ ...set, ...also })
+    .set({ ...set, ...after, ...also })
     .where(eq(source.id, sourceId));
+  if ((before.health === "failing") === (after.health === "failing")) return;
+  await queueSourceAlerts(tx, [before], after.health === "failing" ? "failing" : "recovered", error);
 }
 
 /** The error for the user. fetch's TypeError says only "fetch failed"; its cause says why. */

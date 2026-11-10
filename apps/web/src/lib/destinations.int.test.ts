@@ -9,6 +9,7 @@ import {
   destination,
   destinationConfirmation,
   eq,
+  healthAlertDestination,
   item,
   itemLog,
   migrate,
@@ -19,7 +20,7 @@ import {
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { decryptSecret, egressPolicy, linkChat, type TestAlertDeps } from "@watchdog/core";
-import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
 import {
   actionNames,
   actionsOnlyOn,
@@ -29,6 +30,7 @@ import {
   confirmationAddress,
   confirmDestination,
   type DestinationDeps,
+  healthAlertsOnlyOn,
   listDestinations,
   newTelegramLink,
   removeDestination,
@@ -513,6 +515,32 @@ describe("Destinations", () => {
       expect(await removeDestination(db, ours, id)).toEqual({ refused: ["Only here"] });
       expect(await actionsOnlyOn(db, ours, id)).toEqual(["Only here"]);
       expect(await db.select().from(destination).where(eq(destination.id, id))).toHaveLength(1);
+    });
+
+    it("is refused, naming the setting, while it's the only Destination the Health alerts setting names", async () => {
+      const { id } = await addWebhook();
+      await db.insert(healthAlertDestination).values({ workspaceId: ours, destinationId: id });
+      onTestFinished(async () => {
+        await db.delete(healthAlertDestination).where(eq(healthAlertDestination.workspaceId, ours));
+      });
+
+      expect(await removeDestination(db, ours, id)).toEqual({ refused: [], healthAlerts: true });
+      expect(await healthAlertsOnlyOn(db, ours, id)).toBe(true);
+      expect(await db.select().from(destination).where(eq(destination.id, id))).toHaveLength(1);
+    });
+
+    it("leaves the Health alerts setting when the setting names another Destination too", async () => {
+      const [{ id }, other] = [await addWebhook(), await addWebhook()];
+      await db.insert(healthAlertDestination).values([id, other.id].map((destinationId) => ({ workspaceId: ours, destinationId })));
+      onTestFinished(async () => {
+        await db.delete(healthAlertDestination).where(eq(healthAlertDestination.workspaceId, ours));
+      });
+      expect(await healthAlertsOnlyOn(db, ours, id)).toBe(false);
+
+      expect(await removeDestination(db, ours, id)).toEqual({ changed: [] });
+      expect(await db.select().from(healthAlertDestination).where(eq(healthAlertDestination.workspaceId, ours))).toEqual([
+        { workspaceId: ours, destinationId: other.id },
+      ]);
     });
 
     it("leaves an Action that has another Destination, and says which changed", async () => {

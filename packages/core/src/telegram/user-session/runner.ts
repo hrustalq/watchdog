@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { type Chat, getMarkedPeerId, type ITelegramClient, Message, MtPeerNotFoundError, parseMarkedPeerId, tl, toggleChannelIdMark } from "@mtcute/node";
 import { getHistory, iterDialogs } from "@mtcute/node/methods.js";
 import { and, type Db, eq, isNull, or, source, sql, type TelegramDialog, telegramSession } from "@watchdog/db";
+import { setPushSourceHealth } from "../../delivery/source-alert.ts";
 import { captureItems, type CaptureDeps } from "../../pipeline/capture.ts";
 import { decryptSecret } from "../../secrets/secrets.ts";
 import { telegramDraft } from "../../sources/telegram/draft.ts";
@@ -179,14 +180,14 @@ export async function runSession(db: Db, deps: RunnerDeps, sessionId: string, { 
       if (kind === "channel") await client.notifyChannelOpened(bareId);
       await serially(async () => take(into, await history(chatId, row.backfilledAt === null ? undefined : into.lastId)));
       // Read again, such as after the account rejoined the chat or signed in again.
-      await db.update(source).set({ health: "ok" }).where(and(eq(source.id, row.id), eq(source.health, "failing")));
+      await db.transaction((tx) => setPushSourceHealth(tx, and(eq(source.id, row.id), eq(source.health, "failing")), null));
     } catch (error) {
       watched.delete(chatId);
       if (error instanceof FloodWaitTooLong || endedByTelegram(error)) throw error;
       if (!tl.RpcError.is(error) && !(error instanceof MtPeerNotFoundError)) throw error;
       // The chat is gone from the account, or Telegram won't say: the Source shows it.
       unread.add(row.id);
-      await db.update(source).set({ health: "failing", lastError: unreadable, lastErrorAt: new Date() }).where(eq(source.id, row.id));
+      await db.transaction((tx) => setPushSourceHealth(tx, eq(source.id, row.id), unreadable));
     }
   };
 
@@ -247,6 +248,6 @@ async function loggedOut(db: Db, sessionId: string, workspaceId: string) {
       .where(and(eq(telegramSession.id, sessionId), isNull(telegramSession.revokedAt)))
       .returning({ id: telegramSession.id });
     if (ended === undefined) return;
-    await tx.update(source).set({ health: "failing", lastError: loggedOutError, lastErrorAt: sql`now()` }).where(sessionSources(workspaceId));
+    await setPushSourceHealth(tx, sessionSources(workspaceId), loggedOutError);
   });
 }

@@ -5,8 +5,9 @@ import { z } from "zod";
 import type { createEgressFetch } from "../egress/egress.ts";
 import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
-import { FinalSendError, RetryAfterSendError, type Sender, unreachable } from "./deliver.ts";
+import { type AlertSender, FinalSendError, RetryAfterSendError, unreachable } from "./deliver.ts";
 import { groupedAlertText } from "./group.ts";
+import { sourceAlertText } from "./source-alert-content.ts";
 
 const maxLength = 4096;
 // Telegram's limits are 1 message a second per chat and 30 a second across the bot. These leave a margin,
@@ -76,7 +77,7 @@ export function createTelegramSender(
     fetch: ReturnType<typeof createEgressFetch>;
     encryptionKey: Buffer;
   },
-): Sender {
+): AlertSender {
   if (botToken === undefined) {
     return {
       send: () => Promise.reject(new Error("the Telegram bot isn't set up: TELEGRAM_BOT_TOKEN is empty")),
@@ -113,7 +114,9 @@ export function createTelegramSender(
   return {
     send: async (destination, message, onChatMoved) => {
       if (destination.secretCiphertext === null) throw new Error("the Telegram chat isn't linked");
-      const text = "lines" in message ? groupedAlertText(message, maxLength) : alertText(message);
+      let text: string;
+      if ("health" in message) text = sourceAlertText(message);
+      else text = "lines" in message ? groupedAlertText(message, maxLength) : alertText(message);
       let refused = await post(decryptSecret(destination.secretCiphertext, deps.encryptionKey), text);
       const movedTo = refused?.answer.parameters?.migrate_to_chat_id;
       // Once only, so a chat that keeps moving can't hold the send in a loop.

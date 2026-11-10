@@ -8,6 +8,7 @@ import {
   delivery,
   destination,
   eq,
+  healthAlertDestination,
   item,
   migrate,
   source,
@@ -16,7 +17,14 @@ import {
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
-import { type AlertSettingsForm, loadAlertSettings, quietHoursSentence, saveAlertSettings } from "./settings.ts";
+import {
+  type AlertSettingsForm,
+  loadAlertSettings,
+  loadHealthAlertDestinations,
+  quietHoursSentence,
+  saveAlertSettings,
+  saveHealthAlertDestinations,
+} from "./settings.ts";
 
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Expected a value");
@@ -206,5 +214,62 @@ describe("the Settings screen's alert settings", () => {
     await saveAlertSettings(db, workspaceId, form({ quietHours: false, quietHoursStart: "22:00", quietHoursEnd: "07:00" }));
 
     expect(await loadAlertSettings(db, workspaceId)).toMatchObject({ quietHoursStart: null, quietHoursEnd: null });
+  });
+
+  describe("the Health alerts setting", () => {
+    const add = async (workspaceId: string, values: Partial<typeof destination.$inferInsert> & { name: string }) => {
+      const [row] = await db
+        .insert(destination)
+        .values({ workspaceId, type: "telegram", confirmedAt: new Date(), ...values })
+        .returning();
+      return present(row).id;
+    };
+
+    it("offers the confirmed Telegram chats and email addresses, by name, and none is named at first", async () => {
+      const workspaceId = await newWorkspace();
+      const chat = await add(workspaceId, { name: "ops-chat" });
+      const inbox = await add(workspaceId, { name: "Team inbox", type: "email", config: { address: "team@example.com" } });
+      await add(workspaceId, { name: "Waiting", type: "email", config: { address: "new@example.com" }, confirmedAt: null });
+      await add(workspaceId, { name: "A hook", type: "webhook", config: { url: "https://hooks.example.com" } });
+      await add(await newWorkspace(), { name: "Someone else's chat" });
+
+      expect(await loadHealthAlertDestinations(db, workspaceId)).toEqual([
+        { id: inbox, name: "Team inbox", type: "email", named: false },
+        { id: chat, name: "ops-chat", type: "telegram", named: false },
+      ]);
+    });
+
+    it("names the ticked Destinations, and a later save replaces them", async () => {
+      const workspaceId = await newWorkspace();
+      const chat = await add(workspaceId, { name: "ops-chat" });
+      const inbox = await add(workspaceId, { name: "Team inbox", type: "email", config: { address: "team@example.com" } });
+      const named = async () =>
+        (await loadHealthAlertDestinations(db, workspaceId)).filter((option) => option.named).map(({ id }) => id);
+
+      await saveHealthAlertDestinations(db, workspaceId, [chat, inbox]);
+      expect((await named()).sort()).toEqual([chat, inbox].sort());
+
+      await saveHealthAlertDestinations(db, workspaceId, [inbox]);
+      expect(await named()).toEqual([inbox]);
+
+      // None ticked: the alerts go back to the sign-in address.
+      await saveHealthAlertDestinations(db, workspaceId, []);
+      expect(await named()).toEqual([]);
+    });
+
+    it("ignores what a crafted form posts: another Workspace's, an unconfirmed one, a webhook, not an id", async () => {
+      const workspaceId = await newWorkspace();
+      const chat = await add(workspaceId, { name: "ops-chat" });
+      const waiting = await add(workspaceId, { name: "Waiting", type: "email", config: { address: "new@example.com" }, confirmedAt: null });
+      const hook = await add(workspaceId, { name: "A hook", type: "webhook", config: { url: "https://hooks.example.com" } });
+      const theirs = await add(await newWorkspace(), { name: "Someone else's chat" });
+
+      await saveHealthAlertDestinations(db, workspaceId, [theirs, waiting, hook, "not-an-id", chat, chat]);
+
+      expect(await db.select().from(healthAlertDestination).where(eq(healthAlertDestination.workspaceId, workspaceId))).toEqual([
+        { workspaceId, destinationId: chat },
+      ]);
+      expect(await db.select().from(healthAlertDestination).where(eq(healthAlertDestination.destinationId, theirs))).toEqual([]);
+    });
   });
 });

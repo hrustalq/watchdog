@@ -3,8 +3,9 @@ import { z } from "zod";
 import { ratingScale } from "../agent/rating.ts";
 import type { Mailer } from "../mail/mailer.ts";
 import type { AlertMessage } from "./content.ts";
-import { FinalSendError, type Sender } from "./deliver.ts";
+import { type AlertSender, FinalSendError } from "./deliver.ts";
 import { groupedAlertText, itemCount, oneLine } from "./group.ts";
+import { sourceAlertSubject, sourceAlertText } from "./source-alert-content.ts";
 
 /** An email Destination's settings: one valid address, because a list would reach people who never confirmed. */
 export const emailDestinationConfig = z.object({ address: z.email() });
@@ -26,23 +27,35 @@ function alertText({ title, source, rating, summary, link, why }: AlertMessage) 
  * header line, so a title's line breaks go. On hosted the mail server is the operator's and the Log is the
  * user's, so the server's own answer goes to the worker's log.
  */
-export function createEmailSender(mailer: Mailer, from: string | undefined): Sender {
+export function createEmailSender(mailer: Mailer, from: string | undefined): AlertSender {
   return {
     send: async (destination, message) => {
       if (destination.confirmedAt === null) throw new FinalSendError("the address isn't confirmed yet");
       const parsed = emailDestinationConfig.safeParse(destination.config);
       if (!parsed.success) throw new FinalSendError("the Destination has no valid address");
 
-      const grouped = "lines" in message;
-      let subject = grouped ? `${String(message.count)} alerts` : `${severityWord(message.severity)} · ${oneLine(message.title)}`;
-      if (grouped && message.digest !== undefined) subject = `Digest ${oneLine(message.digest)} · ${itemCount(message.count)}`;
+      let subject: string;
+      let text: string;
+      if ("health" in message) {
+        subject = sourceAlertSubject(message);
+        text = sourceAlertText(message);
+      } else if ("lines" in message) {
+        subject =
+          message.digest === undefined
+            ? `${String(message.count)} alerts`
+            : `Digest ${oneLine(message.digest)} · ${itemCount(message.count)}`;
+        text = groupedAlertText(message);
+      } else {
+        subject = `${severityWord(message.severity)} · ${oneLine(message.title)}`;
+        text = alertText(message);
+      }
       // One-click unsubscribe (RFC 8058): a mail client POSTs to the URL, with no session.
-      const unsubscribe = grouped ? message.unsubscribeUrl : undefined;
+      const unsubscribe = "lines" in message ? message.unsubscribeUrl : undefined;
       try {
         await mailer.send({
           to: parsed.data.address,
           subject: `[Watchdog] ${subject}`,
-          text: grouped ? groupedAlertText(message) : alertText(message),
+          text,
           ...(from !== undefined && { from }),
           ...(unsubscribe !== undefined && {
             headers: { "List-Unsubscribe": `<${unsubscribe}>`, "List-Unsubscribe-Post": "List-Unsubscribe=One-Click" },

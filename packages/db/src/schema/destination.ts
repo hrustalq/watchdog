@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, foreignKey, index, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
+import { check, foreignKey, index, integer, jsonb, pgTable, primaryKey, text, timestamp, unique, uuid } from "drizzle-orm/pg-core";
 import { source } from "./source.ts";
 import { workspace } from "./workspace.ts";
 
@@ -97,5 +97,52 @@ export const healthAlertDestination = pgTable(
       foreignColumns: [destination.workspaceId, destination.id],
     }).onDelete("cascade"),
     index("health_alert_destination_destination_id_idx").on(table.destinationId),
+  ],
+);
+
+/**
+ * One Source failing or Source recovered alert to one recipient (docs: Actions and delivery, "Source
+ * Health alerts"). Not a Delivery, which needs an Action and an Item. A null Destination is the
+ * address the Workspace's user signs in with.
+ */
+export const sourceAlert = pgTable(
+  "source_alert",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    workspaceId: uuid("workspace_id")
+      .notNull()
+      .references(() => workspace.id, { onDelete: "cascade" }),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => source.id, { onDelete: "cascade" }),
+    /** An alert still waiting for a removed Destination goes with it, unsent. */
+    destinationId: uuid("destination_id").references(() => destination.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["failing", "recovered"] }).notNull(),
+    /** The Source's last error when it became failing, which a later success clears from the Source. */
+    error: text("error"),
+    /**
+     * A new alert is held and due at once, so the worker's sweep queues its job. Whatever changes a
+     * Source's Health can then write one without a queue of its own.
+     */
+    status: text("status", { enum: ["queued", "held", "sent", "failed"] })
+      .notNull()
+      .default("held"),
+    attempts: integer("attempts").notNull().default(0),
+    /** When a held alert goes, or a failed attempt is retried. */
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).defaultNow(),
+    /** When a hold ended, from which its 24 hours of retries run. Without a hold, from created_at. */
+    retryFrom: timestamp("retry_from", { withTimezone: true }),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("source_alert_kind_check", sql`${table.kind} in ('failing', 'recovered')`),
+    check("source_alert_status_check", sql`${table.status} in ('queued', 'held', 'sent', 'failed')`),
+    // The worker's sweep, every minute.
+    index("source_alert_held_next_attempt_at_idx").on(table.nextAttemptAt).where(sql`${table.status} = 'held'`),
+    // The cascades when a Source or a Destination is deleted.
+    index("source_alert_source_id_idx").on(table.sourceId),
+    index("source_alert_destination_id_idx").on(table.destinationId),
   ],
 );

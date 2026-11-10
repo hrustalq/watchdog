@@ -3,7 +3,7 @@
 import type { Config } from "../config.ts";
 import type { createEgressFetch } from "../egress/egress.ts";
 import type { Mailer } from "../mail/mailer.ts";
-import type { DeliverDeps } from "./deliver.ts";
+import type { AlertSender, DeliverDeps } from "./deliver.ts";
 import { createEmailSender } from "./email.ts";
 import { createTelegramSender } from "./telegram.ts";
 import { createWebhookSender } from "./webhook.ts";
@@ -11,7 +11,7 @@ import { createWebhookSender } from "./webhook.ts";
 export function createSenders(
   config: Pick<Config, "mode" | "encryptionKey" | "smtp" | "telegram">,
   deps: { fetch: ReturnType<typeof createEgressFetch>; mailer: Mailer },
-): DeliverDeps["senders"] {
+): { telegram: AlertSender; email: AlertSender; webhook: DeliverDeps["senders"]["webhook"] } {
   const { fetch, mailer } = deps;
   const { encryptionKey, mode } = config;
   return {
