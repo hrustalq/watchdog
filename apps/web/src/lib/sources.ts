@@ -22,7 +22,7 @@ import {
   renderModes,
   signInToken,
 } from "@watchdog/core";
-import { and, type Db, eq, source, sql } from "@watchdog/db";
+import { and, type Db, eq, inArray, scheduleTypes, source, sql } from "@watchdog/db";
 import { newInboxToken } from "./inbox.ts";
 import { isUuid } from "./uuid.ts";
 
@@ -641,13 +641,30 @@ export function listSources(db: Db, workspaceId: string) {
       name: true,
       config: true,
       schedule: true,
-      lastPolledAt: true,
       lastError: true,
       lastErrorAt: true,
+      lastSuccessAt: true,
       health: true,
     },
+    // Whether a poll is due: asked for with Check now, or by the schedule, and not yet run.
+    extras: (table, { sql: raw }) => ({ due: raw<boolean>`coalesce(${table.nextPollAt} <= now(), false)`.as("due") }),
     orderBy: (table, { desc }) => [desc(table.createdAt), desc(table.id)],
   });
+}
+
+/**
+ * Makes a Schedule Source due, so the worker's next tick polls it, within a minute. The tick queues one
+ * poll a Source at a time, so asking twice polls once. A failing Source's hour between polls doesn't
+ * hold it back. Returns false for a Source the Workspace doesn't have or one that is never polled.
+ */
+export async function checkSourceNow(db: Db, workspaceId: string, sourceId: string) {
+  if (!isUuid(sourceId)) return false;
+  const due = await db
+    .update(source)
+    .set({ nextPollAt: sql`now()` })
+    .where(and(eq(source.workspaceId, workspaceId), eq(source.id, sourceId), inArray(source.type, scheduleTypes)))
+    .returning({ id: source.id });
+  return due.length > 0;
 }
 
 /**

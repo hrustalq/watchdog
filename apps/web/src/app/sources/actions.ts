@@ -5,7 +5,15 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireWorkspace, server } from "@/lib/server";
 import { replaceInboxToken } from "@/lib/inbox";
-import { addFormSource, addValues, newSourceLink, removeSource, sourceLinkCookie, sourceLinkCookieValue } from "@/lib/sources";
+import {
+  addFormSource,
+  addValues,
+  checkSourceNow,
+  newSourceLink,
+  removeSource,
+  sourceLinkCookie,
+  sourceLinkCookieValue,
+} from "@/lib/sources";
 
 // Both actions end in a redirect. Without JavaScript that's a 303 to a page the browser renders;
 // an action that only returned would leave it a blank page. What the page then shows from the URL
@@ -59,6 +67,13 @@ export async function newSourceLinkAction(sourceId: unknown) {
   const id = typeof sourceId === "string" ? sourceId : "";
   const code = await newSourceLink(server().db, workspace.id, id);
   if (code !== undefined) await showSourceLink(id, code);
+  redirect("/sources");
+}
+
+/** Check now: makes a Schedule Source of the Workspace due, and the worker's next tick polls it. */
+export async function checkSourceNowAction(sourceId: unknown) {
+  const { workspace } = await requireWorkspace();
+  if (typeof sourceId === "string") await checkSourceNow(server().db, workspace.id, sourceId);
   redirect("/sources");
 }
 
