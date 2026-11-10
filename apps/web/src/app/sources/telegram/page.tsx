@@ -3,7 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { loginState, sessionOf } from "@watchdog/core";
 import { Confirming } from "@/components/confirming";
-import { dataBox, field, label, textLink } from "@/components/field-classes";
+import { dataBox, field, fieldError, label, textLink } from "@/components/field-classes";
 import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../../sign-in/notice";
@@ -23,12 +23,12 @@ export const instant = false;
 const crumb =
   "rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30";
 
+// Shown over the page. A wrong phone number or an empty field is shown at its field instead.
 const problems: Record<string, string> = {
-  "invalid-phone": "That isn't a phone number. Enter it in international format, starting with the country code.",
   "signed-in": "This Workspace already has a Telegram session. Revoke it before signing in another account.",
-  empty: "The field was empty, so nothing was sent.",
   "not-asked": "The login had already moved on, so nothing was sent. Here is where it stands.",
 };
+const phoneInvalid = "That isn't a phone number. Enter it with the country code, such as +44 20 7946 0958.";
 
 export default async function TelegramSessionPage({ searchParams }: PageProps<"/sources/telegram">) {
   const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
@@ -36,7 +36,8 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
   // Hosted, or no API variables: the screen isn't offered (ADR 0014).
   if (!telegramSessionAvailable) notFound();
   const [session, login] = await Promise.all([sessionOf(db, workspace.id), loginState(db, workspace.id)]);
-  const problem = typeof params.problem === "string" ? problems[params.problem] : undefined;
+  const code = typeof params.problem === "string" ? params.problem : "";
+  const problem = problems[code];
 
   return (
     <div className="flex flex-1 flex-col">
@@ -78,7 +79,7 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
         {session !== undefined ? (
           <SessionPanel account={session.account} since={session.createdAt} revoking={session.revokedAt !== null} />
         ) : (
-          <LoginPanel login={login} />
+          <LoginPanel login={login} invalid={code === "invalid-phone"} empty={code === "empty"} />
         )}
       </main>
     </div>
@@ -124,7 +125,17 @@ function SessionPanel({ account, since, revoking }: { account: string; since: Da
   );
 }
 
-function LoginPanel({ login }: { login: Awaited<ReturnType<typeof loginState>> }) {
+function LoginPanel({
+  login,
+  invalid,
+  empty,
+}: {
+  login: Awaited<ReturnType<typeof loginState>>;
+  /** The last phone number posted wasn't one. */
+  invalid: boolean;
+  /** The last code or password posted was empty. */
+  empty: boolean;
+}) {
   if (login === undefined || login.step === "failed") {
     return (
       <section aria-labelledby="sign-in" className="flex flex-col gap-4 rounded-lg border p-4">
@@ -141,8 +152,21 @@ function LoginPanel({ login }: { login: Awaited<ReturnType<typeof loginState>> }
             <label htmlFor="phone" className={label}>
               Phone number
             </label>
-            <input id="phone" name="phone" type="tel" autoComplete="tel" className={`${field} ${dataBox}`} />
-            <p className="text-xs text-muted-foreground">
+            <input
+              id="phone"
+              name="phone"
+              type="tel"
+              autoComplete="tel"
+              aria-invalid={invalid || undefined}
+              aria-describedby={invalid ? "phone-error phone-help" : "phone-help"}
+              className={`${field} ${dataBox}`}
+            />
+            {invalid ? (
+              <p id="phone-error" className={fieldError}>
+                {phoneInvalid}
+              </p>
+            ) : null}
+            <p id="phone-help" className="text-xs text-muted-foreground">
               With the country code, such as +44 20 7946 0958. Telegram sends a code to your Telegram app.
             </p>
           </div>
@@ -168,7 +192,7 @@ function LoginPanel({ login }: { login: Awaited<ReturnType<typeof loginState>> }
           in a moment.
         </Notice>
       ) : (
-        <StepForm step={login.step} refusal={login.refusal} />
+        <StepForm step={login.step} refusal={login.refusal} empty={empty} />
       )}
       <p className="text-xs text-muted-foreground">The login ends 5 minutes after it starts.</p>
       <form action={cancelTelegramLoginAction}>
@@ -180,8 +204,9 @@ function LoginPanel({ login }: { login: Awaited<ReturnType<typeof loginState>> }
   );
 }
 
-function StepForm({ step, refusal }: { step: "code" | "password"; refusal: string | null }) {
+function StepForm({ step, refusal, empty }: { step: "code" | "password"; refusal: string | null; empty: boolean }) {
   const code = step === "code";
+  const error = empty ? `Enter the ${code ? "code" : "password"} first.` : null;
   return (
     <form action={answerTelegramLoginAction} className="flex flex-col gap-4">
       <input type="hidden" name="step" value={step} />
@@ -202,10 +227,16 @@ function StepForm({ step, refusal }: { step: "code" | "password"; refusal: strin
           inputMode={code ? "numeric" : undefined}
           autoComplete={code ? "one-time-code" : "current-password"}
           spellCheck={false}
-          aria-invalid={refusal === null ? undefined : true}
+          aria-invalid={refusal !== null || error !== null || undefined}
+          aria-describedby={error === null ? `${step}-help` : `${step}-error ${step}-help`}
           className={code ? `${field} ${dataBox}` : field}
         />
-        <p className="text-xs text-muted-foreground">
+        {error === null ? null : (
+          <p id={`${step}-error`} className={fieldError}>
+            {error}
+          </p>
+        )}
+        <p id={`${step}-help`} className="text-xs text-muted-foreground">
           {code
             ? "Telegram sent it to your Telegram app, in a chat from Telegram itself."
             : "Your account has two-step verification, so Telegram asks for its password too."}
