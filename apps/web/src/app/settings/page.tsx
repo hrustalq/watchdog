@@ -303,8 +303,8 @@ async function HealthAlertsSection({ workspaceId, email }: { workspaceId: string
           Source Health alerts
         </h2>
         <p className="max-w-[70ch] text-sm text-muted-foreground">
-          One alert goes out when a Source becomes failing, and one when it recovers. They follow quiet hours and
-          alert pacing, like any alert.
+          One alert goes out when a Source becomes failing, and one when it recovers. They wait for quiet hours and
+          the hourly limit like any alert, and each goes as its own message.
         </p>
       </div>
       {options.length === 0 ? (
@@ -314,7 +314,7 @@ async function HealthAlertsSection({ workspaceId, email }: { workspaceId: string
           <Link href="/destinations" className={textLink}>
             Destinations
           </Link>
-          .
+          , and it appears here once it&apos;s confirmed.
         </p>
       ) : (
         <form action={saveHealthAlertsAction} className="flex flex-col gap-4">
@@ -330,8 +330,10 @@ async function HealthAlertsSection({ workspaceId, email }: { workspaceId: string
                   defaultChecked={named}
                   className={checkbox}
                 />
-                <span className="min-w-0 break-words">{name}</span>
-                <span className="font-normal text-muted-foreground">{destinationKind[type]}</span>
+                {/* One run of text with a real space: Chrome drops the gap between sibling spans from the name. */}
+                <span className="min-w-0 break-words">
+                  {name} <span className="pl-1 font-normal text-muted-foreground">{destinationKind[type]}</span>
+                </span>
               </label>
             ))}
           </fieldset>
