@@ -77,7 +77,12 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
         )}
 
         {session !== undefined ? (
-          <SessionPanel account={session.account} since={session.createdAt} revoking={session.revokedAt !== null} />
+          <SessionPanel
+            account={session.account}
+            since={session.createdAt}
+            revoking={session.revokedAt !== null}
+            stuck={session.revokeStuck}
+          />
         ) : (
           <LoginPanel login={login} invalid={code === "invalid-phone"} empty={code === "empty"} />
         )}
@@ -86,7 +91,35 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
   );
 }
 
-function SessionPanel({ account, since, revoking }: { account: string; since: Date; revoking: boolean }) {
+function SessionPanel({
+  account,
+  since,
+  revoking,
+  stuck,
+}: {
+  account: string;
+  since: Date;
+  revoking: boolean;
+  /** The revoke couldn't reach Telegram for a quarter of an hour and stopped trying. */
+  stuck: boolean;
+}) {
+  if (revoking && stuck) {
+    return (
+      <section aria-labelledby="session" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
+        <h2 id="session" className="text-title">
+          Revoking {account} didn&apos;t finish
+        </h2>
+        <Notice role="alert" className="text-sm text-alarm">
+          Watchdog couldn&apos;t reach Telegram to log the session out, so the session is still there.
+        </Notice>
+        <form action={revokeTelegramSessionAction}>
+          <SubmitButton variant="destructive" pendingLabel="Revoking…" className="sm:w-auto">
+            Try again
+          </SubmitButton>
+        </form>
+      </section>
+    );
+  }
   if (revoking) {
     return (
       <section aria-labelledby="session" className="flex flex-col gap-2 rounded-lg border bg-card p-4">

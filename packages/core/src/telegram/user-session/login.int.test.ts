@@ -127,7 +127,7 @@ describe("a Telegram user session", () => {
     );
     telegram.respondWith("auth.checkPassword", (request) => {
       if (request.password._ !== "inputCheckPasswordSRP") throw rpcError("SRP_ID_INVALID");
-      if (new TextDecoder().decode(request.password.A) !== "hunter2") throw rpcError("PASSWORD_HASH_INVALID");
+      if (new TextDecoder().decode(request.password.A) !== " hunter2 ") throw rpcError("PASSWORD_HASH_INVALID");
       return authorized();
     });
     const { loginId, job } = await login();
@@ -151,7 +151,8 @@ describe("a Telegram user session", () => {
     await vi.waitFor(async () => {
       if ((await loginState(db, workspaceId))?.refusal !== "That password is wrong. Enter it again.") throw new Error("not yet");
     });
-    await answerLogin(db, encryptionKey, workspaceId, "password", "hunter2");
+    // A password is used as typed, spaces and all.
+    await answerLogin(db, encryptionKey, workspaceId, "password", " hunter2 ");
     await job;
 
     expect((await storedSession())?.account).toBe("Ada Lovelace (@ada)");
@@ -195,6 +196,60 @@ describe("a Telegram user session", () => {
     await cancelLogin(db, workspaceId);
     await job;
     expect(await loginState(db, workspaceId)).toBeUndefined();
+  });
+
+  it("keeps nothing from a login cancelled while Telegram signed it in, and logs that authorization out", async () => {
+    const { promise: signing, resolve: signedIn } = Promise.withResolvers<undefined>();
+    telegram.respondWith("auth.signIn", async () => {
+      await signing;
+      return authorized();
+    });
+    telegram.respondWith("auth.logOut", () => {
+      calls.push("logOut");
+      return createStub("auth.loggedOut");
+    });
+    await telegram.connect();
+    const { job } = await login();
+    await until("code");
+    await answerLogin(db, encryptionKey, workspaceId, "code", "12345");
+    await vi.waitFor(async () => {
+      if ((await db.select().from(telegramLogin))[0]?.codeCiphertext !== null) throw new Error("not taken yet");
+    });
+    await cancelLogin(db, workspaceId);
+    signedIn(undefined);
+    await job;
+
+    expect(await storedSession()).toBeUndefined();
+    expect(calls.at(-1)).toBe("logOut");
+  });
+
+  it("keeps its heartbeat while Telegram is slow to answer", async () => {
+    const { promise: answered, resolve: answer } = Promise.withResolvers<undefined>();
+    telegram.respondWith("auth.sendCode", async () => {
+      await answered;
+      return createStub("auth.sentCode", { type: createStub("auth.sentCodeTypeApp", { length: 5 }), phoneCodeHash });
+    });
+    const { job } = await login();
+    await vi.waitFor(async () => {
+      expect((await db.select().from(telegramLogin))[0]).toBeDefined();
+    });
+    await db.update(telegramLogin).set({ heartbeatAt: new Date(Date.now() - 11_000) });
+    await vi.waitFor(async () => {
+      expect(await loginState(db, workspaceId)).toMatchObject({ step: "starting" });
+    });
+    answer(undefined);
+    await until("code");
+    stopping.abort();
+    await job;
+  });
+
+  it("sends no code for a login that waited so long in the queue the screen said it ended", async () => {
+    expect(await startLogin(db, workspaceId, phone, enqueue)).toBe("started");
+    await db.update(telegramLogin).set({ heartbeatAt: new Date(Date.now() - 11_000) });
+    await runLogin(db, deps(), jobs[0] ?? "", stopping.signal);
+
+    expect(calls).toEqual([]);
+    expect(await loginState(db, workspaceId)).toEqual({ step: "failed", phone, refusal: loginLost });
   });
 
   it("passes Telegram's refusal of the phone number to the screen as a fixed sentence", async () => {
@@ -242,6 +297,10 @@ describe("a Telegram user session", () => {
       expect((await sessionOf(db, workspaceId))?.revokedAt).toBeInstanceOf(Date);
       // A second click while the job runs queues nothing more.
       expect(await requestRevoke(db, workspaceId, enqueue)).toBe(false);
+      // One whose job ran out of retries can be asked for again.
+      await db.update(telegramSession).set({ revokedAt: new Date(Date.now() - 16 * 60_000) });
+      expect(await sessionOf(db, workspaceId)).toMatchObject({ revokeStuck: true });
+      expect(await requestRevoke(db, workspaceId, enqueue)).toBe(true);
 
       await revokeSession(db, deps(), sessionId);
 

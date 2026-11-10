@@ -8,8 +8,14 @@ import { encryptSecret } from "../../secrets/secrets.ts";
 export const telegramLoginQueue = "telegram-login";
 export const telegramRevokeQueue = "telegram-revoke";
 
-/** A heartbeat older than this means the worker holding the login's client is gone. */
-const loginHeartbeatSeconds = 10;
+/**
+ * A heartbeat over 10 seconds old means no worker holds the login's client. Read on Postgres's clock,
+ * which every heartbeat is written with, so the processes' own clocks don't matter.
+ */
+export const stale = sql`${telegramLogin.heartbeatAt} < now() - interval '10 seconds'`;
+
+/** A revoke still waiting after this long has run out of retries, so it can be asked for again. */
+const revokeStuck = sql`${telegramSession.revokedAt} < now() - interval '15 minutes'`;
 
 export const loginExpired = "The login took longer than 5 minutes, so it ended. Start again.";
 export const loginLost =
@@ -72,7 +78,8 @@ export async function answerLogin(
   step: "code" | "password",
   value: string,
 ): Promise<boolean> {
-  const answer = value.trim();
+  // A code is digits, so stray spaces go. A password is used exactly as typed.
+  const answer = step === "code" ? value.trim() : value;
   if (answer === "") return false;
   const ciphertext = encryptSecret(answer, encryptionKey);
   const saved = await db
@@ -98,22 +105,34 @@ export async function cancelLogin(db: Db, workspaceId: string) {
 }
 
 /** The Workspace's login as the screen shows it, or undefined when there is none. */
-export async function loginState(db: Db, workspaceId: string, now = new Date()): Promise<LoginState | undefined> {
-  const [row] = await db.select().from(telegramLogin).where(eq(telegramLogin.workspaceId, workspaceId));
+export async function loginState(db: Db, workspaceId: string): Promise<LoginState | undefined> {
+  const [row] = await db
+    .select({
+      step: telegramLogin.step,
+      phone: telegramLogin.phone,
+      refusal: telegramLogin.refusal,
+      expired: sql<boolean>`${telegramLogin.expiresAt} <= now()`,
+      lost: sql<boolean>`${stale}`,
+    })
+    .from(telegramLogin)
+    .where(eq(telegramLogin.workspaceId, workspaceId));
   if (row === undefined) return undefined;
   const { step, phone, refusal } = row;
   if (step === "failed") return { step, phone, refusal: refusal ?? loginLost };
-  if (row.expiresAt <= now) return { step: "failed", phone, refusal: loginExpired };
-  if (now.getTime() - row.heartbeatAt.getTime() > loginHeartbeatSeconds * 1000) {
-    return { step: "failed", phone, refusal: loginLost };
-  }
+  if (row.expired) return { step: "failed", phone, refusal: loginExpired };
+  if (row.lost) return { step: "failed", phone, refusal: loginLost };
   return { step, phone, refusal };
 }
 
 /** The Workspace's session as the screen shows it. Its secret never leaves the database here. */
 export async function sessionOf(db: Db, workspaceId: string) {
   const [row] = await db
-    .select({ account: telegramSession.account, revokedAt: telegramSession.revokedAt, createdAt: telegramSession.createdAt })
+    .select({
+      account: telegramSession.account,
+      revokedAt: telegramSession.revokedAt,
+      revokeStuck: sql<boolean>`coalesce(${revokeStuck}, false)`,
+      createdAt: telegramSession.createdAt,
+    })
     .from(telegramSession)
     .where(eq(telegramSession.workspaceId, workspaceId));
   return row;
@@ -121,14 +140,17 @@ export async function sessionOf(db: Db, workspaceId: string) {
 
 /**
  * Marks the session revoked and queues the job that logs it out on Telegram and deletes it, which
- * only the worker can do, because only the worker decrypts it. False when there is nothing to revoke.
+ * only the worker can do, because only the worker decrypts it. False when there is nothing to revoke,
+ * or a revoke is already under way; one whose job ran out of retries can be asked for again.
  */
 export async function requestRevoke(db: Db, workspaceId: string, enqueue: Enqueue): Promise<boolean> {
   return db.transaction(async (tx) => {
     const [row] = await tx
       .update(telegramSession)
       .set({ revokedAt: sql`now()` })
-      .where(and(eq(telegramSession.workspaceId, workspaceId), sql`${telegramSession.revokedAt} is null`))
+      .where(
+        and(eq(telegramSession.workspaceId, workspaceId), sql`(${telegramSession.revokedAt} is null or ${revokeStuck})`),
+      )
       .returning({ id: telegramSession.id });
     if (row === undefined) return false;
     await enqueue(tx, row.id);

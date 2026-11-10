@@ -46,7 +46,7 @@ export async function startTelegramLogin(access: SessionAccess, workspaceId: str
 
 export async function answerTelegramLogin(access: SessionAccess, workspaceId: string, step: "code" | "password", value: string) {
   if (!access.available) return "unavailable";
-  if (value.trim() === "") return "empty";
+  if ((step === "code" ? value.trim() : value) === "") return "empty";
   if (!(await answerLogin(access.db, access.encryptionKey, workspaceId, step, value))) return "not-asked";
   // Signed in, a refusal, or the next step.
   await untilAnswered(access, workspaceId, (state) => state?.step !== step || state.refusal !== null);

@@ -5,8 +5,9 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { BaseTelegramClient, MemoryStorage, tl, User } from "@mtcute/node";
 import { checkPassword, logOut, sendCode, signIn } from "@mtcute/node/methods.js";
 import type { ITelegramClient } from "@mtcute/node";
-import { and, type Db, eq, lt, source, sql, telegramLogin, telegramSession } from "@watchdog/db";
+import { and, type Db, eq, getTableColumns, isNull, lt, source, sql, telegramLogin, telegramSession } from "@watchdog/db";
 import { decryptSecret, encryptSecret } from "../../secrets/secrets.ts";
+import { loginLost, stale } from "./session.ts";
 
 export interface SessionDeps {
   encryptionKey: Buffer;
@@ -57,18 +58,32 @@ const accountName = (user: User) => (user.username === null ? user.displayName :
 export async function runLogin(db: Db, deps: SessionDeps, loginId: string, signal: AbortSignal): Promise<void> {
   // Rows whose job died with its worker, along with anything the user left on them.
   await db.delete(telegramLogin).where(lt(telegramLogin.expiresAt, sql`now()`));
-  const [login] = await db.select().from(telegramLogin).where(eq(telegramLogin.id, loginId));
+  const [login] = await db
+    .select({ ...getTableColumns(telegramLogin), lost: sql<boolean>`${stale}` })
+    .from(telegramLogin)
+    .where(eq(telegramLogin.id, loginId));
   if (login?.step !== "starting") return;
 
-  const write = async (values: Partial<typeof telegramLogin.$inferInsert>) => {
-    await db.update(telegramLogin).set(values).where(eq(telegramLogin.id, loginId));
+  const mine = eq(telegramLogin.id, loginId);
+  const write = async (values: Partial<typeof telegramLogin.$inferInsert>, where = mine) => {
+    await db.update(telegramLogin).set(values).where(where);
   };
   const fail = (refusal: string) => write({ step: "failed", refusal, codeCiphertext: null, passwordCiphertext: null });
+  // The screen already told the user this login ended, because it waited in the queue too long.
+  if (login.lost) return fail(loginLost);
+
+  // Kept apart from the steps, so a slow call to Telegram doesn't look like a dead worker.
+  const beat = () => db.update(telegramLogin).set({ heartbeatAt: sql`now()` }).where(mine).catch(() => undefined);
+  await beat();
+  const beating = setInterval(() => void beat(), deps.tickMs ?? 1000);
+
   /** Answers a refused step on the row. True when the refusal ends the login. */
   const refuse = async (error: unknown) => {
+    // A wrong code or password isn't reported over a newer one the user has sent since.
+    const unanswered = and(mine, isNull(telegramLogin.codeCiphertext), isNull(telegramLogin.passwordCiphertext));
     if (is(error, "SESSION_PASSWORD_NEEDED")) await write({ step: "password" });
-    else if (is(error, "PHONE_CODE_INVALID", "PHONE_CODE_EMPTY")) await write({ refusal: refusals.codeWrong });
-    else if (is(error, "PASSWORD_HASH_INVALID")) await write({ refusal: refusals.passwordWrong });
+    else if (is(error, "PHONE_CODE_INVALID", "PHONE_CODE_EMPTY")) await write({ refusal: refusals.codeWrong }, unanswered);
+    else if (is(error, "PASSWORD_HASH_INVALID")) await write({ refusal: refusals.passwordWrong }, unanswered);
     else {
       await fail(signInRefusal(error));
       return true;
@@ -90,7 +105,7 @@ export async function runLogin(db: Db, deps: SessionDeps, loginId: string, signa
       if (!signal.aborted) await fail(sendCodeRefusal(error));
       return;
     }
-    await write({ step: "code", heartbeatAt: new Date() });
+    await write({ step: "code" });
 
     for (;;) {
       // Rejects when the worker stops, which the next line sees.
@@ -117,37 +132,58 @@ export async function runLogin(db: Db, deps: SessionDeps, loginId: string, signa
       if (outcome.ended) return;
     }
   } finally {
+    clearInterval(beating);
     await client.destroy();
   }
 }
 
 /**
- * Writes the heartbeat and takes what the user gave since the last tick, clearing it from the row.
- * Undefined when the login is gone or past its 5 minutes, which then deletes it.
+ * Takes what the user gave since the last tick, clearing it from the row. Undefined when the login
+ * is gone or past its 5 minutes, which then deletes it.
  */
 async function claim(db: Db, loginId: string) {
   return db.transaction(async (tx) => {
-    const [row] = await tx.select().from(telegramLogin).where(eq(telegramLogin.id, loginId)).for("update");
+    const [row] = await tx
+      .select({
+        step: telegramLogin.step,
+        code: telegramLogin.codeCiphertext,
+        password: telegramLogin.passwordCiphertext,
+        expired: sql<boolean>`${telegramLogin.expiresAt} <= now()`,
+      })
+      .from(telegramLogin)
+      .where(eq(telegramLogin.id, loginId))
+      .for("update");
     if (row === undefined) return undefined;
-    if (row.expiresAt <= new Date()) {
+    if (row.expired) {
       await tx.delete(telegramLogin).where(eq(telegramLogin.id, loginId));
       return undefined;
     }
     await tx
       .update(telegramLogin)
-      .set({ heartbeatAt: sql`now()`, codeCiphertext: null, passwordCiphertext: null })
+      .set({ codeCiphertext: null, passwordCiphertext: null })
       .where(eq(telegramLogin.id, loginId));
-    return { step: row.step, code: row.codeCiphertext, password: row.passwordCiphertext };
+    return row;
   });
 }
 
-/** Stores the session encrypted as the Workspace's one, and ends the login. */
-async function finish(db: Db, deps: SessionDeps, client: ITelegramClient, login: typeof telegramLogin.$inferSelect, user: User) {
+/**
+ * Stores the session encrypted as the Workspace's one, and ends the login. A login cancelled or
+ * replaced while Telegram signed it in, or a Workspace that has a session by now, keeps nothing,
+ * and the new authorization is logged out, so none is left on the account that Watchdog can't revoke.
+ */
+async function finish(db: Db, deps: SessionDeps, client: ITelegramClient, login: { id: string; workspaceId: string }, user: User) {
   const secretCiphertext = encryptSecret(await client.exportSession(), deps.encryptionKey);
-  await db.transaction(async (tx) => {
-    await tx.insert(telegramSession).values({ workspaceId: login.workspaceId, account: accountName(user), secretCiphertext });
-    await tx.delete(telegramLogin).where(eq(telegramLogin.id, login.id));
+  const stored = await db.transaction(async (tx) => {
+    const [claimed] = await tx.delete(telegramLogin).where(eq(telegramLogin.id, login.id)).returning({ id: telegramLogin.id });
+    if (claimed === undefined) return false;
+    const [row] = await tx
+      .insert(telegramSession)
+      .values({ workspaceId: login.workspaceId, account: accountName(user), secretCiphertext })
+      .onConflictDoNothing()
+      .returning({ id: telegramSession.id });
+    return row !== undefined;
   });
+  if (!stored) await logOut(client).catch(() => undefined);
 }
 
 /**

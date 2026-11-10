@@ -140,7 +140,7 @@ async function SourceList() {
 
   return (
     <>
-    {telegramSessionAvailable ? <TelegramAccount account={session?.account} /> : null}
+    {telegramSessionAvailable ? <TelegramAccount session={session} /> : null}
     {link?.status === "pending" ? <TelegramLinkPanel link={link} bot={bot} /> : null}
     {link?.status === "linked" ? (
       <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
@@ -247,7 +247,14 @@ function TelegramState({ config, available }: { config: object; available: boole
 }
 
 /** Where a self-hosted install signs in a Telegram user session (ADR 0014). Only offered there. */
-function TelegramAccount({ account }: { account: string | undefined }) {
+function TelegramAccount({ session }: { session: { account: string; revokedAt: Date | null } | undefined }) {
+  let state = "For chats you can't add the bot to. Watchdog signs in with a session of its own and uses it only to read.";
+  if (session !== undefined) {
+    state =
+      session.revokedAt === null
+        ? `Signed in as ${session.account}. Watchdog uses the session only to read.`
+        : `Revoking ${session.account}.`;
+  }
   return (
     <section
       aria-labelledby="telegram-account"
@@ -257,14 +264,10 @@ function TelegramAccount({ account }: { account: string | undefined }) {
         <h2 id="telegram-account" className="text-title">
           Telegram (your account)
         </h2>
-        <p className="text-sm text-muted-foreground">
-          {account === undefined
-            ? "For chats you can't add the bot to. Watchdog signs in with a session of its own and uses it only to read."
-            : `Signed in as ${account}. Watchdog uses the session only to read.`}
-        </p>
+        <p className="text-sm text-muted-foreground">{state}</p>
       </div>
       <Link href="/sources/telegram" className={`${buttonVariants({ variant: "outline" })} shrink-0`}>
-        {account === undefined ? "Sign in" : "Manage"}
+        {session === undefined ? "Sign in" : "Manage"}
         <span className="sr-only"> Telegram (your account)</span>
       </Link>
     </section>
