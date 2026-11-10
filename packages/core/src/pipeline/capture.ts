@@ -93,7 +93,8 @@ export async function captureItems(
     const [locked] = await tx.select().from(source).where(eq(source.id, sourceId)).for("update");
     if (locked === undefined) return { captured: 0 };
 
-    const backfill = sourceTypes[locked.type]?.backfill ?? null;
+    const rule = sourceTypes[locked.type]?.backfill ?? null;
+    const backfill = typeof rule === "function" ? rule(locked.config) : rule;
     const { backfilledAt } = locked;
     const isBackfill = backfill !== null && backfilledAt === null;
     let capture: ItemDraft[];

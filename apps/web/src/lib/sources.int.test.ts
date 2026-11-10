@@ -792,5 +792,23 @@ describe("Sources", () => {
 
       expect(await newSourceLink(db, ours, rss.id)).toBeUndefined();
     });
+
+    it("never takes a code for a failing Source that reads through the user session, which a link would make a bot Source", async () => {
+      const [session] = await db
+        .insert(source)
+        .values({
+          workspaceId: ours,
+          type: "telegram",
+          name: "Ops room",
+          config: { via: "session", chatId: -100903, title: "Ops room" },
+          schedule: null,
+          nextPollAt: null,
+          health: "failing",
+          lastError: "The Telegram session was revoked",
+        })
+        .returning();
+
+      expect(await newSourceLink(db, ours, session?.id ?? "")).toBeUndefined();
+    });
   });
 });

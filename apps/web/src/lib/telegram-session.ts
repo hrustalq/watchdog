@@ -11,6 +11,7 @@ import {
   startLogin,
   telegramLoginQueue,
   telegramRevokeQueue,
+  watchChat,
 } from "@watchdog/core";
 import type { Db } from "@watchdog/db";
 import type { PgBoss } from "pg-boss";
@@ -60,4 +61,11 @@ export async function cancelTelegramLogin(access: SessionAccess, workspaceId: st
 export async function revokeTelegramSession(access: SessionAccess, workspaceId: string) {
   if (!access.available) return false;
   return requestRevoke(access.db, workspaceId, sessionJobEnqueuer(await access.boss(), telegramRevokeQueue));
+}
+
+/** Watches a chat picked from the session's list. The id comes from the form, so only a listed one counts. */
+export async function watchTelegramChat(access: SessionAccess, workspaceId: string, chat: string) {
+  if (!access.available) return "unavailable";
+  const result = await watchChat(access.db, workspaceId, Number(chat));
+  return "watched" in result ? "watching" : result.refused;
 }

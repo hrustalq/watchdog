@@ -1,7 +1,7 @@
 // A Telegram user session, as the web sees it (ADR 0014, ADR 0032): it starts a login and writes
 // each step on the login's row, and the worker's job answers there. Nothing here talks to Telegram,
 // so web never loads mtcute and never decrypts a session.
-import { and, type Db, eq, sql, telegramLogin, telegramSession, type Tx } from "@watchdog/db";
+import { and, type Db, eq, isNull, source, sql, telegramLogin, telegramSession, type Tx } from "@watchdog/db";
 import { fromDrizzle, type PgBoss } from "pg-boss";
 import { encryptSecret } from "../../secrets/secrets.ts";
 
@@ -156,4 +156,53 @@ export async function requestRevoke(db: Db, workspaceId: string, enqueue: Enqueu
     await enqueue(tx, row.id);
     return true;
   });
+}
+
+/**
+ * The session's groups and channels for the screen, each with the Source that watches it, through
+ * either path. Undefined until the runner has first read them from Telegram.
+ */
+export async function sessionChats(db: Db, workspaceId: string) {
+  const [session] = await db
+    .select({ dialogs: telegramSession.dialogs })
+    .from(telegramSession)
+    .where(eq(telegramSession.workspaceId, workspaceId));
+  const dialogs = session?.dialogs ?? null;
+  if (dialogs === null) return undefined;
+  const watching = await db
+    .select({ chat: source.dedupKey, name: source.name })
+    .from(source)
+    .where(and(eq(source.workspaceId, workspaceId), eq(source.type, "telegram")));
+  const names = new Map(watching.map(({ chat, name }) => [chat, name]));
+  return dialogs.map((chat) => ({ ...chat, watchedAs: names.get(String(chat.id)) ?? null }));
+}
+
+/**
+ * Saves a chat from the session's dialog list as a session Source, named after the chat. Refused for
+ * a chat the list doesn't have, and for one this Workspace already watches, through either path.
+ */
+export async function watchChat(
+  db: Db,
+  workspaceId: string,
+  chatId: number,
+): Promise<{ watched: string } | { refused: "not-listed" | "watched" }> {
+  const [session] = await db
+    .select({ dialogs: telegramSession.dialogs })
+    .from(telegramSession)
+    .where(and(eq(telegramSession.workspaceId, workspaceId), isNull(telegramSession.revokedAt)));
+  const chat = session?.dialogs?.find(({ id }) => id === chatId);
+  if (chat === undefined) return { refused: "not-listed" };
+  const [saved] = await db
+    .insert(source)
+    .values({
+      workspaceId,
+      type: "telegram",
+      name: chat.title,
+      config: { via: "session", chatId, title: chat.title },
+      schedule: null,
+      nextPollAt: null,
+    })
+    .onConflictDoNothing()
+    .returning({ name: source.name });
+  return saved === undefined ? { refused: "watched" } : { watched: saved.name };
 }

@@ -8,6 +8,7 @@ import type { ItemDraft } from "./item.ts";
 import type { Deferred, GithubSecrets } from "./github/client.ts";
 import { github } from "./github/source-type.ts";
 import { rss } from "./rss/source-type.ts";
+import { telegram } from "./telegram/source-type.ts";
 import type { FetchFeedDeps } from "./rss/fetch-feed.ts";
 import { webhook } from "./webhook/source-type.ts";
 import { website } from "./website/source-type.ts";
@@ -55,8 +56,8 @@ export type PolledSource = Pick<
 export interface SourceTypeImpl {
   /** The shape of the type's `config`. */
   config: z.ZodType;
-  /** The Backfill the type's first capture takes, or null when it takes none. */
-  backfill: Backfill | null;
+  /** The Backfill the type's first capture takes, or null when it takes none. Some depend on the config. */
+  backfill: Backfill | null | ((config: unknown) => Backfill | null);
   /**
    * Schedule types fetch their Source's new drafts. A push type has no poll: whatever receives its
    * drafts hands them to captureItems. Throws why the fetch failed.
@@ -65,4 +66,10 @@ export interface SourceTypeImpl {
 }
 
 /** The types implemented so far. A Source of any other type polls nothing and takes no Backfill. */
-export const sourceTypes: Partial<Record<SourceType, SourceTypeImpl>> = { rss, github, website, webhook };
+export const sourceTypes: Partial<Record<SourceType, SourceTypeImpl>> = {
+  rss,
+  github,
+  website,
+  webhook,
+  telegram,
+};
