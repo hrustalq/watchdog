@@ -66,6 +66,8 @@ function start() {
       emailCapped: config.mode === "hosted",
     },
     telegramAvailable: config.telegram.botToken !== undefined,
+    /** Telegram user sessions: self-hosted with TELEGRAM_API_ID and TELEGRAM_API_HASH, which hosted drops (ADR 0014). */
+    telegramSessionAvailable: config.telegram.api !== undefined,
     /**
      * The bot's username for a deep link, read once. The worker's runner is another process, and this is a
      * name Telegram gives only to whoever holds the token. Undefined until Telegram answers, so a page can say so.
