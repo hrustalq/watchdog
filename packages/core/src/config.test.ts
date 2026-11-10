@@ -201,7 +201,7 @@ describe("loadConfig", () => {
         GLITCHTIP_DSN: "https://key@glitchtip.example.com/1",
       }),
     ).toMatchObject({
-      telegram: { botToken: "123456:AAH-token_value", apiId: 12345, apiHash: "hash" },
+      telegram: { botToken: "123456:AAH-token_value", api: { id: 12345, hash: "hash" } },
       obscura: { cdpUrl: "ws://obscura:9222", cdpToken: "cdp-token" },
       egressAllowlist: [{ type: "subnet", address: "10.0.0.5", prefix: 32, family: "ipv4" }],
       glitchtipDsn: "https://key@glitchtip.example.com/1",
@@ -276,6 +276,19 @@ describe("loadConfig", () => {
     const env = { ...minimal, ...smtp, WATCHDOG_MODE: "hosted", EGRESS_ALLOWLIST: "10.0.0.5" };
     loadConfig(env, warn);
     expect(warn).toHaveBeenCalledWith(expect.stringMatching(/EGRESS_ALLOWLIST is ignored/));
+  });
+
+  it("takes TELEGRAM_API_ID and TELEGRAM_API_HASH together or not at all", () => {
+    expect(loadConfig(minimal).telegram.api).toBeUndefined();
+    expect(() => loadConfig({ ...minimal, TELEGRAM_API_ID: "12345" })).toThrow(/TELEGRAM_API_HASH: is required/);
+    expect(() => loadConfig({ ...minimal, TELEGRAM_API_HASH: "hash" })).toThrow(/TELEGRAM_API_ID: is required/);
+  });
+
+  it("ignores TELEGRAM_API_ID and TELEGRAM_API_HASH on hosted, with a warning at boot", () => {
+    const warn = vi.fn();
+    const env = { ...minimal, ...smtp, WATCHDOG_MODE: "hosted", TELEGRAM_API_ID: "12345", TELEGRAM_API_HASH: "hash" };
+    expect(loadConfig(env, warn).telegram.api).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/TELEGRAM_API_ID and TELEGRAM_API_HASH are ignored/));
   });
 
   it("doesn't warn about EGRESS_ALLOWLIST on self-hosted or when it's unset", () => {

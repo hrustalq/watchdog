@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { Suspense } from "react";
-import { releasesFeedUrl, signInToken } from "@watchdog/core";
+import { releasesFeedUrl, sessionOf, signInToken } from "@watchdog/core";
+import { buttonVariants } from "@/components/ui/button";
 import { dataBox, textBox, textLink } from "@/components/field-classes";
 import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
@@ -105,8 +106,11 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
 
 async function SourceList() {
   const { workspace } = await requireWorkspace();
-  const { db, telegramAvailable, telegramBotName } = server();
-  const sources = await listSources(db, workspace.id);
+  const { db, telegramAvailable, telegramBotName, telegramSessionAvailable } = server();
+  const [sources, session] = await Promise.all([
+    listSources(db, workspace.id),
+    telegramSessionAvailable ? sessionOf(db, workspace.id) : undefined,
+  ]);
   const link = telegramAvailable
     ? await sourceLinkInCookie(db, sources, (await cookies()).get(sourceLinkCookie)?.value)
     : undefined;
@@ -136,6 +140,7 @@ async function SourceList() {
 
   return (
     <>
+    {telegramSessionAvailable ? <TelegramAccount session={session} /> : null}
     {link?.status === "pending" ? <TelegramLinkPanel link={link} bot={bot} /> : null}
     {link?.status === "linked" ? (
       <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
@@ -238,6 +243,34 @@ function TelegramState({ config, available }: { config: object; available: boole
       <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-caution" />
       {available ? "Waiting for the bot" : "Unavailable: this install has no TELEGRAM_BOT_TOKEN"}
     </span>
+  );
+}
+
+/** Where a self-hosted install signs in a Telegram user session (ADR 0014). Only offered there. */
+function TelegramAccount({ session }: { session: { account: string; revokedAt: Date | null } | undefined }) {
+  let state = "For chats you can't add the bot to. Watchdog signs in with a session of its own and uses it only to read.";
+  if (session !== undefined) {
+    state =
+      session.revokedAt === null
+        ? `Signed in as ${session.account}. Watchdog uses the session only to read.`
+        : `Revoking ${session.account}.`;
+  }
+  return (
+    <section
+      aria-labelledby="telegram-account"
+      className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <div className="flex min-w-0 flex-col gap-1">
+        <h2 id="telegram-account" className="text-title">
+          Telegram (your account)
+        </h2>
+        <p className="text-sm text-muted-foreground">{state}</p>
+      </div>
+      <Link href="/sources/telegram" className={`${buttonVariants({ variant: "outline" })} shrink-0`}>
+        {session === undefined ? "Sign in" : "Manage"}
+        <span className="sr-only"> Telegram (your account)</span>
+      </Link>
+    </section>
   );
 }
 

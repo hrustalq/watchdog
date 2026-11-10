@@ -20,6 +20,18 @@ export { sendTestAlert, type TestAlertDeps, type TestAlertResult } from "./deliv
 export { botUsername, runBot } from "./telegram/bot-runner.ts";
 export { issueLinkCode, linkChat, linkCodeMinutes, liveLinkCode } from "./telegram/link.ts";
 export { telegramIntake } from "./sources/telegram/intake.ts";
+export {
+  answerLogin,
+  cancelLogin,
+  type LoginState,
+  loginState,
+  requestRevoke,
+  sessionJobEnqueuer,
+  sessionOf,
+  startLogin,
+  telegramLoginQueue,
+  telegramRevokeQueue,
+} from "./telegram/user-session/session.ts";
 export { checkUnsubscribeToken, unsubscribeUrl } from "./delivery/unsubscribe.ts";
 export { verifyWebhookSignature } from "./delivery/verify-signature.ts";
 export {

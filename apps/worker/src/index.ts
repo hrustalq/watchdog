@@ -13,6 +13,8 @@ import {
 } from "@watchdog/core";
 // Apart from the main entry, which web imports too, so only the worker loads playwright-core.
 import { createChromiumRenderer, createObscuraRenderer } from "@watchdog/core/render";
+// Its own entry too, so only the worker loads mtcute.
+import { revokeSession, runLogin, sessionClient } from "@watchdog/core/telegram-session";
 import { createDb, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { startDelivery } from "./delivery.ts";
@@ -20,6 +22,7 @@ import { startPipeline } from "./pipeline.ts";
 import { readyFile } from "./ready.ts";
 import { startScheduler } from "./scheduler.ts";
 import { startTelegramBot } from "./telegram.ts";
+import { startTelegramSessions } from "./telegram-session.ts";
 
 // Stops with the invalid variables named before the worker does anything else.
 const config = (() => {
@@ -88,6 +91,16 @@ const stopTelegramBot =
           signal,
         ),
       );
+// Hosted never has the API variables: loadConfig drops them (ADR 0014).
+const { api } = config.telegram;
+const sessionDeps = api && { encryptionKey: config.encryptionKey, createClient: () => sessionClient(api) };
+const stopTelegramSessions =
+  sessionDeps === undefined
+    ? undefined
+    : await startTelegramSessions(boss, {
+        login: (id, signal) => runLogin(db, sessionDeps, id, signal),
+        revoke: (id) => revokeSession(db, sessionDeps, id),
+      });
 
 // The first SIGTERM or SIGINT stops pg-boss, which stops the tick and lets running polls and sends finish.
 // A second signal while it stops is ignored.
@@ -97,6 +110,7 @@ const stop = async () => {
   stopping = true;
   rmSync(readyFile, { force: true });
   stopTelegramBot?.();
+  stopTelegramSessions?.();
   try {
     await boss.stop();
     await db.$client.end();
