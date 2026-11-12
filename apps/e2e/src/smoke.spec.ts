@@ -1,8 +1,10 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 import {
   botMessages,
   confirmationLink,
   fixtureFeed,
+  fixturePage,
+  flipFixtureSite,
   magicLink,
   publishEntry,
   sendToBot,
@@ -105,6 +107,89 @@ async function checkNow(page: Page, path: string) {
     await expect(due).toBeVisible({ timeout: 5_000 });
   }).toPass({ timeout: 30_000 });
   await expect(due, "the worker never took the poll").toHaveCount(0, untilPolled);
+}
+
+/**
+ * The Sources screen's row for the Source named `name`. The name is matched on the row's heading, which
+ * is the Source's own name, rather than on any of its text, where another row's URL could match too.
+ */
+const sourceRow = (page: Page, name: string) =>
+  page.getByRole("listitem").filter({ has: page.getByRole("heading", { name, level: 3, exact: true }) });
+
+/** One field of the Add a Source form: the label it shows, or `#id` where two fields share a label. */
+type FormField = readonly [label: string, value: string];
+
+/**
+ * Submits an Add a Source form. The server action redirects as it answers, so the click can throw on a
+ * page that navigated under it although it went through; what the page shows next says whether it did,
+ * and that is what the caller checks.
+ */
+async function submitAdd(form: Locator) {
+  await form
+    .getByRole("button", { name: "Add Source" })
+    .click({ timeout: 10_000 })
+    .catch(() => undefined);
+}
+
+/**
+ * On the Sources screen, adds a Source of `type` (the form radio's value), reading the page the way
+ * `render` names (`static`, `obscura` or `chromium`) where it watches a website, and leaving the page
+ * on the Source's own "Source added." notice.
+ *
+ * A click that lands before React has hydrated the page changes nothing: the streamed form replaces the
+ * copy drawn before it, and the choice and the typed values go with it. So each step is checked in the
+ * form that has the choice, and a step that didn't stick is tried again. A fresh load first clears the
+ * notice the Source before it left, which a retry would otherwise take for this one's.
+ */
+async function addSource(page: Page, type: string, fields: FormField[], render?: string) {
+  await page.goto(new URL("/sources", page.url()).href);
+  await expect(async () => {
+    await page.locator(`label:has(#type-${type}):visible`).click({ timeout: 5_000 });
+    await expect(page.locator(`#type-${type}:checked`)).toHaveCount(1, { timeout: 5_000 });
+    const form = page.locator(`form:has(#type-${type}:checked)`).first();
+    if (render !== undefined) {
+      await form.locator(`label:has(#render-${render})`).click({ timeout: 5_000 });
+      await expect(form.locator(`#render-${render}:checked`)).toHaveCount(1, { timeout: 5_000 });
+    }
+    for (const [label, value] of fields) {
+      const field = label.startsWith("#") ? form.locator(label) : form.getByLabel(label, { exact: true });
+      await field.fill(value, { timeout: 5_000 });
+      await expect(field).toHaveValue(value, { timeout: 5_000 });
+    }
+    await submitAdd(form);
+    await expect(page.getByRole("status").filter({ hasText: "Source added." })).toBeVisible({ timeout: 15_000 });
+  }).toPass({ timeout: 120_000 });
+}
+
+/**
+ * Waits until the Source named `name` has polled successfully, which is what stores a website Source's
+ * Baseline. Its Health says ok before its first poll, so the row's last success is what says it polled.
+ */
+async function waitForFirstPoll(page: Page, name: string) {
+  await expect(async () => {
+    await page.goto(new URL("/sources", page.url()).href);
+    const row = sourceRow(page, name);
+    await expect(row.getByText(/Last success/), `${name} never polled successfully`).toBeAttached({ timeout: 2_000 });
+  }).toPass({ timeout: 240_000 });
+}
+
+/** Asks for a poll of the Source named `name` with Check now, and waits for the worker to take it. */
+async function checkSourceNow(page: Page, name: string) {
+  await page.goto(new URL("/sources", page.url()).href);
+  const row = sourceRow(page, name);
+  const due = row.getByRole("status").filter({ hasText: "A poll is due" });
+  await expect(async () => {
+    await row.getByRole("button", { name: /^Check now/ }).click();
+    await expect(due).toBeVisible({ timeout: 5_000 });
+  }).toPass({ timeout: 30_000 });
+  await expect(due, "the worker never took the poll").toHaveCount(0, untilPolled);
+}
+
+/** Opens the Feed row titled `title` at its link's address, because a click while rows settle does nothing. */
+async function openFeedItem(page: Page, title: string) {
+  const link = page.getByRole("link", { name: title });
+  await expect(link).toHaveAttribute("href", /^\/items\//, untilPolled);
+  await page.goto(new URL((await link.getAttribute("href")) ?? "", page.url()).href);
 }
 
 // A new self-hosted install with no mail server, end to end: claim it with the setup link, sign in
@@ -600,6 +685,155 @@ test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours ho
     expect(await mailed(held)).toHaveLength(0);
     expect(await botSent(alerted), "the first Item's alert went more than once").toHaveLength(1);
     expect(await mailed(alerted), "the first Item's mail went more than once").toHaveLength(1);
+  });
+});
+
+// The M4 demo: every Source type still in M4 delivers an Item, and a rendered page's Item holds the
+// text only its script writes. GitHub answers from fake-github at its two fixed hosts and the websites
+// from fixture-site (compose.smoke.yaml), so the run makes no request outside the Compose network. The
+// inbox gets a POST to the URL its page shows, and the Telegram chat a message the test pushes through
+// fake-telegram, after binding that chat with the link the Sources screen shows. MTProto has no fake
+// server: packages/core/src/telegram/session.int.test.ts covers it, and this test doesn't claim it.
+test("every Source type still in M4 delivers an Item", async ({ page }) => {
+  // Two worker ticks for the websites, one for GitHub's Backfill, one for the Telegram message, and
+  // the Feed's refresh after each.
+  test.setTimeout(900_000);
+  const release = "Acme app v2.4.0";
+  const issue = "Export button loses the header row";
+  const mention = "flipboard layout breaks on narrow screens";
+  const status = "Acme platform status changed";
+  const uptime = "Acme platform uptime changed";
+  const changelog = "Acme platform changelog changed";
+  const written = "Smoke inbox says hello";
+  const posted = "Smoke group says the deploy is done";
+  const chat = { id: -1002, type: "supergroup", title: "Smoke group" };
+  const original = page.getByRole("region", { name: "Original text" });
+
+  await test.step("sign in again", async () => {
+    await signInAgain(page);
+    await page.getByRole("link", { name: "Sources", exact: true }).click();
+  });
+
+  await test.step("add a GitHub Source of each kind", async () => {
+    await addSource(page, "github-releases", [
+      ["Repo", "acme/app"],
+      ["Name (optional)", "Acme releases"],
+    ]);
+    await addSource(page, "github-issues", [
+      ["Repo", "acme/app"],
+      // The field is "GitHub token (optional)" only where the Workspace has a GitHub sign-in.
+      ["#token", "smoke-token"],
+      ["Name (optional)", "Acme issues"],
+    ]);
+    await addSource(page, "github-mentions", [
+      ["Search for", "flipboard"],
+      ["Only in (optional)", "acme/app"],
+      // The field is "GitHub token (optional)" only where the Workspace has a GitHub sign-in.
+      ["#token", "smoke-token"],
+      ["Name (optional)", "flipboard mentions"],
+    ]);
+  });
+
+  await test.step("add a website Source for each way of reading a page", async () => {
+    await addSource(page, "website", [
+      ["Page URL", fixturePage("status")],
+      ["Name (optional)", "Platform status"],
+    ]);
+    await addSource(
+      page,
+      "website",
+      [
+        ["Page URL", fixturePage("uptime")],
+        ["Name (optional)", "Platform uptime"],
+      ],
+      "obscura",
+    );
+    await addSource(
+      page,
+      "website",
+      [
+        ["Page URL", fixturePage("changelog")],
+        ["Name (optional)", "Platform changelog"],
+      ],
+      "chromium",
+    );
+  });
+
+  await test.step("add a webhook inbox, and post to the URL its page shows", async () => {
+    await page.goto(new URL("/sources", page.url()).href);
+    await expect(async () => {
+      await page.locator("label:has(#type-webhook):visible").click({ timeout: 5_000 });
+      await expect(page.locator("#type-webhook:checked")).toHaveCount(1, { timeout: 5_000 });
+      const form = page.locator("form:has(#type-webhook:checked)").first();
+      await form.locator("#mapTitle").fill("$.alert.title", { timeout: 5_000 });
+      await form.getByLabel("Name (optional)", { exact: true }).fill("Smoke inbox", { timeout: 5_000 });
+      // An inbox's add ends on the inbox's own page, because its URL is shown only once.
+      await submitAdd(form);
+      await expect(page.getByRole("heading", { name: "Smoke inbox", level: 1 })).toBeVisible({ timeout: 10_000 });
+    }).toPass({ timeout: 90_000 });
+
+    // The URL is shown on the page's first render only. A page that was rendered twice has used that
+    // up, and the way to a second copy is to replace the token, as a person would.
+    const inbox = page.getByRole("textbox", { name: "The inbox URL" });
+    await expect(async () => {
+      if ((await inbox.count()) === 0) {
+        await page.getByText("Replace the token", { exact: true }).click({ timeout: 2_000 });
+        await page.getByRole("button", { name: /^Replace it/ }).click({ timeout: 2_000 });
+      }
+      await expect(inbox).toBeVisible({ timeout: 5_000 });
+    }).toPass({ timeout: 120_000 });
+    const answer = await page.request.post(await inbox.inputValue(), { data: { alert: { title: written } } });
+    expect(answer.status(), "the inbox didn't capture the request").toBe(202);
+  });
+
+  await test.step("each website's first poll keeps the page as its Baseline", async () => {
+    for (const name of ["Platform status", "Platform uptime", "Platform changelog"]) await waitForFirstPoll(page, name);
+  });
+
+  await test.step("a request flips the fixture site, and each website's next poll finds a change", async () => {
+    await flipFixtureSite();
+    for (const name of ["Platform status", "Platform uptime", "Platform changelog"]) await checkSourceNow(page, name);
+  });
+
+  await test.step("the link the Sources screen shows binds the group, and a message there becomes an Item", async () => {
+    await addSource(page, "telegram", [["Name (optional)", "Smoke chat"]]);
+    const command = page.locator("#telegram-command");
+    await expect(command).toHaveValue(/^\/start@watchdog_smoke_bot \S+$/);
+    await sendToBot(chat, await command.inputValue());
+    await expect
+      .poll(
+        async () => (await botMessages()).filter((text) => text.includes("Watching this chat for Smoke chat in Watchdog")),
+        untilPolled,
+      )
+      .toHaveLength(1);
+    await sendToBot(chat, posted);
+    await page.goto(new URL("/sources", page.url()).href);
+    await expect(sourceRow(page, "Smoke chat"), "the bot never bound the chat").toContainText(chat.title, untilPolled);
+  });
+
+  await test.step("every Source's Item is in the Feed", async () => {
+    await page.getByRole("link", { name: "Workspace" }).click();
+    // Releases, issues and mentions read the Backfill's window; a website has none, and an inbox and a
+    // chat are pushed to.
+    for (const title of [release, issue, mention]) {
+      await expect(feedRow(page, title), `"${title}" never reached the Feed`).toContainText("Backfill", untilPolled);
+    }
+    for (const title of [status, uptime, changelog, written, posted]) {
+      await expect(feedRow(page, title), `"${title}" never reached the Feed`).toBeVisible(untilPolled);
+    }
+  });
+
+  await test.step("a rendered page's Item holds the line only its script writes, and a static one doesn't", async () => {
+    for (const title of [uptime, changelog]) {
+      await openFeedItem(page, title);
+      await expect(original, `${title} was read without running the page's script`).toContainText(
+        "Rendered text: Partial outage in eu-west",
+      );
+      await page.getByRole("link", { name: "Feed", exact: true }).click();
+    }
+    await openFeedItem(page, status);
+    await expect(original).toContainText("+ Partial outage in eu-west");
+    await expect(original, "a Static read ran the page's script").not.toContainText("Rendered text:");
   });
 });
 
