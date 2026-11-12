@@ -4,7 +4,7 @@ import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { decryptSecret } from "../secrets/secrets.ts";
 import { runBot } from "./bot-runner.ts";
-import { issueLinkCode, linkChat, linkCodeMinutes, liveLinkCode } from "./link.ts";
+import { issueLinkCode, linkChat, linkCodeMinutes, liveLinkCode, purgeExpiredLinkCodes } from "./link.ts";
 
 const encryptionKey = randomBytes(32);
 const chat = { id: "-100200", title: "Ops room", type: "supergroup" };
@@ -236,6 +236,20 @@ describe("linking a Telegram chat", () => {
 
     await age(id);
     expect(await liveLinkCode(db, code)).toBeUndefined();
+  });
+
+  it("purges an expired code and leaves a live one, which still links", async () => {
+    const stale = await waiting();
+    const fresh = await waiting();
+    await issueLinkCode(db, { destinationId: stale.id });
+    const code = await issueLinkCode(db, { destinationId: fresh.id });
+    await age(stale.id);
+
+    await purgeExpiredLinkCodes(db);
+
+    expect(await codesOf(stale.id)).toEqual([]);
+    expect(await codesOf(fresh.id)).toHaveLength(1);
+    expect(await linkChat(db, encryptionKey, code, chat)).toBe(`Linked to ${fresh.name} in Watchdog`);
   });
   describe("to a Telegram bot Source", () => {
     async function waitingSource(name: string = crypto.randomUUID()) {
