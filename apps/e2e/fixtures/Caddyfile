@@ -19,3 +19,16 @@ api.telegram.org {
 	tls internal
 	reverse_proxy fake-telegram:8080
 }
+
+# A releases Source reads https://github.com/<owner>/<repo>/releases.atom, and issues and mentions
+# Sources read https://api.github.com. Both hosts are aliases of this container too, and both answers
+# come from fake-github, which tells them apart by the Host header Caddy passes on.
+github.com {
+	tls internal
+	reverse_proxy fake-github:8080
+}
+
+api.github.com {
+	tls internal
+	reverse_proxy fake-github:8080
+}

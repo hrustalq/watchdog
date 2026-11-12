@@ -2,13 +2,19 @@
 # Compose resolves its paths against the first one's directory, the repo root.
 
 # Web and worker reach the fakes below. The fakes' addresses are private, so the egress guard lets them
-# through only by name. Both trust the CA the fixtures container makes, so its certificate for
-# api.telegram.org passes. With no SMTP set, mail goes to their logs, which is where the test reads it.
+# through only by name. Both trust the CA the fixtures container makes, so its certificates for
+# api.telegram.org, github.com and api.github.com pass. With no SMTP set, mail goes to their logs, which
+# is where the test reads it.
 x-app: &app
   environment:
-    EGRESS_ALLOWLIST: fixtures,fake-llm,api.telegram.org
+    EGRESS_ALLOWLIST: fixtures,fake-llm,fixture-site,api.telegram.org,github.com,api.github.com
     TELEGRAM_BOT_TOKEN: "123456:smoke-token"
     NODE_EXTRA_CA_CERTS: /run/telegram-ca/root.crt
+    # The Chromium fallback is on its profile in compose.yaml, which smoke.sh turns on for the run, so
+    # the form offers it and the test adds a Source that uses it. The config loader takes both or
+    # neither, and the service below gets the same token.
+    CHROMIUM_URL: ws://chromium:3000
+    CHROMIUM_TOKEN: &chromium-token smoke-chromium-token-of-at-least-32-bytes
   volumes:
     - telegram-ca:/run/telegram-ca:ro
   depends_on:
@@ -16,15 +22,20 @@ x-app: &app
       condition: service_healthy
     fake-telegram:
       condition: service_healthy
+    fake-github:
+      condition: service_healthy
+    fixture-site:
+      condition: service_healthy
 
 services:
   # Serves the feeds the test adds as RSS Sources, so the run makes no live HTTP request. It also
-  # answers TLS for api.telegram.org, the Bot API's fixed host, and passes the requests to fake-telegram.
+  # answers TLS for the fixed hosts Watchdog calls — api.telegram.org for the Bot API, github.com for a
+  # repo's releases.atom and api.github.com for the REST and Search APIs — and passes those on.
   fixtures:
     image: caddy:2.11.7-alpine
     networks:
       default:
-        aliases: [api.telegram.org]
+        aliases: [api.telegram.org, github.com, api.github.com]
     volumes:
       - ./apps/e2e/fixtures/Caddyfile:/etc/caddy/Caddyfile:ro
       - ./apps/e2e/fixtures/feed.xml:/srv/feed.xml:ro
@@ -66,6 +77,36 @@ services:
     volumes:
       - ./apps/e2e/fixtures/fake-telegram.mjs:/srv/fake-telegram.mjs:ro
     healthcheck: *node-fake-health
+
+  # GitHub's releases feed and its issues and search APIs, so a GitHub Source of every kind runs
+  # without a request to github.com or api.github.com.
+  fake-github:
+    image: node:26-alpine
+    command: ["node", "/srv/fake-github.mjs"]
+    init: true
+    volumes:
+      - ./apps/e2e/fixtures/fake-github.mjs:/srv/fake-github.mjs:ro
+    healthcheck: *node-fake-health
+
+  # The site the website Sources watch. A POST to /flip serves its second version, so the next poll
+  # finds a change, and its status line is written by a script, so only a Renderer's read holds it.
+  fixture-site:
+    image: node:26-alpine
+    command: ["node", "/srv/fixture-site.mjs"]
+    init: true
+    volumes:
+      - ./apps/e2e/fixtures/fixture-site.mjs:/srv/fixture-site.mjs:ro
+    healthcheck: *node-fake-health
+
+  # Obscura blocks private addresses, and compose.yaml relies on that, so as it stands it can't read a
+  # fixture on this network. The smoke network is internal, so this flag lets it reach the fixture site
+  # and nothing outside the network: the one change the run makes to the renderer.
+  obscura:
+    command: ["serve", "--port", "9222", "--host", "0.0.0.0", "--workers", "2", "--worker-max-rss", "512", "--worker-max-age", "3600", "--allow-private-network"]
+
+  chromium:
+    environment:
+      CHROMIUM_TOKEN: *chromium-token
 
   web: *app
   worker: *app

@@ -42,7 +42,9 @@ jobs:
   smoke:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The run builds the Chromium fallback's image as well (apps/e2e/smoke.sh turns its profile on),
+    # and on a runner without any layer cache that is another few minutes on top of the stack's own.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:

@@ -5,6 +5,9 @@
 # top of compose.yaml, or of the files in an absolute COMPOSE_FILE you set, e.g. to move the port.
 cd "$(dirname "$0")" || exit
 export COMPOSE_PROJECT_NAME=watchdog-smoke
+# The Chromium fallback renderer is on a profile, which `up` skips by default, so the run turns it on:
+# one website Source in the test reads its page with it.
+export COMPOSE_PROFILES=chromium
 export COMPOSE_FILE="${COMPOSE_FILE:-$(cd ../.. && pwd)/compose.yaml}:$PWD/compose.smoke.yaml"
 
 docker compose down --volumes || exit

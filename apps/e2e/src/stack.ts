@@ -85,3 +85,14 @@ export async function publishEntry(name: "first" | "second") {
 
 /** A feed the fixtures container serves, at the address a Source is added with. */
 export const fixtureFeed = (path: string) => `http://fixtures/${path}`;
+
+/** A page of the fixture site (fixture-site.mjs), at the address a website Source is added with. */
+export const fixturePage = (path: string) => `http://fixture-site:8080/page/${path}`;
+
+/**
+ * Makes the fixture site serve its second version of every page, so the next poll of a website Source
+ * finds a change. A POST from inside the containers, because the site publishes no port.
+ */
+export async function flipFixtureSite() {
+  await compose("exec", "-T", "fixture-site", "wget", "-q", "-O", "-", "--post-data=", "http://127.0.0.1:8080/flip");
+}
