@@ -2,9 +2,9 @@ import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
 import { Suspense } from "react";
-import { releasesFeedUrl, sessionOf, signInToken } from "@watchdog/core";
+import { type Config, releasesFeedUrl, sessionOf, signInToken } from "@watchdog/core";
 import { buttonVariants } from "@/components/ui/button";
-import { dataBox, textBox, textLink } from "@/components/field-classes";
+import { dataBox, field, fieldError, label, textBox, textLink } from "@/components/field-classes";
 import { HealthChip } from "@/components/health";
 import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
@@ -20,9 +20,10 @@ import {
   sourceLinkInCookie,
   watchedSourceName,
 } from "@/lib/sources";
+import { cn } from "@/lib/utils";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
-import { checkSourceNowAction, newSourceLinkAction, removeSourceAction } from "./actions";
+import { checkSourceNowAction, newSourceLinkAction, removeSourceAction, replaceGithubTokenAction } from "./actions";
 import { AddSourceForm } from "./add-source-form";
 import { DueRefresher } from "./due-refresher";
 
@@ -56,7 +57,7 @@ export default function SourcesPage({ searchParams }: PageProps<"/sources">) {
           </Suspense>
         </section>
         <Suspense fallback={<div aria-busy="true" className="h-32 rounded-lg bg-muted" />}>
-          <SourceList />
+          <SourceList searchParams={searchParams} />
         </Suspense>
       </main>
     </div>
@@ -107,7 +108,17 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
   );
 }
 
-async function SourceList() {
+async function SourceList({ searchParams }: Pick<PageProps<"/sources">, "searchParams">) {
+  const params = await searchParams;
+  // A replace form's redirect carries its Source's id and how it went, so the outcome shows on that
+  // row. Only a known id of a row this page renders can match.
+  const replacedFor = typeof params.replaced === "string" ? params.replaced : "";
+  const invalidFor = typeof params["token-problem"] === "string" ? params["token-problem"] : "";
+  const outcomeOf = (id: string): ReplaceOutcome | undefined => {
+    if (replacedFor === id) return "replaced";
+    if (invalidFor === id) return "invalid-token";
+    return undefined;
+  };
   const { workspace } = await requireWorkspace();
   const { db, mode, telegramAvailable, telegramBotName, telegramSessionAvailable } = server();
   const [sources, session] = await Promise.all([
@@ -243,6 +254,9 @@ async function SourceList() {
                         Get a new link<span className="sr-only"> for {row.name}</span>
                       </SubmitButton>
                     </form>
+                  ) : null}
+                  {readsWithToken(row) ? (
+                    <ReplaceToken id={row.id} name={row.name} mode={mode} outcome={outcomeOf(row.id)} />
                   ) : null}
                   <RemoveSource id={row.id} name={row.name} />
                 </div>
@@ -383,6 +397,79 @@ function RemoveSource({ id, name }: { id: string; name: string }) {
         <form action={removeSourceAction.bind(null, id)}>
           <SubmitButton variant="destructive" pendingLabel="Removing…">
             Remove Source and its Items
+          </SubmitButton>
+        </form>
+      </div>
+    </details>
+  );
+}
+
+/** What a GitHub Source's replace form has to say, from the URL a submit came back on. */
+type ReplaceOutcome = "replaced" | "invalid-token";
+
+/** A GitHub Source that reads the API with a token, so it has one the page can replace. */
+const readsWithToken = ({ type, config }: { type: string; config: object }) =>
+  type === "github" && "kind" in config && (config.kind === "issues" || config.kind === "mentions");
+
+/**
+ * Replace a GitHub Source's token: a disclosure with a password field, which works without
+ * JavaScript as Remove does. The action redirects with the outcome on this row, and never the token,
+ * so the panel opens on an outcome and a refused token can be pasted again straight away.
+ */
+function ReplaceToken({
+  id,
+  name,
+  mode,
+  outcome,
+}: {
+  id: string;
+  name: string;
+  mode: Config["mode"];
+  outcome: ReplaceOutcome | undefined;
+}) {
+  const inputId = `token-${id}`;
+  return (
+    <details open={outcome !== undefined} className="group shrink-0 sm:max-w-72">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+        <span className="group-open:hidden">
+          Replace token<span className="sr-only"> for {name}</span>
+        </span>
+        <span className="hidden group-open:inline">Cancel</span>
+      </summary>
+      <div className="mt-2 flex flex-col gap-3 rounded-lg bg-muted p-3">
+        {outcome === "replaced" ? (
+          <Notice role="status" className="text-sm">
+            New token saved. The next poll, within a minute, uses it.
+          </Notice>
+        ) : null}
+        {outcome === "invalid-token" ? (
+          <p role="alert" className={fieldError}>
+            {problemMessage("invalid-token", { url: "", status: "", mode })}
+          </p>
+        ) : null}
+        <p className="text-sm">
+          A fine-grained personal access token that can read the repo&apos;s issues. It replaces the one this Source
+          reads with, or the Workspace&apos;s GitHub sign-in token.
+        </p>
+        <form action={replaceGithubTokenAction.bind(null, id)} className="flex flex-col gap-2">
+          <label htmlFor={inputId} className={label}>
+            New token
+          </label>
+          {/* A password field: the browser doesn't show it or keep it in form history. */}
+          <input
+            id={inputId}
+            name="token"
+            type="password"
+            autoComplete="off"
+            // Password managers ignore autocomplete="off" on a password field; these ask them to stay out.
+            data-1p-ignore
+            data-lpignore="true"
+            spellCheck={false}
+            maxLength={255}
+            className={cn(field, dataBox)}
+          />
+          <SubmitButton variant="outline" pendingLabel="Saving…">
+            Save token<span className="sr-only"> for {name}</span>
           </SubmitButton>
         </form>
       </div>

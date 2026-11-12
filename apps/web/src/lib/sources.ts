@@ -136,6 +136,9 @@ export type AddSourceResult =
   /** `status` is the HTTP status for "answered". */
   | { problem: AddProblem; status?: string };
 
+/** How replacing a GitHub Source's token ended: with the new one, a refused one, or no Source to change. */
+export type ReplaceTokenResult = { source: { id: string } } | { problem: "invalid-token" | "missing" };
+
 /**
  * The schedules a Source can be added with, the same in both modes: the form is rendered at build
  * time, before the mode is known, so it works without JavaScript. Every one meets hosted's minimum.
@@ -687,6 +690,46 @@ export async function checkSourceNow(db: Db, workspaceId: string, sourceId: stri
     )
     .returning({ id: source.id });
   return due.length > 0;
+}
+
+/** The GitHub Sources that read the API with a token: a releases Source reads its feed without one. */
+const readsWithToken = sql`${source.config}->>'kind' in ('issues', 'mentions')`;
+
+/**
+ * Replaces a GitHub Source's pasted token, encrypted, and makes the Source due at once so the
+ * worker's next tick polls with it. Only the Workspace's own issues or mentions Source changes:
+ * another Workspace's id, or a releases, RSS or website Source's, finds nothing.
+ *
+ * A Source that read the sign-in token gains a pasted one here, which then wins, as the last error
+ * of a refused sign-in token suggests. A pasted token can only be replaced: no empty or cleared
+ * value is accepted, so going back to the sign-in token means removing and adding the Source again
+ * (docs: Sources and ingestion, "The token"; Security and privacy, "Source credentials").
+ */
+export async function replaceGithubToken(
+  db: Db,
+  encryptionKey: Buffer,
+  workspaceId: string,
+  sourceId: string,
+  token: string,
+): Promise<ReplaceTokenResult> {
+  if (!isUuid(sourceId)) return { problem: "missing" };
+  // The add form's check, so a token it would refuse is refused here with the same message.
+  const pasted = token.trim();
+  if (!tokenPattern.test(pasted)) return { problem: "invalid-token" };
+  const replaced = await db
+    .update(source)
+    .set({ secretCiphertext: encryptSecret(pasted, encryptionKey), nextPollAt: sql`now()` })
+    .where(
+      and(
+        eq(source.workspaceId, workspaceId),
+        eq(source.id, sourceId),
+        eq(source.type, "github"),
+        readsWithToken,
+      ),
+    )
+    .returning({ id: source.id });
+  const [saved] = replaced;
+  return saved === undefined ? { problem: "missing" } : { source: saved };
 }
 
 /**
