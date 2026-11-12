@@ -12,6 +12,7 @@ import {
   checkSourceNow,
   newSourceLink,
   removeSource,
+  replaceGithubToken,
   sourceLinkCookie,
   sourceLinkCookieValue,
 } from "@/lib/sources";
@@ -86,6 +87,21 @@ export async function removeSourceAction(sourceId: unknown) {
   const { workspace } = await requireWorkspace();
   if (typeof sourceId === "string") await removeSource(server().db, workspace.id, sourceId);
   redirect("/sources");
+}
+
+/**
+ * Replaces a GitHub Source's pasted token. The token is read apart from what the redirect carries,
+ * which is only the Source's id and how it went, so it never reaches the browser.
+ */
+export async function replaceGithubTokenAction(sourceId: unknown, formData: FormData) {
+  const { workspace } = await requireWorkspace();
+  const { db, encryptionKey } = server();
+  const id = typeof sourceId === "string" ? sourceId : "";
+  const result = await replaceGithubToken(db, encryptionKey, workspace.id, id, text(formData, "token"));
+  // Another Workspace's Source, or one that isn't GitHub's API, is as if the row had no form.
+  if ("problem" in result && result.problem === "missing") redirect("/sources");
+  if ("problem" in result) redirect(`/sources?${new URLSearchParams({ "token-problem": id })}`);
+  redirect(`/sources?${new URLSearchParams({ replaced: id })}`);
 }
 
 /** Gives an inbox a new token, which its page then shows once. The old URL stops working at once. */

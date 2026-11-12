@@ -36,6 +36,7 @@ import {
   problemField,
   problemMessage,
   removeSource,
+  replaceGithubToken,
   type SourceDeps,
   sourceLinkCookieValue,
   sourceLinkInCookie,
@@ -63,9 +64,24 @@ const githubPage = (repo: string) =>
     ? { status: 404, type: "text/plain; charset=utf-8", body: githubFixture("missing-repo-releases.txt") }
     : { status: 200, type: "application/atom+xml; charset=utf-8", body: githubFixture("vercel-next.js-releases.atom") };
 
+/** The tokens GitHub refuses, answering the 401 a revoked or expired token gets. */
+const revoked = new Set<string>();
+/** What each issues poll asked GitHub's API, and the token it sent. */
+const apiAsked: { repo: string; authorization: string }[] = [];
+
 const feeds = createServer((request, response) => {
   // The query string is ignored, so every test can add a feed URL of its own.
   const path = new URL(request.url ?? "/", "http://feeds.test").pathname;
+  // GitHub's API, which an issues Source's poll reads.
+  const asked = /^\/github-api\/repos\/([^/]+\/[^/]+)\/issues$/.exec(path)?.[1];
+  if (asked !== undefined) {
+    const authorization = request.headers.authorization ?? "";
+    apiAsked.push({ repo: asked, authorization });
+    const refused = revoked.has(authorization.replace(/^Bearer /, ""));
+    response.writeHead(refused ? 401 : 200, { "content-type": "application/json" });
+    response.end(refused ? `{"message":"Bad credentials"}` : "[]");
+    return;
+  }
   const repo = /^\/github\/([^/]+\/[^/]+)\/releases\.atom$/.exec(path)?.[1];
   const page = (repo === undefined ? pages[path] : githubPage(repo)) ?? {
     status: 404,
@@ -101,16 +117,20 @@ const guarded = createEgressFetch(loadConfig(env, () => undefined), { lookup });
 const encryptionKey = Buffer.alloc(32, 3);
 const selfHosted: SourceDeps = { fetch: guarded, mode: "self-hosted", encryptionKey };
 
-// github.com's releases feeds come from the server above, through the guarded fetch.
+// github.com's releases feeds and api.github.com come from the server above, through the guarded fetch.
 const githubFetches: string[] = [];
 const github: SourceDeps = {
   mode: "self-hosted",
   encryptionKey,
   fetch: (input, init) => {
-    const repo = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\.atom$/.exec(String(input))?.[1];
-    if (repo === undefined) return guarded(input, init);
-    githubFetches.push(repo);
-    return guarded(at(`/github/${repo}/releases.atom`), init);
+    const url = String(input);
+    const repo = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/releases\.atom$/.exec(url)?.[1];
+    if (repo !== undefined) {
+      githubFetches.push(repo);
+      return guarded(at(`/github/${repo}/releases.atom`), init);
+    }
+    const path = /^https:\/\/api\.github\.com\/(.+)$/.exec(url)?.[1];
+    return path === undefined ? guarded(input, init) : guarded(at(`/github-api/${path}`), init);
   },
 };
 // Just after the newest recorded release.
@@ -653,6 +673,110 @@ describe("Sources", () => {
       const values = addValues((name) => posted[name] ?? "");
       expect(values.type).toBe("github-issues");
       expect(Object.values(values)).not.toContain("github_pat_secret");
+    });
+
+    describe("replacing a pasted token", () => {
+      const later = () => new Date(Date.now() + 3_600_000);
+      const rowOf = async (id: string) => (await db.select().from(source).where(eq(source.id, id)))[0];
+      // The poll decrypts the token the replace form stored, so it needs the same key the adds use.
+      const polling = { ...pollDeps, secrets: { encryptionKey, authSecret: "unused-by-github-token-tests" } };
+
+      it("replaces the token after a 401, so the next poll uses it and the Items stay", async () => {
+        const stale = "github_pat_stale";
+        const fresh = "github_pat_fresh";
+        const row = await saved(await issues(tokenless, "octo-org/rotation", stale));
+        const id = row?.id ?? "";
+        const [captured] = await db
+          .insert(item)
+          .values({ workspaceId: tokenless, sourceId: id, externalId: "one", body: "An entry.", raw: {} })
+          .returning();
+        // GitHub refuses the token the Source was saved with, as it does a revoked one.
+        revoked.add(stale);
+        expect(await pollSource(db, id, polling)).toEqual({
+          error: "GitHub refused the token. Paste a new one on this Source.",
+        });
+        await db.update(source).set({ nextPollAt: later() }).where(eq(source.id, id));
+
+        // As the form posts it: pasted with a space either side.
+        expect(await replaceGithubToken(db, encryptionKey, tokenless, id, ` ${fresh} `)).toEqual({ source: { id } });
+
+        const after = await rowOf(id);
+        expect(after?.secretCiphertext).not.toContain(fresh);
+        expect(decryptSecret(after?.secretCiphertext ?? "", encryptionKey)).toBe(fresh);
+        // Due at once, so the worker's next tick polls with the new token.
+        const due = await db.select({ id: source.id }).from(source).where(and(eq(source.id, id), lte(source.nextPollAt, sql`now()`)));
+        expect(due).toHaveLength(1);
+
+        const askedFrom = apiAsked.length;
+        expect(await pollSource(db, id, polling)).toEqual({ captured: 0 });
+        // One page, read with the new token: GitHub no longer refuses it.
+        expect(apiAsked.slice(askedFrom)).toEqual([{ repo: "octo-org/rotation", authorization: `Bearer ${fresh}` }]);
+        expect((await rowOf(id))?.lastError).toBeNull();
+        expect(await db.select({ id: item.id }).from(item).where(eq(item.id, captured?.id ?? ""))).toHaveLength(1);
+      });
+
+      it("gives a Source reading the sign-in token a pasted one, which then wins", async () => {
+        const row = await saved(await issues(signedIn, "octo-org/gained"));
+        expect(row?.secretCiphertext).toBeNull();
+
+        expect(await replaceGithubToken(db, encryptionKey, signedIn, row?.id ?? "", "github_pat_pasted")).toEqual({
+          source: { id: row?.id },
+        });
+
+        const after = await rowOf(row?.id ?? "");
+        expect(decryptSecret(after?.secretCiphertext ?? "", encryptionKey)).toBe("github_pat_pasted");
+      });
+
+      it("replaces a mentions Source's token too", async () => {
+        const row = await saved(await mentions(tokenless, "token rotation", "", "github_pat_mentions"));
+        expect(await replaceGithubToken(db, encryptionKey, tokenless, row?.id ?? "", "github_pat_mentions_new")).toEqual({
+          source: { id: row?.id },
+        });
+        const after = await rowOf(row?.id ?? "");
+        expect(decryptSecret(after?.secretCiphertext ?? "", encryptionKey)).toBe("github_pat_mentions_new");
+      });
+
+      it("refuses a token the add form would refuse, and leaves the stored one", async () => {
+        const kept = "github_pat_kept";
+        const row = await saved(await issues(tokenless, "octo-org/kept", kept));
+        const id = row?.id ?? "";
+
+        // Empty too: a pasted token can be replaced, never cleared back to the sign-in token.
+        for (const refused of ["github_pat has a space", "", "x".repeat(256)]) {
+          expect(await replaceGithubToken(db, encryptionKey, tokenless, id, refused)).toEqual({ problem: "invalid-token" });
+        }
+
+        const after = await rowOf(id);
+        expect(after?.secretCiphertext).toBe(row?.secretCiphertext);
+        expect(decryptSecret(after?.secretCiphertext ?? "", encryptionKey)).toBe(kept);
+        // The same sentence the add form shows, which the row then shows.
+        const shown = { url: "", status: "", mode: "self-hosted" as const };
+        expect(problemMessage("invalid-token", shown)).toBe("Paste the token as GitHub showed it, without spaces.");
+      });
+
+      it("changes nothing for another Workspace's Source, a releases Source or an id that isn't one", async () => {
+        const other = await saved(await issues(theirs, "octo-org/not-ours", "github_pat_theirs"));
+        const releases = await saved(
+          await addGithubReleasesSource(db, github, ours, { repo: "octo-org/published", name: "", schedule: every15 }),
+        );
+        const rss = await added(ours, { url: newFeed(), name: "Not GitHub" });
+        const when = later();
+        for (const id of [other?.id ?? "", releases?.id ?? "", rss.id]) {
+          await db.update(source).set({ nextPollAt: when }).where(eq(source.id, id));
+        }
+
+        for (const id of [other?.id ?? "", releases?.id ?? "", rss.id, "not-a-uuid"]) {
+          expect(await replaceGithubToken(db, encryptionKey, ours, id, "github_pat_attack")).toEqual({ problem: "missing" });
+        }
+
+        expect((await rowOf(other?.id ?? ""))?.secretCiphertext).toBe(other?.secretCiphertext);
+        expect(decryptSecret(other?.secretCiphertext ?? "", encryptionKey)).toBe("github_pat_theirs");
+        for (const id of [releases?.id ?? "", rss.id]) {
+          const unchanged = await rowOf(id);
+          expect(unchanged?.secretCiphertext).toBeNull();
+          expect(unchanged?.nextPollAt).toEqual(when);
+        }
+      });
     });
   });
 
