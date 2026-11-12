@@ -40,12 +40,11 @@ const unmergedVariants = cva(
 /** Merged here, so a Link styled with it can't keep the base's transparent border over a variant's. */
 const buttonVariants: typeof unmergedVariants = (props) => cn(unmergedVariants(props))
 
-function Button({
-  className,
-  variant = "default",
-  size = "default",
-  ...props
-}: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+/** Base UI's `className` may be a function of its state, which cva would drop; this merges through cva, so it takes a string. */
+type ButtonProps = Omit<ButtonPrimitive.Props, "className"> &
+  VariantProps<typeof buttonVariants> & { className?: string }
+
+function Button({ className, variant = "default", size = "default", ...props }: ButtonProps) {
   return (
     <ButtonPrimitive
       data-slot="button"
