@@ -6,6 +6,7 @@ import {
   dueDigests,
   type EmailCap,
   type ProcessItemDeps,
+  purgeExpiredLinkCodes,
   purgeSentMessages,
   releaseDueDeliveries,
   releaseDueSourceAlerts,
@@ -197,6 +198,7 @@ export async function startDelivery(
     await enqueueDueSourceAlerts(db, boss);
     await enqueueDueDigests(db, boss);
     await purgeSentMessages(db);
+    await purgeExpiredLinkCodes(db);
   });
   await boss.schedule(sweepQueue, "* * * * *");
   await boss.send(sweepQueue);

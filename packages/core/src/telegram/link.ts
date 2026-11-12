@@ -2,7 +2,7 @@
 // (docs: Actions and delivery, "Telegram chats"; Sources and ingestion, "Telegram bot intake"; Security and
 // privacy, "Destinations"; ADR 0029). Only its SHA-256 hash is stored.
 import { createHash, randomBytes } from "node:crypto";
-import { and, type Db, destination, eq, gt, ne, source, sql, telegramLinkCode } from "@watchdog/db";
+import { and, type Db, destination, eq, gt, lt, ne, source, sql, telegramLinkCode } from "@watchdog/db";
 import { setPushSourceHealth } from "../delivery/source-alert.ts";
 import { encryptSecret } from "../secrets/secrets.ts";
 import type { BotChat } from "./bot-runner.ts";
@@ -38,6 +38,15 @@ export async function issueLinkCode(db: Db, target: Target) {
     });
   });
   return code;
+}
+
+/**
+ * Forgets codes whose time is up. One nobody came back for would otherwise stay forever, and the table
+ * has no index to help the deletes by Destination or Source, which scan it: the cascade from a removed
+ * one, and the delete `issueLinkCode` makes. The worker's sweep runs this once a minute.
+ */
+export async function purgeExpiredLinkCodes(db: Db) {
+  await db.delete(telegramLinkCode).where(lt(telegramLinkCode.expiresAt, sql`now()`));
 }
 
 /** Which Destination or Source a code still works for, and until when. It spends nothing. */
