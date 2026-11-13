@@ -1,7 +1,7 @@
 import { classifier, closeDb, createDb, type Db, item, migrate, source, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
-import { isDetailPath, missing, notFoundPath } from "./missing.ts";
+import { isDetailPath, isItemPath, missing, notFoundPath } from "./missing.ts";
 
 describe("a page that isn't there", () => {
   let db: Db;
@@ -108,4 +108,12 @@ describe("which paths are a detail page", () => {
       expect(isDetailPath(pathname)).toBe(false);
     },
   );
+});
+
+describe("which paths are an Item's own page", () => {
+  it("covers an Item, and nothing deeper under it", () => {
+    expect(isItemPath("/items/3f0c2f4e-0000-4000-8000-000000000000")).toBe(true);
+    expect(isItemPath("/items/3f0c2f4e-0000-4000-8000-000000000000/more")).toBe(false);
+    expect(isItemPath("/rules/classifier/3f0c2f4e-0000-4000-8000-000000000000")).toBe(false);
+  });
 });

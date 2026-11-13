@@ -9,18 +9,27 @@ import { isUuid } from "./uuid.ts";
  */
 export const notFoundPath = "/_not-found";
 
+/**
+ * What a rewrite to `not-found.tsx` carries to say it answered for a missing Item: the rewrite
+ * changes the address, so the page can't tell from the path what it is explaining.
+ */
+export const itemMissHeader = "x-watchdog-item-miss";
+
 const itemPath = /^\/items\/([^/]+)$/;
 const rulePath = /^\/rules\/([^/]+)\/([^/]+)$/;
 
+/** Whether the path is an Item's page, the one whose miss explains why an Item is gone. */
+export const isItemPath = (pathname: string) => itemPath.test(pathname);
+
 /** Whether the path is an Item or a rule detail page: the two that answer not-found for a missing one. */
-export const isDetailPath = (pathname: string) => itemPath.test(pathname) || rulePath.test(pathname);
+export const isDetailPath = (pathname: string) => isItemPath(pathname) || rulePath.test(pathname);
 
 const ruleTables = { classifier, extractor: extractorRule, action };
 
 /**
  * Whether this visitor's Workspace has no Item or rule at this path, so the page would render the
  * not-found UI. Next.js fixes a response's status when it starts streaming, which is before the page
- * runs its own lookup, so the answer has to come from Proxy, ahead of the render.
+ * runs its own lookup, so its 404 has to come from Proxy, ahead of the render.
  *
  * Scoped by `userId` rather than a Workspace id: finding it here must not create one, as
  * `requireWorkspace` does for a new account, and a Workspace has one owner (`owner_user_id` is
