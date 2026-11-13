@@ -12,11 +12,19 @@ const feed = `<?xml version="1.0"?><rss version="2.0"><channel><title>Synthetic<
 // No live HTTP: every feed answers from here, after `gate` resolves for that URL if one is set.
 const fetched: string[] = [];
 const gates = new Map<string, Promise<void>>();
+/** Called once that URL has been asked for, for a test that needs to see its poll run. */
+const asks = new Map<string, () => void>();
+/** Resolves once a poll of that URL reaches its fetch, which is the work rather than a clock. */
+const asked = (url: string) =>
+  new Promise<void>((resolve) => {
+    asks.set(url, resolve);
+  });
 const deps: PollSourceDeps = {
   secrets: { encryptionKey: Buffer.alloc(32), authSecret: "unused-by-rss-sources" },
   fetch: async (input) => {
     const url = String(input);
     fetched.push(url);
+    asks.get(url)?.();
     await gates.get(url);
     return new Response(feed);
   },
@@ -108,12 +116,14 @@ describe("scheduler", () => {
   it("doesn't poll a Source that isn't due yet", async () => {
     const later = await newSource(new Date(Date.now() + 60 * minute));
     const due = await newSource();
+    const started = asked(due.url);
     await enqueueDuePolls(db, boss);
 
-    await vi.waitFor(async () => { expect((await reload(due.id)).lastPolledAt).not.toBeNull(); }, {
-      timeout: 15_000,
-    });
+    // Which Sources are due was settled by the enqueue: one that wasn't due has no poll queued. Waiting
+    // for the due one's poll to finish only measured how long a loaded machine takes to run it.
     expect(await pollJobs(later.id)).toEqual([]);
+    // The poll that was queued starts, which is the positive signal that the scheduler did this work.
+    await started;
     expect(fetched).not.toContain(later.url);
     expect((await reload(later.id)).lastPolledAt).toBeNull();
   });
