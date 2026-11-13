@@ -29,7 +29,7 @@ colors:
   light-border: "oklch(0.9158 0 0)"
   light-ring: "oklch(0.5555 0 0)"
   light-alarm: "oklch(0.5500 0.2100 28.0000)"
-  light-caution: "oklch(0.5600 0.1200 65.0000)"
+  light-caution: "oklch(0.5300 0.1200 65.0000)"
   light-ok: "oklch(0.5300 0.1300 150.0000)"
 typography:
   headline:
@@ -166,7 +166,7 @@ A graphite instrument panel: achromatic neutrals carry the whole interface, and 
 
 ### Signal (severity and health)
 - **Alarm Red** (`alarm`; light: `light-alarm`): High severity and critical items, firing alerts, failed sources or actions, errors, invalid fields, destructive confirmations. Text-safe on every surface in both themes (dark ≥4.57:1 on popover, light 5.4:1 on white). Solid fills use `alarm-foreground` (near-black in dark, white in light). `destructive` is set to the same value: there is exactly one red per theme.
-- **Caution Amber** (`caution`; light: `light-caution`): Medium severity, degraded or rate-limited sources, items waiting for review.
+- **Caution Amber** (`caution`; light: `light-caution`): Medium severity, degraded or rate-limited sources, items waiting for review. Text-safe in both themes, at rest and on a hovered Feed row: 4.79:1 on white and on its own 10% tint in light, 9.07:1 at rest and 8.19:1 on a hovered row in dark. The light value is deepened for the tint; it was 4.21:1.
 - **Healthy Green** (`ok`; light: `light-ok`): Source connected, action succeeded, test passed. Shown sparingly, mostly as small status lamps; healthy is the expected state and should not shout.
 
 ### Data visualization

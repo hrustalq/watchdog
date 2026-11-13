@@ -101,7 +101,7 @@
   --accent-foreground: oklch(0.1448 0 0);
   --alarm: oklch(0.5500 0.2100 28.0000);
   --alarm-foreground: oklch(1.0000 0 0);
-  --caution: oklch(0.5600 0.1200 65.0000);
+  --caution: oklch(0.5300 0.1200 65.0000);
   --ok: oklch(0.5300 0.1300 150.0000);
   --destructive: oklch(0.5500 0.2100 28.0000);
   --destructive-foreground: oklch(1.0000 0 0);
