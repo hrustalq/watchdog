@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { ChevronDown } from "lucide-react";
 import { Suspense } from "react";
 import { Timestamp } from "@/components/timestamp";
 import { buttonVariants } from "@/components/ui/button";
@@ -17,6 +18,7 @@ import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
 import { removeModelAction, testConnectionAction } from "./actions";
+import { formOpens } from "./form-open";
 import { ModelForm, type ModelFormValues } from "./model-form";
 
 export const metadata: Metadata = { title: "Model · Watchdog" };
@@ -59,6 +61,9 @@ const blankForm: ModelFormValues = {
 };
 
 const noticeClass = "rounded-lg bg-muted px-3 py-2 text-sm";
+// The Remove control's summary styling, at the size of a card header: the whole row is the control.
+const formSummary =
+  "flex min-h-12 cursor-pointer list-none flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg px-4 py-2 outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden";
 const keyLink =
   "rounded-sm text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60";
 
@@ -109,6 +114,16 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
           inputPrice: param("inputPrice"),
           outputPrice: param("outputPrice"),
         };
+
+  // The form is a disclosure (#129): with a saved model that works it stays collapsed, and it opens
+  // whenever the form is what the user has to change, or the page is asking for the key at #api-key.
+  const open = formOpens({
+    hasModel: model !== undefined,
+    unreadableKey: model?.storedKey === "unreadable",
+    refused: problem !== undefined,
+    keyLeftBehind: param("saved") === "key-left-behind",
+    unreadableKeyTest: test === "unreadable-key",
+  });
 
   return (
     <>
@@ -187,19 +202,31 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
         </section>
       )}
 
-      <section aria-labelledby="model-form" className="flex flex-col gap-4 rounded-lg border p-4">
-        <h2 id="model-form" className="text-title">
-          {model === undefined ? "Add a model" : "Change the model"}
-        </h2>
-        <p className="text-sm text-muted-foreground">{formIntro(model)}</p>
-        {/* A new key on the saved values remounts nothing, so React's own form reset clears the field. */}
-        <ModelForm
-          key={JSON.stringify(values)}
-          values={values}
-          storedKey={model?.storedKey ?? "none"}
-          problem={problem}
-          keyTyped={param("keyTyped") !== ""}
-        />
+      {/* A native disclosure, as the Remove control: a saved model that works leaves the status and
+          Test connection as the screen, and the seven fields until the user opens them. */}
+      <section aria-labelledby="model-form" className="rounded-lg border">
+        <details open={open} className="group">
+          <summary className={formSummary}>
+            <h2 id="model-form" className="text-title">
+              {model === undefined ? "Add a model" : "Change the model"}
+            </h2>
+            <ChevronDown
+              aria-hidden="true"
+              className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+            />
+          </summary>
+          <div className="flex flex-col gap-4 border-t p-4">
+            <p className="text-sm text-muted-foreground">{formIntro(model)}</p>
+            {/* A new key on the saved values remounts nothing, so React's own form reset clears the field. */}
+            <ModelForm
+              key={JSON.stringify(values)}
+              values={values}
+              storedKey={model?.storedKey ?? "none"}
+              problem={problem}
+              keyTyped={param("keyTyped") !== ""}
+            />
+          </div>
+        </details>
       </section>
     </>
   );
