@@ -13,10 +13,16 @@ export { maxSelectorLength as maxRegionLength, selectorError as regionError } fr
 
 /**
  * Fetches the page through the egress guard and returns its HTML and the URL it came from after any
- * redirects, or throws why it can't.
+ * redirects, or throws why it can't. A stopped poll's signal ends the fetch with it.
  */
-export async function fetchPage(url: string, deps: { fetch: ReturnType<typeof createEgressFetch> }) {
-  const response = await deps.fetch(url, { headers: { accept: "text/html, application/xhtml+xml;q=0.9" } });
+export async function fetchPage(
+  url: string,
+  deps: { fetch: ReturnType<typeof createEgressFetch>; signal?: AbortSignal },
+) {
+  const response = await deps.fetch(url, {
+    headers: { accept: "text/html, application/xhtml+xml;q=0.9" },
+    ...(deps.signal && { signal: deps.signal }),
+  });
   const contentType = response.headers.get("content-type");
   const problem = unwatchable(url, { status: response.status, statusText: response.statusText, contentType });
   if (problem !== undefined) {

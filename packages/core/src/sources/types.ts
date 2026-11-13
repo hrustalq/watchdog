@@ -32,8 +32,9 @@ export interface PollDeps extends FetchFeedDeps {
   /** Renders a website Source set to `chromium`. Without it, such a Source's polls fail. */
   chromium?: Renderer;
   /**
-   * Fires when the worker stops or loses the job. A render still running then stops, and the poll
-   * throws rather than recording an error on the Source.
+   * Fires when the worker stops or loses the job. Every fetch of a website poll stops with it, both
+   * a render and the static page and its robots.txt, and the poll throws rather than recording an
+   * error on the Source.
    */
   signal?: AbortSignal;
 }

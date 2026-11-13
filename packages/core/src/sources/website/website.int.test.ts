@@ -18,21 +18,46 @@ const pageRaw = z.object({ text: z.string(), html: z.string() });
 const now = new Date("2026-11-09T12:00:00Z");
 const hour = 60 * 60 * 1000;
 
+/** The options a fetch is given: the egress guard hands the poll's signal in through them. */
+type FetchInit = Parameters<PollSourceDeps["fetch"]>[1];
+
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Expected a value");
   return value;
 }
 
+/** A response that never arrives: it rejects only when the poll's signal fires, as a fetch does. */
+function hang(init: FetchInit) {
+  return new Promise<Response>((_resolve, reject) => {
+    const signal = init?.signal;
+    if (signal === undefined || signal === null) {
+      reject(new Error("The fetch was given no signal, so it could never be stopped"));
+      return;
+    }
+    signal.addEventListener(
+      "abort",
+      () => {
+        const reason: unknown = signal.reason;
+        reject(reason instanceof Error ? reason : new Error(String(reason)));
+      },
+      { once: true },
+    );
+  });
+}
+
 /** No live HTTP: `respond` answers each request by URL, and every URL asked for is kept. */
-function site(respond: (url: string) => Response | undefined, mode: "hosted" | "self-hosted" = "hosted") {
+function site(
+  respond: (url: string, init: FetchInit) => Response | Promise<Response> | undefined,
+  mode: "hosted" | "self-hosted" = "hosted",
+) {
   const asked: string[] = [];
   let at = now;
   const deps: PollSourceDeps = {
-    fetch: (input) => {
+    fetch: (input, init) => {
       const url = String(input);
       asked.push(url);
-      const response = respond(url);
-      return response ? Promise.resolve(response) : Promise.reject(new Error("connect ECONNREFUSED"));
+      const response = respond(url, init);
+      return response === undefined ? Promise.reject(new Error("connect ECONNREFUSED")) : Promise.resolve(response);
     },
     now: () => at,
     enqueueItems: () => Promise.resolve(),
@@ -282,6 +307,74 @@ describe("website Sources", () => {
     const after = await reload(src.id);
     expect(after.lastError).toBeNull();
     expect(after.lastPolledAt).toBeNull();
+  });
+
+  it("stops a static fetch when the poll's signal fires, and records nothing on the Source", async () => {
+    const src = await newSource();
+    let stalled = false;
+    const started = Promise.withResolvers<boolean>();
+    const { asked, deps } = site((url, init) => {
+      if (url === `${src.origin}/robots.txt`) return new Response("", { status: 404 });
+      if (!stalled) return new Response(v1, { headers: html });
+      // The page never answers: only the poll's signal ends this fetch.
+      started.resolve(true);
+      return hang(init);
+    });
+    // A first poll stores the Baseline, so the stopped one has state it must leave alone.
+    expect(await pollSource(db, src.id, deps)).toEqual({ captured: 0 });
+    const before = await reload(src.id);
+
+    const stop = new AbortController();
+    deps.signal = stop.signal;
+    stalled = true;
+    const poll = pollSource(db, src.id, deps);
+    await started.promise;
+    const firedAt = performance.now();
+    stop.abort(new Error("The worker is stopping"));
+    await expect(poll).rejects.toThrow("The worker is stopping");
+    expect(performance.now() - firedAt).toBeLessThan(1000);
+
+    expect(asked.filter((url) => url.endsWith("/robots.txt"))).toHaveLength(1);
+    const after = await reload(src.id);
+    expect(after.lastError).toBeNull();
+    expect(after.fetchState).toEqual(before.fetchState);
+    expect(after.lastPolledAt).toEqual(before.lastPolledAt);
+    expect(await itemsOf(src.id)).toEqual([]);
+  });
+
+  it("stops a robots.txt fetch when the poll's signal fires, and asks again on the next poll", async () => {
+    const src = await newSource();
+    let stalled = true;
+    const started = Promise.withResolvers<boolean>();
+    const { asked, deps } = site((url, init) => {
+      if (url !== `${src.origin}/robots.txt`) return new Response(v1, { headers: html });
+      if (!stalled) return new Response("", { status: 404 });
+      started.resolve(true);
+      return hang(init);
+    });
+
+    const stop = new AbortController();
+    deps.signal = stop.signal;
+    const poll = pollSource(db, src.id, deps);
+    await started.promise;
+    const firedAt = performance.now();
+    stop.abort(new Error("The worker is stopping"));
+    await expect(poll).rejects.toThrow("The worker is stopping");
+    expect(performance.now() - firedAt).toBeLessThan(1000);
+
+    // The page was never fetched, and nothing was recorded as its failure.
+    expect(asked).toEqual([`${src.origin}/robots.txt`]);
+    const stopped = await reload(src.id);
+    expect(stopped.lastError).toBeNull();
+    expect(stopped.fetchState).toEqual({});
+    expect(stopped.lastPolledAt).toBeNull();
+
+    // Not cached, and not read as "disallows this poll": the next poll asks robots.txt again.
+    stalled = false;
+    deps.signal = new AbortController().signal;
+    expect(await pollSource(db, src.id, deps)).toEqual({ captured: 0 });
+    expect(asked).toEqual([`${src.origin}/robots.txt`, `${src.origin}/robots.txt`, src.url]);
+    expect((await reload(src.id)).lastError).toBeNull();
   });
 
   it("refuses on hosted a page that robots.txt disallows for Watchdog, without fetching it", async () => {

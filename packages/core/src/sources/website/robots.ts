@@ -16,10 +16,13 @@ interface Rule {
 /** Each origin's rules for Watchdog (none when robots.txt allows everything), kept for a day. */
 const cache = new Map<string, { rules: Rule[]; until: number }>();
 
-/** Throws, naming robots.txt, when the page's origin disallows Watchdog from fetching it. */
+/**
+ * Throws, naming robots.txt, when the page's origin disallows Watchdog from fetching it. A stopped
+ * poll's signal ends the fetch with it, and the rules it never read aren't kept.
+ */
 export async function checkRobots(
   pageUrl: string,
-  deps: { fetch: ReturnType<typeof createEgressFetch>; now: Date },
+  deps: { fetch: ReturnType<typeof createEgressFetch>; now: Date; signal?: AbortSignal },
 ) {
   const page = new URL(pageUrl);
   const url = `${page.origin}/robots.txt`;
@@ -37,14 +40,19 @@ export async function checkRobots(
 
 /**
  * A robots.txt that answers 4xx allows everything. One that answers 429 or 5xx, or can't be fetched,
- * disallows this poll and isn't kept, so the next poll asks again.
+ * disallows this poll and isn't kept, so the next poll asks again. A fetch stopped with the worker
+ * throws as it is, so the poll fails for a retry instead of this Source's page going unfetched.
  */
-async function fetchRules(url: string, deps: { fetch: ReturnType<typeof createEgressFetch> }) {
+async function fetchRules(
+  url: string,
+  deps: { fetch: ReturnType<typeof createEgressFetch>; signal?: AbortSignal },
+) {
   const unavailable = (why: string) => `${url} ${why}, so Watchdog didn't fetch the page. The next poll tries again.`;
   let response;
   try {
-    response = await deps.fetch(url);
+    response = await deps.fetch(url, deps.signal && { signal: deps.signal });
   } catch (error) {
+    if (deps.signal?.aborted === true) throw error;
     // fetch's TypeError says only "fetch failed"; its cause says why.
     const reason = error instanceof Error && error.cause instanceof Error ? error.cause : error;
     throw new Error(unavailable(`couldn't be read (${reason instanceof Error ? reason.message : String(reason)})`), {
