@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { dataBox, field, fieldError, label as labelClass } from "@/components/field-classes";
 import { buttonVariants } from "@/components/ui/button";
-import { type PriceInput, type PriceProblem, priceProblemMessage, priceProblems } from "@/lib/model";
+import { type PriceInput, type PriceProblem, priceProblemMessage, priceProblems, hasUnreadableKey } from "@/lib/model";
 import { hasActiveModel } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import {
@@ -46,10 +46,13 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
   const now = new Date();
   const current = parseMonth(undefined, now);
   const month = parseMonth(params.month, now);
-  const { db } = server();
+  const { db, encryptionKey } = server();
   const { models, purposes, total, firstMonth } = await usageForMonth(db, workspace.id, month);
   const older = firstMonth !== undefined && firstMonth < month ? shiftMonth(month, -1) : undefined;
   const newer = month < current ? shiftMonth(month, 1) : undefined;
+  // Only an empty month needs to know what the Agent would run on, and a model is read once.
+  const hasModel = total.calls === 0 && (await hasActiveModel(db, workspace.id));
+  const unreadableKey = hasModel && (await hasUnreadableKey(db, encryptionKey, workspace.id));
 
   const param = (name: string) => {
     const value = params[name];
@@ -120,7 +123,8 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
           <EmptyMonth
             label={monthLabel(month)}
             neverCalled={firstMonth === undefined}
-            hasModel={await hasActiveModel(db, workspace.id)}
+            hasModel={hasModel}
+            unreadableKey={unreadableKey}
           />
         ) : (
           <>
@@ -186,12 +190,32 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
   );
 }
 
-function EmptyMonth({ label, neverCalled, hasModel }: { label: string; neverCalled: boolean; hasModel: boolean }) {
+function EmptyMonth({
+  label,
+  neverCalled,
+  hasModel,
+  unreadableKey,
+}: {
+  label: string;
+  neverCalled: boolean;
+  hasModel: boolean;
+  unreadableKey: boolean;
+}) {
   const words = "mt-2 max-w-md text-sm text-muted-foreground";
   return (
     <div className="flex flex-1 flex-col items-center justify-center py-16 text-center">
       <h2 className="text-headline">{neverCalled ? "No Agent calls yet" : `No Agent calls in ${label}`}</h2>
-      {hasModel && neverCalled ? (
+      {/* Neither a rating nor a test can happen while the key can't be read, so this asks for the key
+          rather than promising calls. */}
+      {unreadableKey && neverCalled ? (
+        <>
+          <p className={words}>The Agent can&apos;t run, because Watchdog can&apos;t read the model&apos;s stored API key.</p>
+          <Link href={modelLink} className={buttonVariants({ className: "mt-6" })}>
+            Enter the key again
+          </Link>
+        </>
+      ) : null}
+      {hasModel && !unreadableKey && neverCalled ? (
         <p className={words}>Calls show up here once the Agent rates an Item or you test the connection.</p>
       ) : null}
       {hasModel ? null : (

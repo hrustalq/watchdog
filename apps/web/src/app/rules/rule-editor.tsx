@@ -36,6 +36,8 @@ interface RuleEditorProps {
   initialYaml: string;
   initialProblems: RuleProblem[];
   hasModel: boolean;
+  /** The Workspace has a model, but Watchdog can't read its API key, so an Agent-backed rule can't run. */
+  unreadableKey: boolean;
   sources: { id: string; name: string }[];
   categories: string[];
   destinations: DestinationChoice[];
@@ -63,6 +65,7 @@ function Editor({
   initialYaml,
   initialProblems,
   hasModel,
+  unreadableKey,
   sources,
   categories,
   destinations,
@@ -164,6 +167,17 @@ function Editor({
             it.{" "}
             <Link href={modelLink} className="rounded-sm underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60">
               Set up a model
+            </Link>
+          </p>
+        ) : null}
+
+        {/* Saving and enabling are unaffected, so entering the key again is the only other step. */}
+        {kindOf(current) === "agent" && unreadableKey ? (
+          <p className="rounded-lg bg-muted px-3 py-2 text-sm">
+            This Agent-backed rule can&apos;t run until the API key is entered again, because Watchdog
+            can&apos;t read it. You can still save it.{" "}
+            <Link href={modelLink} className="rounded-sm underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60">
+              Enter the key again
             </Link>
           </p>
         ) : null}

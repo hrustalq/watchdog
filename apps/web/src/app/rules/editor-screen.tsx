@@ -1,4 +1,5 @@
 import { minimumMinutes } from "@watchdog/core";
+import { hasUnreadableKey } from "@/lib/model";
 import {
   declaredFields,
   destinationChoices,
@@ -32,11 +33,12 @@ export async function EditorScreen({
   yaml: string;
   query: Record<string, string | string[] | undefined>;
 }) {
-  const { db, mode } = server();
+  const { db, encryptionKey, mode } = server();
   const workspaceId = workspace.id;
   const sentBack = typeof query.draft === "string" ? query.draft : undefined;
-  const [hasModel, sources, categories, destinations, declared, problems] = await Promise.all([
+  const [hasModel, unreadableKey, sources, categories, destinations, declared, problems] = await Promise.all([
     hasActiveModel(db, workspaceId),
+    hasUnreadableKey(db, encryptionKey, workspaceId),
     listSources(db, workspaceId),
     knownCategories(db, workspaceId),
     destinationChoices(db, workspaceId),
@@ -60,6 +62,7 @@ export async function EditorScreen({
           initialYaml={sentBack ?? yaml}
           initialProblems={[...tooLong, ...problems]}
           hasModel={hasModel}
+          unreadableKey={unreadableKey}
           sources={sources.map(({ id, name }) => ({ id, name }))}
           categories={categories}
           destinations={destinations}

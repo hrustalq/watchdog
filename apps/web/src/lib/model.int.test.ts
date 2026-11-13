@@ -19,6 +19,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { hasActiveModel } from "./rules.ts";
 import {
   getModel,
+  hasUnreadableKey,
   lastFailedCall,
   type ModelDeps,
   type ModelInput,
@@ -211,6 +212,52 @@ describe("the Model screen", () => {
       await expect(saveModel(db, encryptionKey, workspaceId, input(overrides))).resolves.toEqual({ problem });
 
       expect(await rows(workspaceId)).toEqual([]);
+    });
+  });
+
+  describe("the state the other screens read", () => {
+    /** Every call the Workspace recorded, so a read that made none can't have added one. */
+    const calls = (workspaceId: string) => db.$count(agentCall, eq(agentCall.workspaceId, workspaceId));
+
+    it("says nothing is wrong with a readable key, and records no call", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+
+      await expect(hasUnreadableKey(db, encryptionKey, workspaceId)).resolves.toBe(false);
+      expect(await calls(workspaceId)).toBe(0);
+      await expect(lastFailedCall(db, workspaceId)).resolves.toBeUndefined();
+    });
+
+    it("says the key can't be read under another encryption key, and records no call", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+
+      await expect(hasUnreadableKey(db, Buffer.alloc(32, 9), workspaceId)).resolves.toBe(true);
+      expect(await calls(workspaceId)).toBe(0);
+      await expect(lastFailedCall(db, workspaceId)).resolves.toBeUndefined();
+    });
+
+    it("doesn't call a model with no key unreadable", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { baseUrl: "http://ollama.test:11434/v1" });
+
+      await expect(hasUnreadableKey(db, Buffer.alloc(32, 9), workspaceId)).resolves.toBe(false);
+    });
+
+    it("says nothing without a model", async () => {
+      await expect(hasUnreadableKey(db, encryptionKey, await newWorkspace())).resolves.toBe(false);
+    });
+
+    it("clears once the key is entered again, with no other step", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const changed = Buffer.alloc(32, 9);
+      expect(await hasUnreadableKey(db, changed, workspaceId)).toBe(true);
+
+      await saveModel(db, changed, workspaceId, input({ apiKey }));
+
+      await expect(hasUnreadableKey(db, changed, workspaceId)).resolves.toBe(false);
+      expect(await calls(workspaceId)).toBe(0);
     });
   });
 
