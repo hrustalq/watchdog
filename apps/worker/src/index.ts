@@ -73,10 +73,13 @@ await startDelivery(deliveryDb, boss, {
     sendCapNotice: (workspaceId: string) => sendEmailCapNotice(deliveryDb, workspaceId, mailer, alertFrom),
   }),
 });
-await startPipeline(db, boss, {
-  fetch: createAgentFetch(config),
-  encryptionKey: config.encryptionKey,
-});
+await startPipeline(
+  db,
+  boss,
+  { fetch: createAgentFetch(config), encryptionKey: config.encryptionKey },
+  // A hosted plan's node limit for an Item's JSONPath fields; a self-hosted install sets none.
+  config.ruleLimits?.jsonPathNodes,
+);
 const { cdpUrl, cdpToken } = config.obscura;
 await startScheduler(db, boss, config.mode, {
   fetch: egressFetch,
