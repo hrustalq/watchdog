@@ -1430,6 +1430,13 @@ describe("processItem", () => {
           .from(correction)
           .where(eq(correction.workspaceId, workspaceId));
 
+      /** The Corrections the prompt carried, as the model reads them, newest first. */
+      function correctionsSent(fake: ReturnType<typeof answering>) {
+        const section = /<corrections>(.*)<\/corrections>/s.exec(sentTo(fake).prompt)?.[1];
+        const parsed: unknown = JSON.parse(present(section));
+        return z.array(z.object({ title: z.string().nullable(), summary: z.string().nullable() })).parse(parsed);
+      }
+
       it("fills in the summary of a Rating Correction made during the call, for the next Item's prompt", async () => {
         const seeded = await seed();
         await addModel(seeded);
@@ -1491,6 +1498,95 @@ describe("processItem", () => {
             { kind: "rating", itemId: null, summary: null },
           ]),
         );
+      });
+
+      it("leaves a Correction with no title and no summary out of the prompt, and keeps its row", async () => {
+        const seeded = await seed();
+        await addModel(seeded);
+        const itemId = await capture(seeded, "A post");
+        await db.insert(correction).values([
+          { ...correctionOf(seeded, null), itemTitle: null },
+          { ...correctionOf(seeded, null), itemTitle: "A post the user corrected" },
+        ]);
+        const fake = answering();
+
+        await processItem(db, itemId, fake.deps);
+
+        expect(correctionsSent(fake)).toEqual([{ title: "A post the user corrected", summary: null }]);
+        expect(await summariesOf(seeded.workspaceId)).toHaveLength(2);
+      });
+
+      it("keeps 20 newer Corrections with no title or summary from crowding out an older one with a title", async () => {
+        const seeded = await seed();
+        await addModel(seeded);
+        const itemId = await capture(seeded, "A post");
+        await db.insert(correction).values([
+          {
+            ...correctionOf(seeded, null),
+            itemTitle: "The older useful one",
+            createdAt: new Date(Date.UTC(2026, 0, 1)),
+          },
+          ...Array.from({ length: 20 }, (_, i) => ({
+            ...correctionOf(seeded, null),
+            itemTitle: null,
+            createdAt: new Date(Date.UTC(2026, 0, 2 + i)),
+          })),
+        ]);
+        const fake = answering();
+
+        await processItem(db, itemId, fake.deps);
+
+        expect(correctionsSent(fake)).toEqual([{ title: "The older useful one", summary: null }]);
+      });
+
+      it("sends a Correction with only a title, and one with only a summary", async () => {
+        const seeded = await seed();
+        await addModel(seeded);
+        const itemId = await capture(seeded, "A post");
+        await db.insert(correction).values([
+          {
+            ...correctionOf(seeded, null),
+            itemTitle: "Only a title",
+            createdAt: new Date(Date.UTC(2026, 0, 1)),
+          },
+          {
+            ...correctionOf(seeded, null, "categories"),
+            itemTitle: null,
+            itemSummary: "Only a summary",
+            createdAt: new Date(Date.UTC(2026, 0, 2)),
+          },
+        ]);
+        const fake = answering();
+
+        await processItem(db, itemId, fake.deps);
+
+        expect(correctionsSent(fake)).toEqual([
+          { title: null, summary: "Only a summary" },
+          { title: "Only a title", summary: null },
+        ]);
+      });
+
+      it("sends a Correction with no title made during the call in the next Item's prompt, with the summary", async () => {
+        const seeded = await seed();
+        await addModel(seeded);
+        const itemId = await capture(seeded, "A post");
+        const fake = answering();
+        const during: typeof fake.deps.agent.fetch = async (input, init) => {
+          await db
+            .update(item)
+            .set({ ...corrected, ratingCorrectedAt: new Date() })
+            .where(eq(item.id, itemId));
+          await db.insert(correction).values({ ...correctionOf(seeded, itemId), itemTitle: null });
+          return fake.fetch(input, init);
+        };
+
+        await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
+
+        expect(await summariesOf(seeded.workspaceId)).toEqual([{ kind: "rating", itemId, summary: rated.summary }]);
+
+        const next = answering();
+        await processItem(db, await capture(seeded, "The next post"), next.deps);
+        expect(correctionsSent(next)).toEqual([{ title: null, summary: rated.summary }]);
       });
 
       it("copies the summary as it was stored, without what Postgres refuses", async () => {
