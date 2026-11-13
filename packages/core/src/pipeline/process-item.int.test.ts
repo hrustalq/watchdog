@@ -410,6 +410,59 @@ describe("processItem", () => {
       expect(finished.processedAt).not.toBeNull();
     });
 
+    it("stores the rest of the answer when a Classifier is deleted during the call", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      const gone = await saveAgentClassifier(seeded, "gone", ["lost"]);
+      const lead = await saveAgentClassifier(seeded, "leads", ["lead"]);
+      const itemId = await capture(seeded, "A post");
+      const fake = answering({ json: { categories: ["lost", "lead"] } });
+      const during: typeof fake.deps.agent.fetch = async (input, init) => {
+        await db.delete(classifier).where(eq(classifier.id, gone));
+        return fake.fetch(input, init);
+      };
+
+      await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
+
+      expect(await callsOf(itemId)).toMatchObject([{ purpose: "classify", attempt: 1, status: "ok" }]);
+      expect(await categoriesOf(itemId)).toEqual([{ itemId, category: "lead", classifierId: lead }]);
+      expect(await classifyLog(itemId)).toMatchObject([
+        {
+          message: "The Agent classified this Item: leads assigned lead",
+          data: {
+            categories: ["lead"],
+            rules: [{ classifierId: lead, classifier: "leads", categories: ["lead"] }],
+          },
+        },
+      ]);
+      const finished = await reload(itemId);
+      expect(finished.classifiedAt).not.toBeNull();
+      expect(finished.processedAt).not.toBeNull();
+    });
+
+    it("logs the dropped answer when every Classifier is deleted during the call", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      const only = await saveAgentClassifier(seeded, "leads", ["lead"]);
+      const itemId = await capture(seeded, "A post");
+      const fake = answering({ json: { categories: ["lead"] } });
+      const during: typeof fake.deps.agent.fetch = async (input, init) => {
+        await db.delete(classifier).where(eq(classifier.id, only));
+        return fake.fetch(input, init);
+      };
+
+      await processItem(db, itemId, { ...noJobs, agent: { fetch: during, encryptionKey } });
+
+      expect(await callsOf(itemId)).toMatchObject([{ purpose: "classify", attempt: 1, status: "ok" }]);
+      expect(await categoriesOf(itemId)).toEqual([]);
+      expect(await messagesOf(itemId)).toEqual([
+        "The Agent's Categories were dropped: every Classifier was deleted during the call",
+      ]);
+      const finished = await reload(itemId);
+      expect(finished.classifiedAt).not.toBeNull();
+      expect(finished.processedAt).not.toBeNull();
+    });
+
     it("allows exactly the declared Categories in the schema, and gives the Agent no tools", async () => {
       const seeded = await seed();
       await addModel(seeded);

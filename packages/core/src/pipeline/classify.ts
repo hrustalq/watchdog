@@ -5,6 +5,7 @@ import {
   type Db,
   eq,
   gt,
+  inArray,
   isNull,
   item,
   itemCategory,
@@ -136,32 +137,48 @@ async function storeCategories(
       const message = "The Agent's Categories were dropped: the user corrected this Item's Categories";
       await logClassify(tx, itemId, message, { dropped: categories });
     } else {
-      if (categories.length > 0) {
-        await tx
-          .insert(itemCategory)
-          .values(
-            categories.map((category) => ({
-              itemId,
-              category,
-              // A Category two rules declare goes to the oldest, as with deterministic Classifiers.
-              classifierId: rules.find((rule) => rule.definition.categories.includes(category))?.id ?? null,
-            })),
-          )
-          .onConflictDoNothing();
+      // The lock keeps a Classifier from going before its rows' foreign key is checked.
+      const kept = await tx
+        .select({ id: classifier.id })
+        .from(classifier)
+        .where(inArray(classifier.id, rules.map((rule) => rule.id)))
+        .for("key share");
+      const keptRules = rules.filter((rule) => kept.some(({ id }) => id === rule.id));
+      // A Category only a deleted Classifier declares isn't assigned, as with Extractor Rules.
+      const assigned = categories.filter((category) =>
+        keptRules.some((rule) => rule.definition.categories.includes(category)),
+      );
+      if (keptRules.length === 0) {
+        const message = "The Agent's Categories were dropped: every Classifier was deleted during the call";
+        await logClassify(tx, itemId, message, { dropped: categories });
+      } else {
+        if (assigned.length > 0) {
+          await tx
+            .insert(itemCategory)
+            .values(
+              assigned.map((category) => ({
+                itemId,
+                category,
+                // A Category two rules declare goes to the oldest, as with deterministic Classifiers.
+                classifierId: keptRules.find((rule) => rule.definition.categories.includes(category))?.id ?? null,
+              })),
+            )
+            .onConflictDoNothing();
+        }
+        const byRule = keptRules
+          .map(({ id, name, definition }) => ({
+            classifierId: id,
+            classifier: name,
+            categories: assigned.filter((category) => definition.categories.includes(category)),
+          }))
+          .filter((rule) => rule.categories.length > 0);
+        const named = byRule.map((rule) => `${rule.classifier} assigned ${rule.categories.join(", ")}`);
+        const message =
+          assigned.length > 0
+            ? `The Agent classified this Item: ${named.join("; ")}`
+            : "The Agent assigned no Category";
+        await logClassify(tx, itemId, message, { categories: assigned, rules: byRule });
       }
-      const byRule = rules
-        .map(({ id, name, definition }) => ({
-          classifierId: id,
-          classifier: name,
-          categories: categories.filter((category) => definition.categories.includes(category)),
-        }))
-        .filter((rule) => rule.categories.length > 0);
-      const named = byRule.map((rule) => `${rule.classifier} assigned ${rule.categories.join(", ")}`);
-      const message =
-        categories.length > 0
-          ? `The Agent classified this Item: ${named.join("; ")}`
-          : "The Agent assigned no Category";
-      await logClassify(tx, itemId, message, { categories, rules: byRule });
     }
     await tx.update(item).set({ classifiedAt: now() }).where(eq(item.id, itemId));
   });
