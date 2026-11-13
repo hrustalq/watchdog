@@ -316,7 +316,7 @@ function TelegramAccount({ session }: { session: { account: string; revokedAt: D
         </h2>
         <p className="text-sm text-muted-foreground">{state}</p>
       </div>
-      <Link href="/sources/telegram" className={`${buttonVariants({ variant: "outline" })} shrink-0`}>
+      <Link href="/sources/telegram" className={buttonVariants({ variant: "outline", className: "shrink-0" })}>
         {session === undefined ? "Sign in" : "Manage"}
         <span className="sr-only"> Telegram (your account)</span>
       </Link>

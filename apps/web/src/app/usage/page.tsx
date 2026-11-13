@@ -169,7 +169,7 @@ function EmptyMonth({ label, neverCalled, hasModel }: { label: string; neverCall
       {hasModel ? null : (
         <>
           <p className={words}>The Agent runs on a model you bring, and this Workspace has none.</p>
-          <Link href={modelLink} className={`${buttonVariants()} mt-6`}>
+          <Link href={modelLink} className={buttonVariants({ className: "mt-6" })}>
             Add a model
           </Link>
         </>
