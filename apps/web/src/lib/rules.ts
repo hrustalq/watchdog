@@ -3,6 +3,7 @@
 import {
   type Action,
   actionSchema,
+  classifierSchema,
   conditionToWords,
   type Config,
   extractorRuleSchema,
@@ -24,6 +25,8 @@ import {
   extractorRule,
   inArray,
   isNull,
+  item,
+  itemCategory,
   itemLog,
   modelConfig,
   type SQL,
@@ -116,6 +119,37 @@ export async function declaredFields(db: Db, workspaceId: string): Promise<Decla
       return parsed.success ? parsed.data.fields.map(({ name, type }) => ({ name, type })) : [];
     })
     .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** How many known Categories the editor offers: more than any Workspace uses, and one list to read. */
+export const maxKnownCategories = 50;
+
+/**
+ * The Categories the Workspace knows: the ones its Items carry, and the ones its Classifiers declare,
+ * so a new Classifier's Categories count before any Item has them. `item_category` has no Workspace
+ * column, so the Items' go through `item`. A Category is open-ended, so this is what the editor
+ * suggests, never what a rule may say.
+ */
+export async function knownCategories(db: Db, workspaceId: string): Promise<string[]> {
+  const [onItems, classifiers] = await Promise.all([
+    db
+      .selectDistinct({ category: itemCategory.category })
+      .from(itemCategory)
+      .innerJoin(item, eq(item.id, itemCategory.itemId))
+      .where(eq(item.workspaceId, workspaceId))
+      .orderBy(itemCategory.category)
+      .limit(maxKnownCategories),
+    db.select({ definition: classifier.definition }).from(classifier).where(eq(classifier.workspaceId, workspaceId)),
+  ]);
+  // A Classifier that no longer parses runs nothing, so it declares nothing.
+  const declared = classifiers.flatMap(({ definition }) => {
+    const parsed = classifierSchema.safeParse(definition);
+    if (!parsed.success) return [];
+    return "assign" in parsed.data ? parsed.data.assign : parsed.data.categories;
+  });
+  return [...new Set([...onItems.map(({ category }) => category), ...declared])]
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, maxKnownCategories);
 }
 
 /** Whether the Workspace has a model. Without one, Agent-backed rules can't run. */

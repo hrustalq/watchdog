@@ -37,6 +37,7 @@ interface RuleEditorProps {
   initialProblems: RuleProblem[];
   hasModel: boolean;
   sources: { id: string; name: string }[];
+  categories: string[];
   destinations: DestinationChoice[];
   declared: DeclaredField[];
   scheduleHelp: string;
@@ -63,6 +64,7 @@ function Editor({
   initialProblems,
   hasModel,
   sources,
+  categories,
   destinations,
   declared,
   scheduleHelp,
@@ -170,6 +172,7 @@ function Editor({
           <RuleForm
             draft={draft}
             sources={sources}
+            categories={categories}
             destinations={destinations}
             declared={declared}
             scheduleHelp={scheduleHelp}
