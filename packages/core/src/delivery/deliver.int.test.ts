@@ -24,7 +24,7 @@ import { z } from "zod";
 import { createEgressFetch } from "../egress/egress.ts";
 import type { Mailer } from "../mail/mailer.ts";
 import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
-import { deliver, type Destination, FinalSendError, purgeSentMessages, RetryAfterSendError, type Sender } from "./deliver.ts";
+import { deliver, type Destination, FinalSendError, NotYetSendError, purgeSentMessages, RetryAfterSendError, type Sender } from "./deliver.ts";
 import type { AlertMessage, WebhookMessage } from "./content.ts";
 import { createEmailSender } from "./email.ts";
 import type { GroupedAlert } from "./group.ts";
@@ -423,6 +423,35 @@ describe("deliver", () => {
     expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "failed", nextAttemptAt: null });
   });
 
+  it("queues a Delivery for its Destination's turn without counting an attempt", async () => {
+    const seeded = await seed();
+    const started = new Date(Date.now() - 6000);
+    const turn = new Date(started.getTime() + 5000);
+    const { deps, retries } = recording(() => Promise.reject(new NotYetSendError(5000)));
+
+    await deliver(db, seeded.deliveryId, { ...deps, now: () => started });
+
+    // Waiting is no attempt: the row, the Log, the Destination and the hour's count are as they were.
+    expect(await rowOf(seeded.deliveryId)).toMatchObject({
+      status: "queued",
+      attempts: 0,
+      retryFrom: null,
+      nextAttemptAt: turn,
+      lastError: null,
+    });
+    expect(retries).toEqual([{ deliveryId: seeded.deliveryId, at: turn }]);
+    expect(await actLog(seeded.itemId)).toEqual([]);
+    expect(await db.$count(sentMessage, eq(sentMessage.destinationId, seeded.destinationId))).toBe(0);
+
+    // The job queued for its turn sends it as the first attempt.
+    const { deps: later, sent } = recording();
+    await deliver(db, seeded.deliveryId, later);
+
+    expect(sent).toHaveLength(1);
+    expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent", attempts: 1 });
+    expect(await actLog(seeded.itemId)).toMatchObject([{ message: "Sent to ops-chat" }]);
+  });
+
   describe("through the Telegram sender, with a fake Telegram API", () => {
     const encryptionKey = Buffer.alloc(32, 7);
     const telegramBody = z.object({ chat_id: z.string(), text: z.string() });
@@ -550,14 +579,22 @@ describe("deliver", () => {
           .insert(delivery)
           .values({ actionId: seeded.actionId, itemId: present(next).id, destinationId: seeded.destinationId })
           .returning();
+        const queuedId = present(queued).id;
 
-        await deliver(db, present(queued).id, deps);
+        // The turn the first send took is still the chat's, so this one's job goes again when it comes.
+        await deliver(db, queuedId, deps);
+
+        expect(received.map(({ chat_id }) => chat_id)).toEqual(["-100200", newChat]);
+        expect(await rowOf(queuedId)).toMatchObject({ status: "queued", attempts: 0 });
+        await new Promise((resolve) => setTimeout(resolve, 1100));
+
+        await deliver(db, queuedId, deps);
 
         expect(received.map(({ chat_id }) => chat_id)).toEqual(["-100200", newChat, newChat]);
-        expect(await rowOf(present(queued).id)).toMatchObject({ status: "sent", attempts: 1 });
+        expect(await rowOf(queuedId)).toMatchObject({ status: "sent", attempts: 1 });
       });
 
-      it("sends a second message in the same job straight to the new chat", async () => {
+      it("sends the message that waits for the chat's turn straight to the new chat", async () => {
         const { seeded, received, deps } = await linked(movedChat(sentAnswer));
         // With no burst window, an alert released from a hold goes first, and the job's own alert after it.
         await db.update(workspace).set({ burstWindowSeconds: 0 }).where(eq(workspace.id, seeded.workspaceId));
@@ -574,12 +611,25 @@ describe("deliver", () => {
             importance: 3,
           })
           .returning();
-        await db.insert(delivery).values({
-          actionId: seeded.actionId,
-          itemId: present(held).id,
-          destinationId: seeded.destinationId,
-          retryFrom: new Date(Date.now() - hour),
-        });
+        const [waiting] = await db
+          .insert(delivery)
+          .values({
+            actionId: seeded.actionId,
+            itemId: present(held).id,
+            destinationId: seeded.destinationId,
+            retryFrom: new Date(Date.now() - hour),
+          })
+          .returning();
+        const waitingId = present(waiting).id;
+
+        await deliver(db, seeded.deliveryId, deps);
+
+        // The held alert went, in the turn it took, and the job's own alert waits for the next one.
+        expect(received.map(({ chat_id }) => chat_id)).toEqual(["-100200", newChat]);
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "queued", attempts: 0 });
+        expect(await actLog(seeded.itemId)).toEqual([]);
+        expect(await rowOf(waitingId)).toMatchObject({ status: "sent", attempts: 1 });
+        await new Promise((resolve) => setTimeout(resolve, 1100));
 
         await deliver(db, seeded.deliveryId, deps);
 
