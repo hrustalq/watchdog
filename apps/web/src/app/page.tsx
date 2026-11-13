@@ -5,12 +5,14 @@ import { eq, source } from "@watchdog/db";
 import { CategoryList, Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { feedPage, parseCursor, parseTopCursor, topPage, type FeedItem } from "@/lib/feed";
+import { lastFailedCall } from "@/lib/model";
 import { hasActiveModel } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { signOut } from "./actions";
 import { RatingStepper } from "./correct-rating";
 import { FeedRefresher } from "./feed-refresher";
 import { HeaderMenu } from "./header-menu";
+import { ModelFailureNotice } from "./model-failure-notice";
 import { modelLink } from "./rules/words";
 
 // The data is read without Suspense, so the Feed is in the first HTML, which is how it and its
@@ -51,6 +53,9 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
   // With no Items the empty state has the Feed's whole story, so Top has no order to explain.
   const caption = before === undefined && !(fallback && items.length === 0);
   const hasModel = fallback && caption && (await hasActiveModel(db, workspace.id));
+  // The newest page says why Items are staying unrated when the model itself is failing. An older page
+  // doesn't ask, so paging costs nothing, and a healthy model costs one query per refresh.
+  const failure = before === undefined ? await lastFailedCall(db, workspace.id) : undefined;
   return (
     <div className="flex flex-1 flex-col">
       <header className="relative flex h-12 items-center justify-between gap-2 border-b px-4 md:gap-4">
@@ -109,6 +114,7 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
               <FeedCaption latest={latest} fallback={fallback} hasModel={hasModel} />
             </p>
           ) : null}
+          <ModelFailureNotice failing={failure?.recovered === false} />
           {before === undefined ? null : (
             // Underlined rather than a ghost button, because a phone has no hover to reveal it, and
             // a text link keeps the row below the controls from reading as a second main action.
