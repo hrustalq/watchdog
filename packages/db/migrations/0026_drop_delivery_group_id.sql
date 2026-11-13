@@ -1,0 +1,1 @@
+ALTER TABLE "delivery" DROP COLUMN "group_id";

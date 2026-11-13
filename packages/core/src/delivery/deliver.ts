@@ -314,16 +314,20 @@ async function applySchedule(
   const [settings] = await tx.select().from(workspace).where(eq(workspace.id, target.workspaceId));
   if (settings === undefined) return [];
 
-  const hold = (row: DueDelivery, until: Date, why: { reason: HoldReason; words: string }, groupId: string | null) =>
+  const hold = (
+    row: DueDelivery,
+    until: Date,
+    why: { reason: HoldReason; words: string },
+    status: "held" | "grouped",
+  ) =>
     record(
       tx,
       row,
       target,
       {
-        status: groupId === null ? "held" : "grouped",
+        status,
         nextAttemptAt: until,
         retryFrom: until,
-        groupId,
         holdReason: why.reason,
       },
       {
@@ -339,7 +343,6 @@ async function applySchedule(
     .orderBy(sentMessage.sentAt);
   const recentSends = sends.map(({ at }) => at);
 
-  let groupId: string | undefined;
   const sending: DueDelivery[] = [];
   for (const row of due) {
     const decision = scheduleDelivery({ settings, now, severity: row.item.severity, recentSends });
@@ -348,25 +351,17 @@ async function applySchedule(
       continue;
     }
     if (decision.kind === "hold") {
-      await hold(row, decision.until, { reason: settingsHolds[decision.reason], words: decision.reason }, null);
+      await hold(row, decision.until, { reason: settingsHolds[decision.reason], words: decision.reason }, "held");
       continue;
     }
-    if (groupId === undefined) {
-      const [open] = await tx
-        .select({ groupId: delivery.groupId })
-        .from(delivery)
-        .where(and(eq(delivery.destinationId, target.id), eq(delivery.status, "grouped")))
-        .limit(1);
-      groupId = open?.groupId ?? crypto.randomUUID();
-    }
-    await hold(row, decision.until, { reason: "burst-window", words: "burst window" }, groupId);
+    await hold(row, decision.until, { reason: "burst-window", words: "burst window" }, "grouped");
   }
 
   // Last, because a mail another setting holds back isn't one of the day's 50 yet.
   if (emailCap === undefined || sending.length === 0) return sending;
   const capEnd = await emailCapEnd(tx, settings, now);
   if (capEnd === undefined) return sending;
-  for (const row of sending) await hold(row, capEnd, { reason: "email-cap", words: capReason }, null);
+  for (const row of sending) await hold(row, capEnd, { reason: "email-cap", words: capReason }, "held");
   await queueCapNoticeOnce(tx, settings, capEnd, emailCap);
   return [];
 }
@@ -471,8 +466,6 @@ async function send(
   }
 
   const sentAt = now();
-  // New for each message, even after waiting under an id, because a group's rows can go out in two sends.
-  const groupId = rows.length === 1 ? null : crypto.randomUUID();
   const sentTo = `${moved}Sent to ${target.name}${rows.length === 1 ? "" : ` in a group of ${String(rows.length)}`}`;
   for (const row of rows) {
     const attempts = row.attempts + 1;
@@ -481,7 +474,7 @@ async function send(
         tx,
         row,
         target,
-        { attempts, status: "sent", sentAt, nextAttemptAt: null, lastError: null, groupId },
+        { attempts, status: "sent", sentAt, nextAttemptAt: null, lastError: null },
         { message: sentTo, data: { attempt: attempts } },
       ),
     );

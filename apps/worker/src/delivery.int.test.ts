@@ -474,12 +474,8 @@ describe("the deliver queue", () => {
     it("sends the grouped Deliveries of a closed window as one message", async () => {
       const { deliveryId } = await seed();
       const others = [await another(deliveryId, "two"), await another(deliveryId, "three")];
-      const groupId = crypto.randomUUID();
       const closed = new Date(Date.now() - 1000);
-      for (const id of [deliveryId, ...others]) {
-        await wait(id, "grouped", closed);
-        await db.update(delivery).set({ groupId }).where(eq(delivery.id, id));
-      }
+      for (const id of [deliveryId, ...others]) await wait(id, "grouped", closed);
       const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
 
       await startWorker(send);

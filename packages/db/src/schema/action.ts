@@ -84,8 +84,6 @@ export const delivery = pgTable(
      * alone, because the cap isn't a setting and a release would only hold the row again.
      */
     holdReason: text("hold_reason", { enum: ["quiet-hours", "rate-limit", "burst-window", "email-cap"] }),
-    /** The Grouped alert it waits for or went out in. The rows of one share it. */
-    groupId: uuid("group_id"),
     /** When a hold ended, from which its 24 hours of retries run. Without a hold, they run from created_at. */
     retryFrom: timestamp("retry_from", { withTimezone: true }),
     sentAt: timestamp("sent_at", { withTimezone: true }),

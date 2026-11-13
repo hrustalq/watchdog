@@ -183,6 +183,13 @@
       "when": 1794606707498,
       "tag": "0025_encryption_key_fingerprint",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794613915679,
+      "tag": "0026_drop_delivery_group_id",
+      "breakpoints": true
     }
   ]
 }
