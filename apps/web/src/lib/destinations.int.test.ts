@@ -20,7 +20,7 @@ import {
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { decryptSecret, egressPolicy, linkChat, type TestAlertDeps } from "@watchdog/core";
-import { beforeAll, beforeEach, describe, expect, it, onTestFinished } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import {
   actionNames,
   actionsOnlyOn,
@@ -518,6 +518,31 @@ describe("Destinations", () => {
       if (!("destination" in result)) throw new Error("Not added");
       return { id: result.destination.id };
     };
+    /** Postgres's `lock_not_available`, however many wrappers the driver's error arrived in. */
+    const lockedOut = (error: unknown): boolean => {
+      if (typeof error !== "object" || error === null) return false;
+      if ("code" in error && error.code === "55P03") return true;
+      return "cause" in error && lockedOut(error.cause);
+    };
+    /**
+     * Whether the removal has taken the Destination's row, asked without waiting for it: `nowait` fails
+     * only while another connection holds that row, and no row means the removal already finished with
+     * it. This is the positive signal the Act stage's own read of the row waits on, where a sleep only
+     * guesses how long a loaded machine takes to get the removal that far.
+     */
+    const removalHolds = async (id: string) => {
+      try {
+        const rows = await db
+          .select({ id: destination.id })
+          .from(destination)
+          .where(eq(destination.id, id))
+          .for("key share", { noWait: true });
+        return rows.length === 0 ? "gone" : "free";
+      } catch (error) {
+        if (!lockedOut(error)) throw error;
+        return "held";
+      }
+    };
     /** An Action pointing at these Destinations, saved long enough ago for an Item captured now. */
     const addAction = async (name: string, destinations: string[], enabled = true) => {
       const [saved] = await db
@@ -636,9 +661,21 @@ describe("Destinations", () => {
       const actionId = await addAction("Firing", [id, other.id]);
 
       const removed = await db.transaction(async (tx) => {
+        // The Act stage holds the Action it read while it reads the Destinations it points at.
         await tx.select({ id: action.id }).from(action).where(eq(action.id, actionId)).for("key share");
         const removing = removeDestination(db, ours, id);
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        // Wait for the removal to take the Destination's row, rather than for a clock: that lock is
+        // what this read has to get past, so the two hold what they hold in production. Waiting a
+        // fixed time assumed the removal reached its lock first, and on a loaded machine it doesn't:
+        // this read then held the row the removal waited for, while this transaction waited for the
+        // removal, a wait Postgres can't see as a cycle and so never ends. A removal that took the
+        // Action in a mode this lock conflicts with still deadlocks here, and Postgres ends that.
+        await vi.waitFor(
+          async () => {
+            if ((await removalHolds(id)) === "free") throw new Error("the removal hasn't taken the Destination yet");
+          },
+          { timeout: 10_000, interval: 10 },
+        );
         await tx.select({ id: destination.id }).from(destination).where(eq(destination.id, id)).for("key share");
         return removing;
       });
