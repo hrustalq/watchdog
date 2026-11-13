@@ -453,13 +453,15 @@ describe("processItem", () => {
           createdAt: new Date(Date.UTC(2026, 0, 1 + i)),
         })),
       );
+      const title = "A long title. ".repeat(60);
+      const author = "A long author name. ".repeat(20);
       const [created] = await db
         .insert(item)
         .values({
           ...seeded,
           externalId: crypto.randomUUID(),
-          title: "The title",
-          author: "An author",
+          title,
+          author,
           language: "de",
           body: `${"x".repeat(8000)}TOOFAR`,
           raw: {},
@@ -476,12 +478,104 @@ describe("processItem", () => {
       expect(prompt).toContain("Corrected 20.");
       expect(prompt).toContain("Corrected 01.");
       expect(prompt).not.toContain("Corrected 00.");
-      expect(prompt).toContain("The title");
-      expect(prompt).toContain("An author");
+      expect(prompt).toContain(JSON.stringify(title.slice(0, 500)));
+      expect(prompt).not.toContain(title.slice(0, 501));
+      expect(prompt).toContain(JSON.stringify(author.slice(0, 200)));
+      expect(prompt).not.toContain(author.slice(0, 201));
       expect(prompt).toContain('"source":"Blog"');
       expect(prompt).toContain('"language":"de"');
       expect(prompt).toContain("x".repeat(8000));
       expect(prompt).not.toContain("TOOFAR");
+
+      const [stored] = await db.select().from(item).where(eq(item.id, present(created).id));
+      expect(present(stored).title).toBe(title);
+      expect(present(stored).author).toBe(author);
+    });
+
+    it("cuts a Correction's title and summary, and leaves its row whole", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await saveAgentClassifier(seeded, "leads", ["lead"]);
+      const title = "Corrected title. ".repeat(40);
+      const summary = "Corrected summary text. ".repeat(30);
+      await db.insert(correction).values({
+        workspaceId: seeded.workspaceId,
+        kind: "categories",
+        itemTitle: title,
+        itemSummary: summary,
+        before: [],
+        after: ["lead"],
+      });
+      const itemId = await capture(seeded, "A post");
+      const fake = answering({ json: { categories: [] } });
+
+      await processItem(db, itemId, fake.deps);
+
+      const { prompt } = sentTo(fake);
+      expect(prompt).toContain(JSON.stringify(title.slice(0, 500)));
+      expect(prompt).not.toContain(title.slice(0, 501));
+      expect(prompt).toContain(JSON.stringify(summary.slice(0, 500)));
+      expect(prompt).not.toContain(summary.slice(0, 501));
+
+      const [stored] = await db
+        .select()
+        .from(correction)
+        .where(eq(correction.workspaceId, seeded.workspaceId));
+      expect(present(stored).itemTitle).toBe(title);
+      expect(present(stored).itemSummary).toBe(summary);
+    });
+
+    it("sends a title, an author and a Correction's text at each limit whole", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await saveAgentClassifier(seeded, "leads", ["lead"]);
+      const title = "t".repeat(500);
+      const author = "u".repeat(200);
+      const correctionTitle = "c".repeat(500);
+      const correctionSummary = "s".repeat(500);
+      await db.insert(correction).values({
+        workspaceId: seeded.workspaceId,
+        kind: "categories",
+        itemTitle: correctionTitle,
+        itemSummary: correctionSummary,
+        before: [],
+        after: ["lead"],
+      });
+      const [created] = await db
+        .insert(item)
+        .values({
+          ...seeded,
+          externalId: crypto.randomUUID(),
+          title,
+          author,
+          body: "Body",
+          raw: {},
+        })
+        .returning();
+      const fake = answering({ json: { categories: [] } });
+
+      await processItem(db, present(created).id, fake.deps);
+
+      const { prompt } = sentTo(fake);
+      expect(prompt).toContain(JSON.stringify(title));
+      expect(prompt).toContain(JSON.stringify(author));
+      expect(prompt).toContain(JSON.stringify(correctionTitle));
+      expect(prompt).toContain(JSON.stringify(correctionSummary));
+    });
+
+    it("cuts inside a surrogate pair and still sends well-formed text", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await saveAgentClassifier(seeded, "leads", ["lead"]);
+      // 499 units, then an emoji of two, so the cut at 500 lands inside the pair.
+      const itemId = await capture(seeded, `${"a".repeat(499)}\u{1F600}`);
+      const fake = answering({ json: { categories: [] } });
+
+      await processItem(db, itemId, fake.deps);
+
+      const { prompt } = sentTo(fake);
+      expect(prompt).toContain(JSON.stringify(`${"a".repeat(499)}\uFFFD`));
+      expect(prompt).toBe(prompt.toWellFormed());
     });
 
     it("keeps Item text from closing its section of the prompt", async () => {
