@@ -88,6 +88,17 @@ describe("the Model screen", () => {
     return present(row);
   };
 
+  /** What each of the Workspace's calls recorded, oldest first. */
+  const prices = (workspaceId: string) =>
+    db
+      .select({
+        inputPricePerMillion: agentCall.inputPricePerMillion,
+        outputPricePerMillion: agentCall.outputPricePerMillion,
+      })
+      .from(agentCall)
+      .where(eq(agentCall.workspaceId, workspaceId))
+      .orderBy(agentCall.createdAt);
+
   const fakeDeps = (turns: Parameters<typeof fakeLlm>[1]): ModelDeps & { requests: unknown[] } => {
     const fake = fakeLlm("openai-compatible", turns);
     return { encryptionKey, fetch: fake.fetch, requests: fake.requests };
@@ -229,6 +240,43 @@ describe("the Model screen", () => {
       await save(workspaceId, { inputPrice: "" });
 
       expect((await active(workspaceId)).inputPricePerMillion).toBeNull();
+    });
+
+    it("gives calls that recorded no prices the pair it saves, and leaves a recorded pair alone", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId);
+      const model = await active(workspaceId);
+      const record = (values: Partial<typeof agentCall.$inferInsert>) =>
+        db.insert(agentCall).values({
+          workspaceId,
+          modelConfigId: model.id,
+          purpose: "extract-rate",
+          attempt: 1,
+          inputTokens: 100,
+          outputTokens: 10,
+          latencyMs: 5,
+          status: "ok",
+          ...values,
+        });
+      await record({
+        inputPricePerMillion: 1,
+        outputPricePerMillion: 2,
+        createdAt: new Date("2026-01-01T00:00:00.000Z"),
+      });
+      await record({ createdAt: new Date("2026-01-02T00:00:00.000Z") });
+
+      // Half a price can't make an estimate, so it fills nothing yet.
+      await save(workspaceId, { inputPrice: "3" });
+      expect(await prices(workspaceId)).toMatchObject([
+        { inputPricePerMillion: 1, outputPricePerMillion: 2 },
+        { inputPricePerMillion: null, outputPricePerMillion: null },
+      ]);
+
+      await save(workspaceId, { inputPrice: "3", outputPrice: "4" });
+      expect(await prices(workspaceId)).toMatchObject([
+        { inputPricePerMillion: 1, outputPricePerMillion: 2 },
+        { inputPricePerMillion: 3, outputPricePerMillion: 4 },
+      ]);
     });
 
     it("replaces the key on the current row", async () => {

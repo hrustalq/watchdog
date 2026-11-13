@@ -132,8 +132,8 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
             />
             {total.cost === null ? null : (
               <p className={notes}>
-                Estimated cost is tokens times each model&apos;s prices as they&apos;re set now, taking every price to be in
-                one currency. It isn&apos;t your provider&apos;s bill.
+                Estimated cost is tokens times the prices each call&apos;s model had when the call was made,
+                taking every price to be in one currency. It isn&apos;t your provider&apos;s bill.
               </p>
             )}
           </>
