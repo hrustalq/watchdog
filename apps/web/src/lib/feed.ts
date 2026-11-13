@@ -6,6 +6,7 @@ import {
   action,
   actionDestination,
   and,
+  correction,
   type Db,
   delivery,
   desc,
@@ -359,30 +360,57 @@ export async function itemActions(db: Db, workspaceId: string, itemId: string) {
   return [...fired.values()].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.id.localeCompare(b.id));
 }
 
+/** A level on either axis, or null when the stored JSON holds something that isn't one. */
+const levelIn = (value: unknown) =>
+  typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 5 ? value : null;
+
+/** The levels a Rating Correction started from, or undefined for a shape that isn't a Rating. */
+function originalRating(before: unknown) {
+  if (typeof before !== "object" || before === null) return undefined;
+  const severity = "severity" in before ? before.severity : undefined;
+  const importance = "importance" in before ? before.importance : undefined;
+  return { severity: levelIn(severity), importance: levelIn(importance) };
+}
+
 /**
  * An Item's envelope with its Rating and summary, its Source's name, its Categories, its extracted
- * fields and its Log, oldest first, or undefined.
+ * fields and its Log, oldest first, or undefined. A Rating Correction's `before` comes with it: it
+ * keeps the Agent's own levels however many times the Rating is changed, so the scale can mark them.
  */
-export function itemWithLog(db: Db, workspaceId: string, itemId: string) {
-  if (!isUuid(itemId)) return Promise.resolve(undefined);
-  return db.query.item.findFirst({
-    where: and(eq(item.workspaceId, workspaceId), eq(item.id, itemId)),
-    columns: { raw: false, workspaceId: false, sourceId: false, externalId: false },
-    with: {
-      source: { columns: { name: true } },
-      categories: {
-        columns: { category: true },
-        orderBy: (row, { asc }) => [asc(row.category)],
+export async function itemWithLog(db: Db, workspaceId: string, itemId: string) {
+  if (!isUuid(itemId)) return undefined;
+  const [found, [corrected]] = await Promise.all([
+    db.query.item.findFirst({
+      where: and(eq(item.workspaceId, workspaceId), eq(item.id, itemId)),
+      columns: { raw: false, workspaceId: false, sourceId: false, externalId: false },
+      with: {
+        source: { columns: { name: true } },
+        categories: {
+          columns: { category: true },
+          orderBy: (row, { asc }) => [asc(row.category)],
+        },
+        fields: {
+          columns: { name: true, value: true },
+          with: { extractorRule: { columns: { name: true } } },
+          orderBy: (field, { asc }) => [asc(field.name)],
+        },
+        log: {
+          columns: { id: true, at: true, stage: true, message: true, data: true },
+          orderBy: (log, { asc }) => [asc(log.at), asc(log.id)],
+        },
       },
-      fields: {
-        columns: { name: true, value: true },
-        with: { extractorRule: { columns: { name: true } } },
-        orderBy: (field, { asc }) => [asc(field.name)],
-      },
-      log: {
-        columns: { id: true, at: true, stage: true, message: true, data: true },
-        orderBy: (log, { asc }) => [asc(log.at), asc(log.id)],
-      },
-    },
-  });
+    }),
+    db
+      .select({ before: correction.before })
+      .from(correction)
+      .where(
+        and(
+          eq(correction.workspaceId, workspaceId),
+          eq(correction.itemId, itemId),
+          eq(correction.kind, "rating"),
+        ),
+      ),
+  ]);
+  if (found === undefined) return undefined;
+  return { ...found, originalRating: corrected === undefined ? undefined : originalRating(corrected.before) };
 }

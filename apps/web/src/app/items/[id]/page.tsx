@@ -70,7 +70,12 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
               See the Log
             </a>
           </span>
-          <RatingControls itemId={found.id} severity={found.severity} importance={found.importance} />
+          <RatingControls
+            itemId={found.id}
+            severity={found.severity}
+            importance={found.importance}
+            originalRating={found.originalRating}
+          />
         </div>
       ),
     },

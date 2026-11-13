@@ -5,6 +5,7 @@ import {
   action,
   actionDestination,
   closeDb,
+  correction,
   createDb,
   type Db,
   delivery,
@@ -609,6 +610,58 @@ describe("Feed", () => {
     const loaded = await itemWithLog(db, seeded.workspaceId, present(id));
 
     expect(loaded).toMatchObject({ severity: null, importance: null, summary: null, categories: [] });
+  });
+
+  it("loads the levels a Rating Correction started from, which are the Agent's", async () => {
+    const seeded = await seed();
+    const [id] = await insertItems(seeded, [{}]);
+    await db.insert(correction).values([
+      { workspaceId: seeded.workspaceId, itemId: present(id), kind: "rating", before: { severity: 3, importance: 2 }, after: { severity: 5, importance: 2 } },
+      // Not a Rating, so it says nothing about the levels the Agent gave.
+      { workspaceId: seeded.workspaceId, itemId: present(id), kind: "categories", before: { categories: [] }, after: { categories: ["release"] } },
+    ]);
+    await db.update(item).set({ severity: 5, importance: 2 }).where(eq(item.id, present(id)));
+
+    const loaded = await itemWithLog(db, seeded.workspaceId, present(id));
+
+    expect(loaded?.originalRating).toEqual({ severity: 3, importance: 2 });
+  });
+
+  it("says no level was the Agent's for an Item the Agent left unrated", async () => {
+    const seeded = await seed();
+    const [id] = await insertItems(seeded, [{}]);
+    await db
+      .insert(correction)
+      .values({
+        workspaceId: seeded.workspaceId,
+        itemId: present(id),
+        kind: "rating",
+        before: { severity: null, importance: null },
+        after: { severity: 2, importance: 3 },
+      });
+
+    const loaded = await itemWithLog(db, seeded.workspaceId, present(id));
+
+    expect(loaded?.originalRating).toEqual({ severity: null, importance: null });
+  });
+
+  it("has no original Rating for an Item no Correction touched, or a Rating that isn't one", async () => {
+    const seeded = await seed();
+    const [id] = await insertItems(seeded, [{}]);
+    expect((await itemWithLog(db, seeded.workspaceId, present(id)))?.originalRating).toBeUndefined();
+    await db
+      .insert(correction)
+      .values({
+        workspaceId: seeded.workspaceId,
+        itemId: present(id),
+        kind: "rating",
+        before: { severity: "high", importance: 9 },
+        after: { severity: 2, importance: 3 },
+      });
+
+    const loaded = await itemWithLog(db, seeded.workspaceId, present(id));
+
+    expect(loaded?.originalRating).toEqual({ severity: null, importance: null });
   });
 
   it("treats another Workspace's Item, or an id that isn't one, as missing", async () => {
