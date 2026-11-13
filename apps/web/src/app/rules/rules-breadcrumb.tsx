@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 const crumb =
-  "rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30";
+  "inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30";
 
 function Separator() {
   return (
