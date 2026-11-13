@@ -22,6 +22,8 @@ export interface ModelInput {
   modelName: string;
   /** Blank keeps the current key, for as long as the model stays on the same provider and origin. */
   apiKey: string;
+  /** "Remove the stored key", which deletes the key while the row stays. It takes a blank key field. */
+  clearKey: boolean;
   structured: boolean;
   inputPrice: string;
   outputPrice: string;
@@ -42,7 +44,7 @@ export const modelProblemMessage: Record<ModelProblem, string> = {
   provider: "Choose one of the provider types in the list.",
   "base-url": "Enter the full base URL, starting with http:// or https://, with no user name or query.",
   "model-name": "Enter the model's name as the provider spells it, in at most 200 characters.",
-  "api-key": "An API key is one line of letters, digits and symbols. Paste it again.",
+  "api-key": "An API key is one line of letters, digits and symbols, and at most 4096 characters.",
   "input-price": "Enter a price per million tokens as a number, such as 2.50, or leave it blank.",
   "output-price": "Enter a price per million tokens as a number, such as 2.50, or leave it blank.",
 };
@@ -74,6 +76,7 @@ export function modelFormQuery(problem: ModelProblem, input: ModelInput) {
     outputPrice: input.outputPrice,
   });
   if (input.structured) query.set("structured", "1");
+  if (input.clearKey) query.set("clearKey", "1");
   if (input.apiKey.trim() !== "") query.set("keyTyped", "1");
   return query;
 }
@@ -109,11 +112,23 @@ function parseModel(input: ModelInput) {
   const apiKey = input.apiKey.trim();
   // Anything else can't go in a header, and fails on every call.
   if (apiKey !== "" && !/^[\x21-\x7e]{1,4096}$/.test(apiKey)) return { problem: "api-key" } as const;
+  // One or the other: a key typed beside the box is a user who wants both, and saving would drop one.
+  if (apiKey !== "" && input.clearKey) return { problem: "api-key" } as const;
   const inputPrice = cleanPrice(input.inputPrice);
   if (inputPrice === undefined) return { problem: "input-price" } as const;
   const outputPrice = cleanPrice(input.outputPrice);
   if (outputPrice === undefined) return { problem: "output-price" } as const;
   return { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice };
+}
+
+/**
+ * What a save does to the stored key: a typed key replaces it, the box removes it, and a blank field
+ * with neither keeps it.
+ */
+function keyChange(newCiphertext: string | null, clearKey: boolean) {
+  if (newCiphertext !== null) return { apiKeyCiphertext: newCiphertext };
+  if (clearKey) return { apiKeyCiphertext: null };
+  return {};
 }
 
 /**
@@ -129,7 +144,8 @@ const takeTurns = (tx: Pick<Tx, "select">, workspaceId: string) =>
  * key change in place.
  *
  * A blank key keeps the current one, except on the way to another provider or origin: the key was
- * only ever meant for the old one. `keyLeftBehind` says that happened.
+ * only ever meant for the old one. `keyLeftBehind` says that happened. Blank with the box ticked
+ * clears the key and keeps the row, so what ran under it still says so.
  */
 export async function saveModel(
   db: Db,
@@ -159,16 +175,18 @@ export async function saveModel(
       current.baseUrl === baseUrl &&
       current.modelName === modelName
     ) {
+      // Only a typed key or the box touches the key: a blank field on its own keeps it.
       await tx
         .update(modelConfig)
-        .set({ ...settings, ...(newCiphertext !== null && { apiKeyCiphertext: newCiphertext }) })
+        .set({ ...settings, ...keyChange(newCiphertext, input.clearKey) })
         .where(eq(modelConfig.id, current.id));
       return { keyLeftBehind: false };
     }
 
     const sameDestination =
       current?.providerType === provider && new URL(current.baseUrl).origin === new URL(baseUrl).origin;
-    const carried = sameDestination ? current.apiKeyCiphertext : null;
+    // The box is an ask for the key to be gone, which a new row mustn't undo by carrying it over.
+    const carried = sameDestination && !input.clearKey ? current.apiKeyCiphertext : null;
     await archiveModel(tx, workspaceId);
     await tx.insert(modelConfig).values({
       workspaceId,
@@ -179,7 +197,7 @@ export async function saveModel(
       ...settings,
     });
     const hadKey = (current?.apiKeyCiphertext ?? null) !== null;
-    return { keyLeftBehind: hadKey && newCiphertext === null && carried === null };
+    return { keyLeftBehind: !input.clearKey && hadKey && newCiphertext === null && carried === null };
   });
 }
 

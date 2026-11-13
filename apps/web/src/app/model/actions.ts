@@ -19,6 +19,7 @@ export async function saveModelAction(formData: FormData) {
     baseUrl: text(formData, "baseUrl"),
     modelName: text(formData, "modelName"),
     apiKey: text(formData, "apiKey"),
+    clearKey: formData.get("clearKey") !== null,
     structured: formData.get("structured") !== null,
     inputPrice: text(formData, "inputPrice"),
     outputPrice: text(formData, "outputPrice"),
