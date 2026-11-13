@@ -848,6 +848,40 @@ test("every Source type still in M4 delivers an Item", async ({ page }) => {
   });
 });
 
+// A link checker or a monitor reads the status, and Next.js fixes a page's status before the page's
+// own not-found lookup runs. Proxy answers a missing Item or rule with the not-found page and a 404,
+// so the two can be told apart. It runs before the rate limit test below, which uses up the sign-in
+// bucket.
+test("a missing Item or rule answers 404, and one that is there answers 200", async ({ page }) => {
+  await signInAgain(page);
+  const origin = new URL(page.url()).origin;
+  const statusOf = async (path: string) => (await page.goto(`${origin}${path}`))?.status();
+
+  // The Item and the Classifier the first test made are still there. Top order lists only rated
+  // Items, and the first test left them unrated, so the Feed's Latest view is the one to read.
+  await page.goto(`${origin}/?view=latest`);
+  const item = await page.locator('main a[href^="/items/"]').first().getAttribute("href");
+  if (item === null) throw new Error("the Feed has no link to an Item");
+  await page.goto(`${origin}/rules`);
+  const rule = await page.locator('a[href^="/rules/classifier/"]').first().getAttribute("href");
+  if (rule === null) throw new Error("the Rules screen has no link to a Classifier");
+
+  for (const path of [item, rule]) {
+    expect(await statusOf(path), `${path} is a page that exists`).toBe(200);
+  }
+  for (const path of [
+    `/items/${crypto.randomUUID()}`,
+    "/items/not-a-uuid",
+    `/rules/classifier/${crypto.randomUUID()}`,
+    `/rules/nonsense/${crypto.randomUUID()}`,
+    "/this-route-does-not-exist",
+  ]) {
+    expect(await statusOf(path), `${path} is not a page`).toBe(404);
+  }
+  // A browser gets the not-found page, not a bare 404.
+  await expect(page.getByRole("heading", { name: "Nothing here" })).toBeVisible();
+});
+
 // Better Auth keys the sign-in rate limit (5 a minute) on X-Forwarded-For. Caddy sets that header
 // from the connection, so a new value on every request still lands in this machine's one bucket.
 // The tests above may have used part of the bucket, so the limit comes at the sixth request or before.
