@@ -30,7 +30,7 @@ import { categoriesOf, fieldsOf } from "../pipeline/extract.ts";
 import { alertContent, type AlertMessage, type WebhookMessage } from "./content.ts";
 import { capReason, type EmailCap, emailCapEnd, queueCapNoticeOnce, takeEmailCapTurn } from "./email-cap.ts";
 import { type GroupedAlert, groupedAlert } from "./group.ts";
-import { localTime, scheduleDelivery } from "./schedule-delivery.ts";
+import { localDateTime, scheduleDelivery } from "./schedule-delivery.ts";
 import type { SourceAlertMessage } from "./source-alert-content.ts";
 
 export type Destination = typeof destination.$inferSelect;
@@ -277,7 +277,7 @@ async function applySchedule(
         holdReason: why.reason,
       },
       {
-        message: `Held until ${localTime(until, settings.timezone)}: ${why.words}`,
+        message: `Held until ${localDateTime(until, settings.timezone)}: ${why.words}`,
         data: { heldUntil: until.toISOString() },
       },
     );
@@ -345,6 +345,7 @@ export async function purgeSentMessages(db: Db) {
 async function send(
   rows: DueDelivery[],
   target: Destination,
+  timezone: string,
   deps: DeliverDeps,
   now: () => Date,
   recording: (write: (tx: Tx) => Promise<void>) => Promise<void>,
@@ -403,7 +404,7 @@ async function send(
           target,
           { attempts, nextAttemptAt: retryAt, lastError: reason },
           {
-            message: `${failure}, retrying at ${retryAt.toISOString()}`,
+            message: `${failure}, retrying at ${localDateTime(retryAt, timezone)}`,
             data: { attempt: attempts, retryAt: retryAt.toISOString() },
           },
           (inTx) => deps.retryDelivery(inTx, row.id, retryAt),
@@ -454,9 +455,10 @@ async function send(
 export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Promise<void> {
   const now = deps.now ?? (() => new Date());
   const [found] = await db
-    .select({ destination })
+    .select({ destination, timezone: workspace.timezone })
     .from(delivery)
     .innerJoin(destination, eq(delivery.destinationId, destination.id))
+    .innerJoin(workspace, eq(destination.workspaceId, workspace.id))
     .where(eq(delivery.id, deliveryId));
   if (found === undefined) return;
   if (found.destination.type === "webhook") {
@@ -467,6 +469,7 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
     await send(
       due,
       found.destination,
+      found.timezone,
       deps,
       now,
       (write) => db.transaction(write),
@@ -510,6 +513,7 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
       await send(
         sending,
         target,
+        found.timezone,
         deps,
         now,
         (write) => write(tx),

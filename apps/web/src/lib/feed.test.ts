@@ -89,6 +89,11 @@ describe("deliveryStatus", () => {
       text: "Failed: the receiver answered 500. Next retry at 2026-11-07 13:30 UTC",
       failed: true,
     });
+    // The Log writes the same retry the same way, from the same formatter.
+    expect(deliveryStatus(failing, "Europe/Berlin")).toEqual({
+      text: "Failed: the receiver answered 500. Next retry at 2026-11-07 14:30 Europe/Berlin",
+      failed: true,
+    });
     expect(deliveryStatus({ ...failing, status: "failed", nextAttemptAt: null, lastError: "refused." }, "UTC")).toEqual({
       text: "Failed: refused. No more retries",
       failed: true,

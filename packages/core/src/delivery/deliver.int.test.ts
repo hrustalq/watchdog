@@ -28,6 +28,7 @@ import { deliver, type Destination, FinalSendError, purgeSentMessages, RetryAfte
 import type { AlertMessage, WebhookMessage } from "./content.ts";
 import { createEmailSender } from "./email.ts";
 import type { GroupedAlert } from "./group.ts";
+import { localDateTime } from "./schedule-delivery.ts";
 import { createTelegramSender } from "./telegram.ts";
 import { verifyWebhookSignature } from "./verify-signature.ts";
 import { createWebhookSender } from "./webhook.ts";
@@ -242,11 +243,11 @@ describe("deliver", () => {
     ]);
     expect(await actLog(seeded.itemId)).toMatchObject([
       {
-        message: "Sending to ops-chat failed: Chat unreachable, retrying at 2026-01-07T10:00:30.000Z",
+        message: "Sending to ops-chat failed: Chat unreachable, retrying at 2026-01-07 10:00 UTC",
         data: { attempt: 1, retryAt: "2026-01-07T10:00:30.000Z" },
       },
       {
-        message: "Sending to ops-chat failed: Chat unreachable, retrying at 2026-01-07T10:01:30.000Z",
+        message: "Sending to ops-chat failed: Chat unreachable, retrying at 2026-01-07 10:01 UTC",
         data: { attempt: 2, retryAt: "2026-01-07T10:01:30.000Z" },
       },
       { message: "Sent to ops-chat", data: { attempt: 3 } },
@@ -391,7 +392,7 @@ describe("deliver", () => {
       lastError: "Slow down",
     });
     expect(await actLog(seeded.itemId)).toMatchObject([
-      { message: `Sending to ops-chat failed: Slow down, retrying at ${retryAt.toISOString()}` },
+      { message: `Sending to ops-chat failed: Slow down, retrying at ${localDateTime(retryAt, "UTC")}` },
     ]);
   });
 
@@ -761,7 +762,7 @@ describe("deliver", () => {
       expect(retries).toEqual([{ deliveryId: seeded.deliveryId, at: retryAt }]);
       expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "queued", attempts: 1, nextAttemptAt: retryAt });
       expect(await actLog(seeded.itemId)).toMatchObject([
-        { message: `Sending to ops-chat failed: the receiver answered 500, retrying at ${retryAt.toISOString()}` },
+        { message: `Sending to ops-chat failed: the receiver answered 500, retrying at ${localDateTime(retryAt, "UTC")}` },
       ]);
 
       answer.status = 200;
@@ -779,6 +780,25 @@ describe("deliver", () => {
         }),
       ).toBe(true);
       expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "sent", attempts: 2 });
+    });
+
+    it("writes a webhook retry in the Workspace timezone, with the date and the zone", async () => {
+      const { seeded, retries, deps } = await hook();
+      await db.update(workspace).set({ timezone: "Europe/Berlin" }).where(eq(workspace.id, seeded.workspaceId));
+      answer.status = 500;
+      const failedAt = new Date("2026-01-07T10:00:00.000Z");
+
+      await deliver(db, seeded.deliveryId, { ...deps, now: () => failedAt });
+
+      // 30 seconds later, which is 11:00 in Berlin, and the row still keeps the instant.
+      expect(retries).toEqual([{ deliveryId: seeded.deliveryId, at: new Date("2026-01-07T10:00:30.000Z") }]);
+      expect(await actLog(seeded.itemId)).toMatchObject([
+        {
+          message:
+            "Sending to ops-chat failed: the receiver answered 500, retrying at 2026-01-07 11:00 Europe/Berlin",
+          data: { attempt: 1, retryAt: "2026-01-07T10:00:30.000Z" },
+        },
+      ]);
     });
 
     it("fails a 404 at once with the status in the Log and on the Destination, and keeps none of its answer", async () => {
@@ -896,7 +916,7 @@ describe("deliver", () => {
     await deliver(db, seeded.deliveryId, deps);
 
     const [row] = await actLog(seeded.itemId);
-    expect(row?.message).toContain(`retrying at ${present(retries[0]).at.toISOString()}`);
+    expect(row?.message).toContain(`retrying at ${localDateTime(present(retries[0]).at, "UTC")}`);
     const stored = await rowOf(seeded.deliveryId);
     expect(stored?.lastError).toMatch(/^Downx+$/);
   });
@@ -984,7 +1004,28 @@ describe("deliver", () => {
           nextAttemptAt: new Date("2099-01-08T07:00:00Z"),
         });
         expect(await actLog(seeded.itemId)).toMatchObject([
-          { stage: "act", message: "Held until 07:00: quiet hours" },
+          { stage: "act", message: "Held until 2099-01-08 07:00 UTC: quiet hours" },
+        ]);
+      });
+
+      it("writes a hold in the Workspace's timezone, with the date and the zone", async () => {
+        const seeded = await seed({ severity: 4 });
+        await settings(seeded.workspaceId, {
+          timezone: "Europe/Berlin",
+          quietHoursStart: "22:00:00",
+          quietHoursEnd: "23:59:00",
+        });
+        const { deps } = recording();
+
+        // 23:30 in Berlin, so the hold runs to 23:59 there, which is 22:59 UTC the same day.
+        await deliver(db, seeded.deliveryId, { ...deps, now: clock("22:30:00") });
+
+        expect(await rowOf(seeded.deliveryId)).toMatchObject({
+          status: "held",
+          nextAttemptAt: new Date("2099-01-07T22:59:00Z"),
+        });
+        expect(await actLog(seeded.itemId)).toMatchObject([
+          { stage: "act", message: "Held until 2099-01-07 23:59 Europe/Berlin: quiet hours" },
         ]);
       });
 
@@ -1091,7 +1132,7 @@ describe("deliver", () => {
 
         expect(sent).toEqual([]);
         expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "held", nextAttemptAt: at("12:10:00") });
-        expect(await actLog(seeded.itemId)).toMatchObject([{ message: "Held until 12:10: rate limit" }]);
+        expect(await actLog(seeded.itemId)).toMatchObject([{ message: "Held until 2099-01-07 12:10 UTC: rate limit" }]);
 
         await release(seeded.deliveryId);
         await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:10:00") });
@@ -1196,7 +1237,9 @@ describe("deliver", () => {
         );
         expect(new Set(waiting.map((row) => row?.groupId)).size).toBe(1);
         expect(present(waiting[0]).groupId).not.toBeNull();
-        expect(await actLog(present(followers[0]).itemId)).toMatchObject([{ message: "Held until 12:01: burst window" }]);
+        expect(await actLog(present(followers[0]).itemId)).toMatchObject([
+          { message: "Held until 2099-01-07 12:01 UTC: burst window" },
+        ]);
 
         for (const { deliveryId } of followers) await release(deliveryId);
         for (const { deliveryId } of followers) await deliver(db, deliveryId, { ...deps, now: clock("12:01:00") });
@@ -1288,7 +1331,7 @@ describe("deliver", () => {
 
         expect(present(sent[1]).message).toMatchObject({ title: "Another advisory", why: "Severity is at least 4" });
         expect(await actLog(follower.itemId)).toMatchObject([
-          { message: "Held until 12:01: burst window" },
+          { message: "Held until 2099-01-07 12:01 UTC: burst window" },
           { message: "Sent to ops-chat" },
         ]);
       });
@@ -1341,7 +1384,7 @@ describe("deliver", () => {
         for (const { deliveryId, itemId } of [seeded, other]) {
           expect(await rowOf(deliveryId)).toMatchObject({ status: "queued", attempts: 1, nextAttemptAt: retryAt });
           expect(await actLog(itemId)).toMatchObject([
-            { message: `Sending to ops-chat failed: Down, retrying at ${retryAt.toISOString()}` },
+            { message: `Sending to ops-chat failed: Down, retrying at ${localDateTime(retryAt, "UTC")}` },
           ]);
         }
 

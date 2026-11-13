@@ -23,6 +23,21 @@ const minuteMs = 60 * 1000;
 const secondMs = 1000;
 const dayMs = 24 * hourMs;
 
+/**
+ * A date, a time and the zone, so the Log and Item detail's Actions section write a hold or a retry the
+ * same way: `2026-11-07 23:59 Europe/Berlin`. Swedish writes a date and time in that shape, the one
+ * Timestamp gives UTC. The date matters because a hold can run past midnight, and the zone because the
+ * rest of the page reads in UTC.
+ */
+export function localDateTime(date: Date, timezone: string) {
+  const clock = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: timezone,
+    dateStyle: "short",
+    timeStyle: "short",
+  });
+  return `${clock.format(date)} ${timezone}`;
+}
+
 /** A wall clock in a timezone, to the minute or to the second. */
 export function localTime(date: Date, timezone: string, withSeconds = false) {
   return new Intl.DateTimeFormat("en-GB", {
