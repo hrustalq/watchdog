@@ -175,10 +175,43 @@ const extractorRuleWhen = conditionAtStage(
     `An Extractor Rule's Condition can't test "${field}": it can test only Categories, Source and content.`,
 );
 
-const label = z.string().trim().min(1);
+// A name a rule holds — its own, a Category it assigns or reads, a Destination it lists — is at most
+// 200 characters, the length a Destination's own name is cut to where it's created, so a rule can
+// always name one (docs: Rule model, "Limits on a rule").
+export const maxLabelLength = 200;
+
+const label = z
+  .string()
+  .trim()
+  .min(1)
+  .superRefine((value, ctx) => {
+    if (value.length > maxLabelLength) {
+      ctx.addIssue({
+        code: "custom",
+        message: `A name can be at most ${maxLabelLength.toLocaleString("en")} characters.`,
+      });
+    }
+  });
+
 const name = z.string().regex(fieldName, "A field name is letters, digits, _ and -, at most 64.");
+
+// Every Agent call carries a rule's prompt, as it carries the Profile's body, so a longer prompt is a
+// cost on every Item. 4,000 characters is the Profile body's cap for the same reason (docs: Agent and
+// LLM integration, "Limits"), and about 600 words: the prompts in this repo's tests are one sentence.
+export const maxPromptLength = 4000;
+
 // Kept as written, so a prompt's own line breaks survive the YAML view.
-const prompt = z.string().refine((text) => text.trim() !== "", "A prompt can't be blank.");
+const prompt = z
+  .string()
+  .refine((text) => text.trim() !== "", "A prompt can't be blank.")
+  .superRefine((text, ctx) => {
+    if (text.length > maxPromptLength) {
+      ctx.addIssue({
+        code: "custom",
+        message: `A prompt can be at most ${maxPromptLength.toLocaleString("en")} characters.`,
+      });
+    }
+  });
 
 /** Fields with their names unique, since an Item stores one value per field name. */
 function fieldList<T extends { name: string }>(fieldSchema: z.ZodType<T>) {

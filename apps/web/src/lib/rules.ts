@@ -196,7 +196,14 @@ function hasUnstorableText(rule: Rule) {
   return found;
 }
 
-const maxNameLength = 200;
+/**
+ * A rule arrives as YAML in one Server Action field, and the parser runs on the web process, so the
+ * text is refused before it's read. 64 KB leaves room for every limit the model states with YAML's
+ * own keys and indentation on top: a 4,000-character prompt, and 50 Categories and 50 fields each
+ * named in up to 200 characters, stay well under it. Parsing 200 KB took 235 ms in plain Node, so
+ * this bounds one save at about a quarter of that.
+ */
+export const maxRuleYaml = 65_536;
 
 interface ParsedRule {
   rule: Rule;
@@ -211,6 +218,18 @@ const typeAndName = (rule: Rule): [RuleType, string] => {
 };
 
 function parseRule(text: string, target: RuleTarget | null): ParsedRule | { problems: RuleProblem[] } {
+  // Before the parser reads it: the schemas bound what a rule holds, and this bounds what reaching
+  // them costs. The message names the limit, because nothing in the text says how long it is.
+  if (text.length > maxRuleYaml) {
+    return {
+      problems: [
+        {
+          path: "",
+          message: `A rule's YAML can be at most ${maxRuleYaml.toLocaleString("en")} characters, which is 64 KB. This one is ${text.length.toLocaleString("en")}.`,
+        },
+      ],
+    };
+  }
   let value: unknown;
   try {
     value = draftFromYaml(text);
@@ -231,9 +250,6 @@ function parseRule(text: string, target: RuleTarget | null): ParsedRule | { prob
   if (target !== null && target.type !== type) {
     const message = `A saved ${ruleNoun[target.type]} can't become ${aRule(type)}. Create a new one instead.`;
     return { problems: [{ path: "", message }] };
-  }
-  if (name.length > maxNameLength) {
-    return { problems: [{ path: type, message: `A name can be at most ${String(maxNameLength)} characters.` }] };
   }
   if (hasUnstorableText(rule)) {
     return { problems: [{ path: "", message: "Watchdog can't store a NUL character or half a surrogate pair. Remove it." }] };

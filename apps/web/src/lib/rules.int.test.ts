@@ -1,4 +1,4 @@
-import { processItem, ruleSchema } from "@watchdog/core";
+import { maxPromptLength, processItem, ruleSchema } from "@watchdog/core";
 import { draftToYaml } from "@watchdog/core/rules/draft";
 import { fakeLlm } from "@watchdog/core/testing";
 import {
@@ -31,6 +31,7 @@ import {
   destinationChoices,
   getRule,
   listRules,
+  maxRuleYaml,
   problemsInDraft,
   removeRule,
   type RuleTarget,
@@ -189,6 +190,32 @@ describe("Rules", () => {
       expect(await getRule(db, ours, type, id)).toMatchObject({ enabled: false });
     });
 
+    it("opens a rule saved before a limit, and saves it once it's under the limit", async () => {
+      // A definition stored before the limits existed, which only an insert can make now.
+      const name = unique();
+      const [row] = await db
+        .insert(classifier)
+        .values({
+          workspaceId: ours,
+          name,
+          kind: "agent",
+          definition: { classifier: name, prompt: "x".repeat(maxPromptLength + 1), categories: ["lead"] },
+        })
+        .returning({ id: classifier.id });
+      const type = "classifier";
+      const id = row?.id ?? "";
+
+      const shown = (await getRule(db, ours, type, id))?.yaml ?? "";
+      const read = readDraft(shown);
+      expect("draft" in read ? read.draft.prompt : undefined).toHaveLength(maxPromptLength + 1);
+
+      // Saving it as it opens is refused beside the prompt, so the user can shorten it and save again.
+      expect(await problems(shown, { type, id })).toEqual([
+        { path: "prompt", message: containing(maxPromptLength.toLocaleString("en")) },
+      ]);
+      await saved(ours, agentClassifierYaml(name), { type, id });
+    });
+
     it("refuses a regex that doesn't compile, beside the regex", async () => {
       const yaml = `classifier: ${unique()}\nwhen:\n  all:\n    - { field: title, op: matches, value: "(" }\nassign: [x]\n`;
       expect(await problems(yaml)).toEqual([
@@ -236,6 +263,31 @@ describe("Rules", () => {
       const [problem] = await problems(yaml);
       expect(problem?.path).toBe("");
       expect(problem?.message).toMatch(message);
+    });
+
+    it("refuses YAML over 64 KB before parsing it, naming the limit", async () => {
+      // If this were parsed, the unclosed brackets would take the parser seconds and report one error
+      // each. The size check comes first, so the reply is one problem about the size.
+      const yaml = `classifier: ${unique()}\nwhen: { field: title, op: exists }\nassign: [x]\n#${"[".repeat(maxRuleYaml)}`;
+      const [problem] = await problems(yaml);
+
+      expect(problem?.path).toBe("");
+      expect(problem?.message).toContain(maxRuleYaml.toLocaleString("en"));
+      expect(problem?.message).toContain("64 KB");
+      expect(problem?.message).not.toContain("Flow sequence");
+    }, 10_000);
+
+    it("accepts YAML at the limit, and refuses the next character before parsing it", async () => {
+      const base = `classifier: ${unique()}\nwhen: { field: title, op: exists }\nassign: [x]\n`;
+      const padded = `${base}# ${"x".repeat(maxRuleYaml - base.length - 3)}\n`;
+      expect(padded).toHaveLength(maxRuleYaml);
+      expect(await problemsInDraft(db, ours, null, padded, "hosted")).toEqual([]);
+
+      // One more character makes it a bare scalar after the mapping, so parsing it would fail with a
+      // message about YAML rather than about its size.
+      expect(await problems(`${padded}x`)).toEqual([
+        { path: "", message: containing(maxRuleYaml.toLocaleString("en")) },
+      ]);
     });
 
     it.each([
