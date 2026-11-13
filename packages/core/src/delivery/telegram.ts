@@ -62,12 +62,16 @@ function floodLimiter() {
   /** When each chat's queued sends have had their turns: a rescheduled send's place among them. */
   const chatQueuedAt = new Map<string, number>();
 
-  /** The wait until the chat's turn, which it takes when that is 0, or the one its caller resends for. */
-  return (chatId: string, deferTurn: boolean) => {
-    const now = Date.now();
-    // A chat whose second has passed needs no entry, which keeps these to the last second's chats.
+  /** A chat whose second has passed needs no entry, which keeps these to the last second's chats. */
+  const keepLastSecond = (now: number) => {
     for (const [chat, at] of chatFreeAt) if (at <= now) chatFreeAt.delete(chat);
     for (const [chat, at] of chatQueuedAt) if (at <= now) chatQueuedAt.delete(chat);
+  };
+
+  /** The wait until the chat's turn, which it takes when that is 0, or the one its caller resends for. */
+  const nextTurn = (chatId: string, deferTurn: boolean) => {
+    const now = Date.now();
+    keepLastSecond(now);
 
     const freeAt = Math.max(botFreeAt, chatFreeAt.get(chatId) ?? 0);
     const queuedAt = chatQueuedAt.get(chatId) ?? 0;
@@ -86,6 +90,23 @@ function floodLimiter() {
     chatQueuedAt.set(chatId, Math.max(queuedAt, now + chatGapMs));
     return 0;
   };
+
+  /**
+   * How long until the chat's turn, when it is a while off, with a place taken in the chat's queue for a
+   * send that comes back then. Undefined when the turn is now: nothing is taken, so the send takes it.
+   */
+  const placeInQueue = (chatId: string): number | undefined => {
+    const now = Date.now();
+    keepLastSecond(now);
+
+    const freeAt = Math.max(botFreeAt, chatFreeAt.get(chatId) ?? 0);
+    if (freeAt - now <= momentMs) return undefined;
+    const at = Math.max(freeAt, chatQueuedAt.get(chatId) ?? 0);
+    chatQueuedAt.set(chatId, at + chatGapMs);
+    return at - now;
+  };
+
+  return { nextTurn, placeInQueue };
 }
 
 /** Without a token it sends nothing, and each attempt fails with a reason saying so. */
@@ -103,7 +124,7 @@ export function createTelegramSender(
     };
   }
   const url = botApiUrl(botToken, "sendMessage");
-  const nextTurn = floodLimiter();
+  const turn = floodLimiter();
 
   /**
    * Undefined when the message went, or else Telegram's refusal. The wait for the chat's turn happens here,
@@ -111,7 +132,7 @@ export function createTelegramSender(
    * told when it is instead, and goes again then.
    */
   const post = async (chatId: string, text: string, deferTurn: boolean) => {
-    for (let waitMs = nextTurn(chatId, deferTurn); waitMs > 0; waitMs = nextTurn(chatId, deferTurn)) {
+    for (let waitMs = turn.nextTurn(chatId, deferTurn); waitMs > 0; waitMs = turn.nextTurn(chatId, deferTurn)) {
       await sleep(waitMs);
     }
     const response = await deps
@@ -166,6 +187,11 @@ export function createTelegramSender(
         );
       }
       throw new Error(`Telegram refused the message with ${String(status)}${said}`);
+    },
+    deferTurn: (destination) => {
+      // An unlinked chat has no turn to keep, and says so when the send is tried.
+      if (destination.secretCiphertext === null) return undefined;
+      return turn.placeInQueue(decryptSecret(destination.secretCiphertext, deps.encryptionKey));
     },
   };
 }

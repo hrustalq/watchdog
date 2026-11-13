@@ -51,6 +51,13 @@ export interface Sender<Message = AlertMessage | GroupedAlert> {
     onChatMoved?: (secretCiphertext: string) => Promise<void>,
     options?: { deferTurn?: boolean },
   ) => Promise<void>;
+  /**
+   * How long until this Destination's turn, when it is further off than a moment, with a place taken in
+   * that Destination's queue for a send that comes back then. Undefined when a send would go now, and for
+   * a sender with no turn to keep. `deliver` asks this before it takes the Destination's row, so a
+   * Delivery that only waits holds neither a queue slot nor that lock.
+   */
+  deferTurn?: (destination: Destination) => number | undefined;
 }
 
 /** The Telegram and email senders, which take a Source Health alert as well as what a Delivery sends. */
@@ -272,18 +279,24 @@ async function record(
 }
 
 /**
- * Puts the Deliveries back as they were, due at `at`, with a job for then. Waiting for the Destination's
- * turn is no attempt, so neither the Log nor the Destination hears of it. A row another job recorded
- * meanwhile is left alone, and so queues nothing.
+ * Puts a queued Delivery back as it was, due at `at`, with a job for then. Waiting for the Destination's
+ * turn is no attempt, so neither the Log nor the Destination hears of it. A row that another job recorded,
+ * or one that isn't due until later, is left alone and queues nothing.
  */
-async function deferDelivery(tx: Tx, row: DueDelivery, at: Date, retryDelivery: DeliverDeps["retryDelivery"]) {
+async function deferDelivery(tx: Tx, deliveryId: string, at: Date, retryDelivery: DeliverDeps["retryDelivery"]) {
   const updated = await tx
     .update(delivery)
     .set({ nextAttemptAt: at })
-    .where(and(eq(delivery.id, row.id), eq(delivery.status, "queued"), eq(delivery.attempts, row.attempts)))
+    .where(
+      and(
+        eq(delivery.id, deliveryId),
+        eq(delivery.status, "queued"),
+        or(isNull(delivery.nextAttemptAt), lte(delivery.nextAttemptAt, sql`now()`)),
+      ),
+    )
     .returning({ id: delivery.id });
   if (updated.length === 0) return;
-  await retryDelivery(tx, row.id, at);
+  await retryDelivery(tx, deliveryId, at);
 }
 
 /** Holds or groups the alerts that can't go now, and returns the ones that can. */
@@ -405,7 +418,7 @@ async function send(
     // No attempt was made, so nothing is recorded: the job goes again when the turn comes.
     if (error instanceof NotYetSendError) {
       const at = new Date(now().getTime() + error.waitMs);
-      for (const row of rows) await recording((tx) => deferDelivery(tx, row, at, deps.retryDelivery));
+      for (const row of rows) await recording((tx) => deferDelivery(tx, row.id, at, deps.retryDelivery));
       return;
     }
     const failed = now();
@@ -522,6 +535,16 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
   }
 
   const sender = deps.senders[found.destination.type];
+  // Asked before the Destination's row is taken: a Delivery that only waits behind its chat's turn is
+  // queued for that turn there instead, so a burst to one chat can't make every other Delivery wait on
+  // the row its jobs would hold in turn.
+  const turnMs = sender.deferTurn?.(found.destination);
+  if (turnMs !== undefined) {
+    const at = new Date(now().getTime() + turnMs);
+    await db.transaction((tx) => deferDelivery(tx, deliveryId, at, deps.retryDelivery));
+    return;
+  }
+
   await db.transaction(async (tx) => {
     const [target] = await tx
       .select()
