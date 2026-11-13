@@ -22,9 +22,11 @@ import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { createEgressFetch } from "../egress/egress.ts";
+import type { Mailer } from "../mail/mailer.ts";
 import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
 import { deliver, type Destination, FinalSendError, purgeSentMessages, RetryAfterSendError, type Sender } from "./deliver.ts";
 import type { AlertMessage, WebhookMessage } from "./content.ts";
+import { createEmailSender } from "./email.ts";
 import type { GroupedAlert } from "./group.ts";
 import { createTelegramSender } from "./telegram.ts";
 import { verifyWebhookSignature } from "./verify-signature.ts";
@@ -317,6 +319,58 @@ describe("deliver", () => {
     ]);
     const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
     expect(shown).toMatchObject({ lastError: "Refused for good", lastErrorAt: now });
+  });
+
+  it("fails a Delivery to an address the mail server refuses at once, and shows it on the Destination", async () => {
+    const seeded = await seed();
+    const now = new Date();
+    const [mail] = await db
+      .insert(destination)
+      .values({
+        workspaceId: seeded.workspaceId,
+        type: "email",
+        name: "me",
+        config: { address: "me@example.com" },
+        confirmedAt: now,
+      })
+      .returning();
+    const destinationId = present(mail).id;
+    await db.update(delivery).set({ destinationId }).where(eq(delivery.id, seeded.deliveryId));
+    // What nodemailer rejects with once the server answers RCPT TO with a 550 (see smtp.int.test.ts).
+    const mailer: Mailer = {
+      send: () =>
+        Promise.reject(
+          Object.assign(
+            new Error(
+              "Can't send mail - all recipients were rejected: 550 5.1.1 <me@example.com>: recipient address rejected",
+            ),
+            { code: "EENVELOPE", command: "RCPT TO", responseCode: 550 },
+          ),
+        ),
+    };
+    const { deps, retries } = recording();
+
+    await deliver(db, seeded.deliveryId, {
+      ...deps,
+      senders: { ...deps.senders, email: createEmailSender(mailer, undefined) },
+      now: () => now,
+    });
+
+    expect(retries).toEqual([]);
+    expect(await rowOf(seeded.deliveryId)).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      nextAttemptAt: null,
+      lastError: "the mail server refused this address",
+    });
+    const log = await actLog(seeded.itemId);
+    expect(log).toMatchObject([
+      { message: "Sending to me failed: the mail server refused this address. It won't be retried", data: { attempt: 1, final: true } },
+    ]);
+    expect(JSON.stringify(log)).not.toContain("550");
+    expect(JSON.stringify(log)).not.toContain("me@example.com");
+    const shown = await db.query.destination.findFirst({ where: eq(destination.id, destinationId) });
+    expect(shown).toMatchObject({ lastError: "the mail server refused this address", lastErrorAt: now });
   });
 
   it("waits as long as the sender was told to, in place of the backoff", async () => {
