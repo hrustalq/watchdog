@@ -52,12 +52,14 @@ export interface Sender<Message = AlertMessage | GroupedAlert> {
     options?: { deferTurn?: boolean },
   ) => Promise<void>;
   /**
-   * How long until this Destination's turn, when it is further off than a moment, with a place taken in
-   * that Destination's queue for a send that comes back then. Undefined when a send would go now, and for
-   * a sender with no turn to keep. `deliver` asks this before it takes the Destination's row, so a
-   * Delivery that only waits holds neither a queue slot nor that lock.
+   * How long until this Destination's turn, with a place taken in that Destination's queue for a send
+   * that comes back then. Undefined when a send would go within a moment, and for a sender with no turn
+   * to keep. `dueAt` is when the Delivery's own time came, as its row says, or null for one that has
+   * never waited: a send given a place takes it rather than queue behind the places handed out since.
+   * `deliver` asks this before it takes the Destination's row, so a Delivery that only waits takes
+   * neither a queue slot nor that lock.
    */
-  deferTurn?: (destination: Destination) => number | undefined;
+  deferTurn?: (destination: Destination, dueAt: Date | null) => number | undefined;
 }
 
 /** The Telegram and email senders, which take a Source Health alert as well as what a Delivery sends. */
@@ -511,7 +513,7 @@ async function send(
 export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Promise<void> {
   const now = deps.now ?? (() => new Date());
   const [found] = await db
-    .select({ destination, timezone: workspace.timezone })
+    .select({ destination, timezone: workspace.timezone, nextAttemptAt: delivery.nextAttemptAt })
     .from(delivery)
     .innerJoin(destination, eq(delivery.destinationId, destination.id))
     .innerJoin(workspace, eq(destination.workspaceId, workspace.id))
@@ -538,7 +540,7 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
   // Asked before the Destination's row is taken: a Delivery that only waits behind its chat's turn is
   // queued for that turn there instead, so a burst to one chat can't make every other Delivery wait on
   // the row its jobs would hold in turn.
-  const turnMs = sender.deferTurn?.(found.destination);
+  const turnMs = sender.deferTurn?.(found.destination, found.nextAttemptAt);
   if (turnMs !== undefined) {
     const at = new Date(now().getTime() + turnMs);
     await db.transaction((tx) => deferDelivery(tx, deliveryId, at, deps.retryDelivery));

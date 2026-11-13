@@ -61,11 +61,18 @@ function floodLimiter() {
   const chatFreeAt = new Map<string, number>();
   /** When each chat's queued sends have had their turns: a rescheduled send's place among them. */
   const chatQueuedAt = new Map<string, number>();
+  /**
+   * A chat whose next send may wait in place for its turn, because the Delivery's own time has come and
+   * the place it was given is about to: queuing it again would come back a poll later and slip every
+   * turn behind it. Expires, so a send that never comes can't hold another one back.
+   */
+  const chatHeldUntil = new Map<string, number>();
 
   /** A chat whose second has passed needs no entry, which keeps these to the last second's chats. */
   const keepLastSecond = (now: number) => {
     for (const [chat, at] of chatFreeAt) if (at <= now) chatFreeAt.delete(chat);
     for (const [chat, at] of chatQueuedAt) if (at <= now) chatQueuedAt.delete(chat);
+    for (const [chat, at] of chatHeldUntil) if (at <= now) chatHeldUntil.delete(chat);
   };
 
   /** The wait until the chat's turn, which it takes when that is 0, or the one its caller resends for. */
@@ -76,7 +83,10 @@ function floodLimiter() {
     const freeAt = Math.max(botFreeAt, chatFreeAt.get(chatId) ?? 0);
     const queuedAt = chatQueuedAt.get(chatId) ?? 0;
     if (freeAt > now) {
-      if (freeAt - now > momentMs && deferTurn) {
+      // A place that has come is waited out here rather than queued again, which would come back late.
+      const held = chatHeldUntil.get(chatId);
+      chatHeldUntil.delete(chatId);
+      if (held === undefined && freeAt - now > momentMs && deferTurn) {
         // Behind the sends already queued for this chat, which come a gap apart rather than in a crowd.
         const at = Math.max(freeAt, queuedAt);
         chatQueuedAt.set(chatId, at + chatGapMs);
@@ -92,18 +102,32 @@ function floodLimiter() {
   };
 
   /**
-   * How long until the chat's turn, when it is a while off, with a place taken in the chat's queue for a
-   * send that comes back then. Undefined when the turn is now: nothing is taken, so the send takes it.
+   * How long until the chat's turn, with a place taken in the chat's queue for a send that comes back
+   * then, or undefined when a send can go within a moment.
+   *
+   * A place is taken even by a caller that sends now, because jobs are fetched in a batch: without one
+   * the jobs beside it find the chat free too, and each waits for the one before it on the Destination's
+   * row, holding a queue slot until the turn is a moment away. `dueAt` is when the Delivery's own time
+   * came: a send given a place takes it, rather than going behind the places handed out since.
    */
-  const placeInQueue = (chatId: string): number | undefined => {
+  const placeInQueue = (chatId: string, dueAt: Date | null): number | undefined => {
     const now = Date.now();
     keepLastSecond(now);
 
     const freeAt = Math.max(botFreeAt, chatFreeAt.get(chatId) ?? 0);
-    if (freeAt - now <= momentMs) return undefined;
-    const at = Math.max(freeAt, chatQueuedAt.get(chatId) ?? 0);
+    // A place that has come is taken now, or waited out here when it is barely a gap away: queued again it
+    // would come back a poll later, and the turns behind it would slip with it.
+    if (dueAt !== null && dueAt.getTime() <= now + momentMs) {
+      if (freeAt - now <= chatGapMs) {
+        chatHeldUntil.set(chatId, freeAt);
+        return undefined;
+      }
+      return freeAt - now;
+    }
+
+    const at = Math.max(freeAt, chatQueuedAt.get(chatId) ?? 0, now);
     chatQueuedAt.set(chatId, at + chatGapMs);
-    return at - now;
+    return at - now > momentMs ? at - now : undefined;
   };
 
   return { nextTurn, placeInQueue };
@@ -188,10 +212,10 @@ export function createTelegramSender(
       }
       throw new Error(`Telegram refused the message with ${String(status)}${said}`);
     },
-    deferTurn: (destination) => {
+    deferTurn: (destination, dueAt) => {
       // An unlinked chat has no turn to keep, and says so when the send is tried.
       if (destination.secretCiphertext === null) return undefined;
-      return turn.placeInQueue(decryptSecret(destination.secretCiphertext, deps.encryptionKey));
+      return turn.placeInQueue(decryptSecret(destination.secretCiphertext, deps.encryptionKey), dueAt);
     },
   };
 }
