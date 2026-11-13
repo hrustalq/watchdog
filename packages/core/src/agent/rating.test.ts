@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentExtractorRule } from "../rules/schema.ts";
-import { ratingAnchor, ratingMeaning, ratingSchema, ratingTask } from "./rating.ts";
+import { ratingAbout, ratingAnchor, ratingAxes, ratingMeaning, ratingScale, ratingSchema, ratingTask } from "./rating.ts";
 
 const rated = { summary: "A summary", reasoning: "Because", severity: 3, importance: 3 };
 
@@ -89,20 +89,48 @@ describe("ratingMeaning", () => {
     ["importance", 5, "directly about the user's product, or a key competitor or customer"],
     ["importance", 2, "only loosely related"],
   ] as const)("says what %s %i means, without its example", (axis, level, meaning) => {
-    expect(ratingMeaning(axis, level)).toBe(meaning);
+    expect(ratingMeaning(axis, level, "agent")).toBe(meaning);
+  });
+
+  it.each([
+    ["severity", 5, "act today"],
+    ["importance", 5, "directly about your product, or a key competitor or customer"],
+    ["importance", 4, "about something else the Profile names"],
+    ["importance", 3, "about your field in general, and useful to know"],
+  ] as const)("says what %s %i means to the reader, without its example", (axis, level, meaning) => {
+    expect(ratingMeaning(axis, level, "you")).toBe(meaning);
   });
 
   it.each([0, 6])("refuses level %i, which isn't on the scale", (level) => {
-    expect(() => ratingMeaning("severity", level)).toThrow();
+    expect(() => ratingMeaning("severity", level, "agent")).toThrow();
   });
 });
 
 describe("ratingAnchor", () => {
+  const level = { meaning: "act today", example: "an outage" };
+
   it("gives a level's meaning with its example", () => {
-    expect(ratingAnchor({ meaning: "act today", example: "an outage" })).toBe("act today, e.g. an outage");
+    expect(ratingAnchor(level, "agent")).toBe("act today, e.g. an outage");
+    expect(ratingAnchor(level, "you")).toBe("act today, e.g. an outage");
   });
 
   it("gives only the meaning of a level with no example", () => {
-    expect(ratingAnchor({ meaning: "directly about the user's product" })).toBe("directly about the user's product");
+    expect(ratingAnchor({ meaning: "directly about the user's product" }, "agent")).toBe(
+      "directly about the user's product",
+    );
+    expect(ratingAnchor({ meaning: "directly about the user's product" }, "you")).toBe(
+      "directly about the user's product",
+    );
+  });
+});
+
+describe("the scale as the controls read it", () => {
+  it("never names the user in the third person", () => {
+    for (const axis of ratingAxes) {
+      expect(ratingAbout(ratingScale[axis], "you")).not.toContain("the user");
+      for (const entry of ratingScale[axis].levels) {
+        expect(ratingAnchor(entry, "you")).not.toContain("the user");
+      }
+    }
   });
 });

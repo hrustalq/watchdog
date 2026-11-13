@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { RatingControls } from "./correct-rating.tsx";
+import { RatingControls, RatingStepper } from "./correct-rating.tsx";
 
 /** The text a screen reader reads in the scale's level buttons and its line of meaning. */
 const words = (html: string) => html.replace(/<[^>]*>/g, "").replace(/&#x27;/g, "'");
@@ -51,5 +51,21 @@ describe("RatingControls", () => {
 
     expect(html).not.toContain("border-dashed");
     expect(html).not.toContain("Agent");
+  });
+
+  it("addresses the reader directly, in the meanings, the guide and their accessible names", () => {
+    const unrated = renderToStaticMarkup(<RatingControls itemId="item" severity={null} importance={null} />);
+
+    expect(controls({ severity: 3, importance: 2 })).not.toContain("the user");
+    expect(unrated).not.toContain("the user");
+  });
+});
+
+describe("RatingStepper", () => {
+  it("names each button's level without naming the user in the third person", () => {
+    const html = renderToStaticMarkup(<RatingStepper itemId="item" title="The title" severity={4} importance={2} />);
+
+    expect(html).toContain("Raise Severity to 5, act today");
+    expect(html).not.toContain("the user");
   });
 });
