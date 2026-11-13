@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
 import { closeDb, createDb, type Db, eq, migrate, source, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
 import { fetch } from "undici";
@@ -32,6 +33,38 @@ async function freePort() {
   const port = await listen(probe);
   await new Promise((resolve) => probe.close(resolve));
   return port;
+}
+
+/**
+ * How long the render after another one waits for Obscura to free the closed session's slot. It is
+ * long enough for a loaded machine to catch up, and a session that really leaked never frees its slot.
+ */
+const slotWait = 5000;
+/** How often the wait tries again. */
+const slotPoll = 100;
+
+/** `Couldn't reach the Obscura renderer: … 503 Service Unavailable`: Obscura's one slot is taken. */
+function outOfSlots(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  return error.message.startsWith("Couldn't reach the Obscura renderer:") && error.message.includes("503");
+}
+
+/**
+ * Obscura frees a closed session's slot a moment after the close returns, so under load the render
+ * right after a timed-out or aborted one is refused with a 503 even though nothing leaked. Wait for
+ * the slot instead of asserting on the first refusal; a session that leaked never frees it, so the
+ * wait runs out and the 503 fails the test.
+ */
+async function renderWhenFree<T>(render: () => Promise<T>): Promise<T> {
+  const until = Date.now() + slotWait;
+  for (;;) {
+    try {
+      return await render();
+    } catch (error) {
+      if (!outOfSlots(error) || Date.now() >= until) throw error;
+    }
+    await sleep(slotPoll);
+  }
 }
 
 /**
@@ -154,7 +187,8 @@ describe("rendered website Sources", () => {
       `${site}/slow didn't finish rendering within 1 s`,
     );
     // Obscura takes one connection, so this render proves the last one was closed.
-    expect((await renderer.render(`${site}/status`, { timeout: 10_000 })).title).toBe("Acme status");
+    const free = await renderWhenFree(() => renderer.render(`${site}/status`, { timeout: 10_000 }));
+    expect(free.title).toBe("Acme status");
 
     const stop = new AbortController();
     const aborted = renderer.render(`${site}/slow`, { timeout: 10_000, signal: stop.signal });
@@ -162,7 +196,7 @@ describe("rendered website Sources", () => {
       stop.abort();
     }, 300);
     await expect(aborted).rejects.toThrow();
-    const after = await renderer.render(`${site}/status`, { timeout: 10_000 });
+    const after = await renderWhenFree(() => renderer.render(`${site}/status`, { timeout: 10_000 }));
     expect(after.finalUrl).toBe(`${site}/status`);
     expect(after.html).toContain("All systems operational");
   });
