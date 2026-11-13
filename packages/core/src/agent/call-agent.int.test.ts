@@ -577,5 +577,36 @@ describe("callAgent", () => {
         { itemId: null, purpose: "test-connection", status: "ok", errorMessage: null },
       ]);
     });
+
+    it("takes a key from a form instead of the row's, as a test of unsaved settings does", async () => {
+      const seeded = await seed("openai-compatible");
+      const fake = fakeLlm("openai-compatible", [{ json: { reply: "ok" } }]);
+
+      await testModelConnection({
+        db,
+        encryptionKey,
+        modelConfig: seeded.modelConfig,
+        fetch: fake.fetch,
+        apiKeyOverride: "sk-unsaved",
+      });
+
+      expect(fake.requests[0]?.headers.authorization).toBe("Bearer sk-unsaved");
+      expect(JSON.stringify(fake.requests[0]?.headers)).not.toContain(apiKey);
+    });
+
+    it("sends no key when the form overrides the stored one with none", async () => {
+      const seeded = await seed("openai-compatible");
+      const fake = fakeLlm("openai-compatible", [{ json: { reply: "ok" } }]);
+
+      await testModelConnection({
+        db,
+        encryptionKey,
+        modelConfig: seeded.modelConfig,
+        fetch: fake.fetch,
+        apiKeyOverride: null,
+      });
+
+      expect(fake.requests[0]?.headers.authorization).toBeUndefined();
+    });
   });
 });

@@ -10,6 +10,7 @@ import {
   modelProblems,
   providerTypes,
   type StoredKey,
+  testCallFailure,
   testOutcomes,
   type TestOutcome,
   workerKeyMismatch,
@@ -89,6 +90,8 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
   // These come from the URL, so only a known code counts, and each only picks words written here.
   const problem = modelProblems.find((known) => known === param("error"));
   const test = testOutcomes.find((known) => known === param("test"));
+  // A test of what the form held, which saved nothing: the values come back with it.
+  const formTest = testOutcomes.find((known) => known === param("formTest"));
 
   const saved: ModelFormValues =
     model === undefined
@@ -103,7 +106,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
           outputPrice: model.outputPricePerMillion?.toString() ?? "",
         };
   const values: ModelFormValues =
-    problem === undefined
+    problem === undefined && formTest === undefined
       ? saved
       : {
           providerType: param("providerType"),
@@ -115,6 +118,12 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
           outputPrice: param("outputPrice"),
         };
 
+  // A call the form's test made says why it failed on the row it was metered against.
+  const formTestReason =
+    formTest === "failed" || formTest === "blocked"
+      ? await testCallFailure(db, workspace.id, param("formTestId"))
+      : undefined;
+
   // The form is a disclosure (#129): with a saved model that works it stays collapsed, and it opens
   // whenever the form is what the user has to change, or the page is asking for the key at #api-key.
   const open = formOpens({
@@ -123,6 +132,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
     refused: problem !== undefined,
     keyLeftBehind: param("saved") === "key-left-behind",
     unreadableKeyTest: test === "unreadable-key",
+    tested: formTest !== undefined,
   });
 
   return (
@@ -217,6 +227,9 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
           </summary>
           <div className="flex flex-col gap-4 border-t p-4">
             <p className="text-sm text-muted-foreground">{formIntro(model)}</p>
+            {formTest === undefined ? null : (
+              <SettingsTest outcome={formTest} modelName={values.modelName} reason={formTestReason} mode={mode} />
+            )}
             {/* A new key on the saved values remounts nothing, so React's own form reset clears the field. */}
             <ModelForm
               key={JSON.stringify(values)}
@@ -265,6 +278,58 @@ function TestResult({ test, modelName }: { test: TestOutcome | undefined; modelN
     case "failed":
     case "no-model":
     case undefined:
+      return null;
+  }
+}
+
+/**
+ * What a test of the form's own settings did. It says nothing about the saved model, and says so in
+ * words, because a failure here is about settings that were never saved: the Agent keeps running on
+ * the model that is, and its key is untouched.
+ */
+function SettingsTest({
+  outcome,
+  modelName,
+  reason,
+  mode,
+}: {
+  outcome: TestOutcome;
+  modelName: string;
+  reason: string | undefined;
+  mode: "hosted" | "self-hosted";
+}) {
+  switch (outcome) {
+    case "ok":
+      return (
+        <Notice role="status" className={noticeClass}>
+          These settings work: {modelName} answered. Nothing is saved yet, and the saved model keeps running.
+        </Notice>
+      );
+    // A blocked address never reached the provider, so it's Watchdog that stopped, and the reason says why.
+    case "blocked":
+    case "failed":
+      return (
+        <AlarmLine takeFocus>
+          <span className="min-w-0 break-words">
+            {outcome === "blocked" ? "Watchdog didn't call this address: " : "The test of these settings failed: "}
+            {reason ?? "No reason was recorded."}
+            <span className="block text-muted-foreground">
+              Nothing was saved, and the saved model is unchanged.
+            </span>
+            {outcome === "blocked" ? <span className="block text-muted-foreground">{blockedHint(mode)}</span> : null}
+          </span>
+        </AlarmLine>
+      );
+    case "unreadable-key":
+      return (
+        <AlarmLine takeFocus>
+          <span className="min-w-0 break-words">
+            Watchdog can&apos;t read the saved API key, so it sent nothing. Enter the key above to test these settings.
+          </span>
+        </AlarmLine>
+      );
+    // A form always holds settings, and the values it came back with say which field to fix.
+    case "no-model":
       return null;
   }
 }
