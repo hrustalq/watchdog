@@ -6,6 +6,8 @@ import {
   conditionSchema,
   deterministicClassifierSchema,
   deterministicExtractorRuleSchema,
+  maxLabelLength,
+  maxPromptLength,
   ruleSchema,
 } from "./schema.ts";
 
@@ -194,6 +196,48 @@ describe("agentClassifierSchema", () => {
   it("keeps a prompt's own whitespace", () => {
     const prompt = "  Sort it.\n";
     expect(agentClassifierSchema.parse({ ...classifier, prompt }).prompt).toBe(prompt);
+  });
+});
+
+describe("the size of the text a rule holds", () => {
+  const classifier = { classifier: "sorter", prompt: "Sort it.", categories: ["lead"] };
+  const withPrompt = (length: number) => ({ ...classifier, prompt: "x".repeat(length) });
+  const withCategory = (length: number) => ({ ...classifier, categories: ["x".repeat(length)] });
+
+  it("accepts a prompt at its limit and refuses one character more, beside the prompt", () => {
+    expect(agentClassifierSchema.safeParse(withPrompt(maxPromptLength - 1)).success).toBe(true);
+    expect(agentClassifierSchema.safeParse(withPrompt(maxPromptLength)).success).toBe(true);
+    const issue = issuesOf(agentClassifierSchema.safeParse(withPrompt(maxPromptLength + 1)))[0];
+    expect(issue?.path).toEqual(["prompt"]);
+    expect(issue?.message).toContain(maxPromptLength.toLocaleString("en"));
+  });
+
+  it("accepts a Category name at its limit and refuses one character more, beside the name", () => {
+    expect(agentClassifierSchema.safeParse(withCategory(maxLabelLength - 1)).success).toBe(true);
+    expect(agentClassifierSchema.safeParse(withCategory(maxLabelLength)).success).toBe(true);
+    const issue = issuesOf(agentClassifierSchema.safeParse(withCategory(maxLabelLength + 1)))[0];
+    expect(issue?.path).toEqual(["categories", 0]);
+    expect(issue?.message).toContain(maxLabelLength.toLocaleString("en"));
+  });
+
+  it("holds on an Agent-backed Extractor Rule and on a deterministic Classifier's assign", () => {
+    const extractor = {
+      extractor: "pricing",
+      when: { field: "title", op: "exists" },
+      prompt: "x".repeat(maxPromptLength + 1),
+      fields: [{ name: "price", type: "string" }],
+    };
+    expect(issuesOf(agentExtractorRuleSchema.safeParse(extractor))[0]?.path).toEqual(["prompt"]);
+
+    const assign = { classifier: "c", when: { field: "title", op: "exists" }, assign: ["x".repeat(maxLabelLength + 1)] };
+    expect(issuesOf(deterministicClassifierSchema.safeParse(assign))[0]?.path).toEqual(["assign", 0]);
+  });
+
+  it("counts a name after trimming it, and leaves a rule's own name at the same limit", () => {
+    const padded = { ...classifier, classifier: ` ${"x".repeat(maxLabelLength)} ` };
+    expect(agentClassifierSchema.safeParse(padded).success).toBe(true);
+    const issue = issuesOf(agentClassifierSchema.safeParse({ ...padded, classifier: "x".repeat(maxLabelLength + 1) }))[0];
+    expect(issue?.path).toEqual(["classifier"]);
   });
 });
 

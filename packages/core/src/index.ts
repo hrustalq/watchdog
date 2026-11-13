@@ -88,6 +88,8 @@ export {
   deterministicExtractorRuleSchema,
   type ExtractorRule,
   extractorRuleSchema,
+  maxLabelLength,
+  maxPromptLength,
   type Predicate,
   type Rule,
   ruleSchema,
