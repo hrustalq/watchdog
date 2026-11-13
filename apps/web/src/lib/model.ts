@@ -1,6 +1,6 @@
 // A Workspace's model, as the Model screen reads and changes it (ADR 0005). Every query is scoped to
 // the Workspace, and nothing here returns the key or its ciphertext to the page.
-import { type AgentFetch, encryptSecret, readApiKey, testModelConnection } from "@watchdog/core";
+import { type AgentFetch, encryptSecret, keyFingerprint, readApiKey, testModelConnection } from "@watchdog/core";
 import {
   agentCall,
   and,
@@ -327,6 +327,21 @@ export async function setArchivedPrices(
 }
 
 export type StoredKey = "none" | "set" | "unreadable";
+
+/**
+ * Whether the worker that last booted holds a different WATCHDOG_ENCRYPTION_KEY from this process.
+ * Compose hands both the same `.env`, and recreating one service after changing it leaves the other on
+ * the old value: web still reads everything it saved, and only the worker's calls fail. The worker
+ * writes a one-way fingerprint at boot, so this needs no Agent call and no stored secret. False until
+ * a worker of this version has booted, since there is nothing to compare then.
+ */
+export async function workerKeyMismatch(db: Db, encryptionKey: Buffer) {
+  const settings = await db.query.instanceSettings.findFirst({
+    columns: { encryptionKeyFingerprint: true },
+  });
+  const stored = settings?.encryptionKeyFingerprint ?? null;
+  return stored !== null && stored !== keyFingerprint(encryptionKey);
+}
 
 function storedKey(ciphertext: string | null, encryptionKey: Buffer): StoredKey {
   const apiKey = readApiKey(ciphertext, encryptionKey);

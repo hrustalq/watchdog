@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { createAgentFetch, decryptSecret } from "@watchdog/core";
+import { createAgentFetch, decryptSecret, keyFingerprint } from "@watchdog/core";
 import { fakeLlm } from "@watchdog/core/testing";
 import {
   agentCall,
@@ -8,6 +8,7 @@ import {
   createDb,
   type Db,
   eq,
+  instanceSettings,
   isNull,
   migrate,
   modelConfig,
@@ -29,6 +30,7 @@ import {
   saveModel,
   setArchivedPrices,
   testConnection,
+  workerKeyMismatch,
 } from "./model.ts";
 
 const encryptionKey = Buffer.alloc(32, 7);
@@ -815,6 +817,52 @@ describe("the Model screen", () => {
       expect(query.get("clearKey")).toBe("1");
       expect(query.get("keyTyped")).toBe("1");
       expect(query.toString()).not.toContain(apiKey);
+    });
+  });
+
+  describe("a worker holding another encryption key", () => {
+    /** What the worker writes at boot, on the install-wide row. */
+    const recordWorkerKey = (key: Buffer) => {
+      const fingerprint = keyFingerprint(key);
+      return db
+        .insert(instanceSettings)
+        .values({ encryptionKeyFingerprint: fingerprint })
+        .onConflictDoUpdate({ target: instanceSettings.id, set: { encryptionKeyFingerprint: fingerprint } });
+    };
+
+    it("says nothing before a worker of this version has booted", async () => {
+      await db.delete(instanceSettings);
+
+      await expect(workerKeyMismatch(db, encryptionKey)).resolves.toBe(false);
+    });
+
+    it("says nothing when web and the worker hold the same key", async () => {
+      await recordWorkerKey(Buffer.from(encryptionKey));
+
+      await expect(workerKeyMismatch(db, encryptionKey)).resolves.toBe(false);
+    });
+
+    it("reports a worker restarted with another key, and stops once it holds the same one", async () => {
+      await recordWorkerKey(Buffer.alloc(32, 9));
+
+      await expect(workerKeyMismatch(db, encryptionKey)).resolves.toBe(true);
+
+      await recordWorkerKey(encryptionKey);
+
+      await expect(workerKeyMismatch(db, encryptionKey)).resolves.toBe(false);
+    });
+
+    it("takes no Agent call to notice", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      await recordWorkerKey(Buffer.alloc(32, 9));
+      const calls = await db.$count(agentCall);
+
+      await expect(workerKeyMismatch(db, encryptionKey)).resolves.toBe(true);
+
+      expect(await db.$count(agentCall)).toBe(calls);
+      // Web's key still reads what web saved: only the worker's is wrong.
+      expect((await getModel(db, encryptionKey, workspaceId))?.storedKey).toBe("set");
     });
   });
 });

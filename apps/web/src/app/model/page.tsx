@@ -11,6 +11,7 @@ import {
   type StoredKey,
   testOutcomes,
   type TestOutcome,
+  workerKeyMismatch,
 } from "@/lib/model";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
@@ -64,10 +65,17 @@ const keyLink =
 async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchParams">) {
   const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
   const { db, encryptionKey, mode } = server();
-  const [model, failure] = await Promise.all([
+  const [model, failure, keyMismatch] = await Promise.all([
     getModel(db, encryptionKey, workspace.id),
     lastFailedCall(db, workspace.id),
+    workerKeyMismatch(db, encryptionKey),
   ]);
+  // Nobody who can see this page on hosted holds the key, so the operator gets it in the log instead.
+  if (keyMismatch && mode === "hosted") {
+    process.stderr.write(
+      "Web and the worker hold different WATCHDOG_ENCRYPTION_KEY values, so the worker can't read what web saved\n",
+    );
+  }
 
   const param = (name: string) => {
     const value = params[name];
@@ -104,6 +112,8 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
 
   return (
     <>
+      {/* The worker's key is the one every Agent call uses, so this comes before anything about a save. */}
+      {keyMismatch && mode === "self-hosted" ? <KeyMismatch /> : null}
       {param("saved") === "1" ? (
         <Notice role="status" className={noticeClass}>
           {model?.storedKey === "unreadable"
@@ -247,6 +257,22 @@ function AlarmLine({ takeFocus, children }: { takeFocus: boolean; children: Reac
     </Notice>
   ) : (
     <p className={className}>{line}</p>
+  );
+}
+
+/**
+ * Web reads its own key fine, so no stored secret reveals this: only the worker's own fingerprint does.
+ * Both services take the value from the same `.env` on Compose, so recreating one is what splits them.
+ */
+function KeyMismatch() {
+  return (
+    <AlarmLine takeFocus={false}>
+      <span className="min-w-0 break-words">
+        Web and the worker hold different{" "}
+        <span className="font-mono text-[0.8125rem]">WATCHDOG_ENCRYPTION_KEY</span> values, so the worker
+        can&apos;t read the secrets web saved. Restart both with the same value.
+      </span>
+    </AlarmLine>
   );
 }
 

@@ -1,0 +1,1 @@
+ALTER TABLE "instance_settings" ADD COLUMN "encryption_key_fingerprint" text;

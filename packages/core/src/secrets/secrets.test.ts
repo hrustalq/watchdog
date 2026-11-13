@@ -1,8 +1,34 @@
 import { randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { decryptSecret, encryptSecret } from "./secrets.ts";
+import { decryptSecret, encryptSecret, keyFingerprint } from "./secrets.ts";
 
 const key = randomBytes(32);
+
+describe("keyFingerprint", () => {
+  it("is the same for one key, in every process and run", () => {
+    // Pinned, so a change to the label or the digest shows: every stored fingerprint would then read
+    // as another key, and the Model screen would report a mismatch that isn't there.
+    expect(keyFingerprint(Buffer.alloc(32, 7))).toBe(
+      "7c1826a6c4de06d11ec6efd5fb3814c0ec4bcca4b26ba1bbcaae2626d698037c",
+    );
+    expect(keyFingerprint(key)).toBe(keyFingerprint(Buffer.from(key)));
+  });
+
+  it("differs between keys", () => {
+    expect(keyFingerprint(key)).not.toBe(keyFingerprint(randomBytes(32)));
+    // A key one bit apart is another key as far as AES-GCM is concerned.
+    const flipped = Buffer.from(key.map((byte) => byte ^ 1));
+    expect(keyFingerprint(key)).not.toBe(keyFingerprint(flipped));
+  });
+
+  it("holds nothing of the key", () => {
+    const fingerprint = keyFingerprint(key);
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprint).not.toContain(key.toString("hex"));
+    expect(fingerprint).not.toContain(key.toString("base64"));
+    expect(fingerprint).not.toContain(key.toString("base64url"));
+  });
+});
 
 describe("encryptSecret and decryptSecret", () => {
   it.each(["sk-a-model-key", "", "ключ 🔑"])("round-trips %j", (secret) => {

@@ -3,8 +3,9 @@ import { boolean, check, pgTable, text } from "drizzle-orm/pg-core";
 import { user } from "./auth.ts";
 
 /**
- * Settings for the whole install, in a single row (id is always true). Only self-hosted mode uses
- * it: the first-run admin claim and whether people may sign up on their own.
+ * Settings for the whole install, in a single row (id is always true). Self-hosted keeps the first-run
+ * admin claim and whether people may sign up on their own here; both modes keep the encryption key's
+ * fingerprint the worker writes at boot.
  */
 export const instanceSettings = pgTable(
   "instance_settings",
@@ -18,6 +19,12 @@ export const instanceSettings = pgTable(
     setupTokenHash: text("setup_token_hash"),
     /** Whether an email Watchdog hasn't seen may sign up. Closed until the admin opens it. */
     signupOpen: boolean("signup_open").notNull().default(false),
+    /**
+     * The worker's `keyFingerprint` of WATCHDOG_ENCRYPTION_KEY, an HMAC that can't be turned back into
+     * the key. Web compares its own, so a service recreated with another value shows on the Model
+     * screen. Null until a worker of this version boots.
+     */
+    encryptionKeyFingerprint: text("encryption_key_fingerprint"),
   },
   (table) => [check("instance_settings_single_row", sql`${table.id}`)],
 );
