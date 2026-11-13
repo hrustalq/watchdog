@@ -27,6 +27,10 @@ function feedHref(latest: boolean, edit: boolean, before?: string) {
   return text === "" ? "/" : `/?${text}`;
 }
 
+/** The way back from an older page. Underlined, since a phone has no hover to reveal a ghost button. */
+const backLink =
+  "self-start inline-flex min-h-6 items-center rounded-sm text-sm font-medium text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+
 export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
   const [{ user, workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
   const latest = params.view === "latest";
@@ -106,11 +110,9 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
             </p>
           ) : null}
           {before === undefined ? null : (
-            // The negative margin lines the link's text up with the heading above it.
-            <Link
-              href={feedHref(latest, edit)}
-              className={`${buttonVariants({ variant: "ghost" })} -ml-3 self-start`}
-            >
+            // Underlined rather than a ghost button, because a phone has no hover to reveal it, and
+            // a text link keeps the row below the controls from reading as a second main action.
+            <Link href={feedHref(latest, edit)} className={backLink}>
               {latest ? "Back to the newest" : "Back to the first page"}
             </Link>
           )}
