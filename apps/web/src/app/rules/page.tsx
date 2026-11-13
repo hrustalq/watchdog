@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { textLink } from "@/components/field-classes";
 import { buttonVariants } from "@/components/ui/button";
 import { type ActionKind, type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
+import type { RuleSummary } from "@/lib/rule-summary";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
@@ -105,20 +106,23 @@ function AddRule({ type, description }: { type: RuleType; description: string })
 async function RuleLists() {
   const { workspace } = await requireWorkspace();
   const { classifiers, extractorRules, actions, hasModel } = await listRules(server().db, workspace.id);
+  // What each rule does, so two rules of one kind can be told apart without opening either.
+  const summarised = (rules: (RuleRow & { summary: RuleSummary })[]) =>
+    rules.map((rule) => ({ ...rule, detail: <SummaryLine summary={rule.summary} /> }));
   return (
     <>
       <RuleList
         type="classifier"
         heading="Classifiers"
         empty="None yet. Items get no Categories until you add one."
-        rules={classifiers}
+        rules={summarised(classifiers)}
         hasModel={hasModel}
       />
       <RuleList
         type="extractor"
         heading="Extractor Rules"
         empty="None yet. Items get no extracted fields until you add one."
-        rules={extractorRules}
+        rules={summarised(extractorRules)}
         hasModel={hasModel}
       />
       <RuleList
@@ -211,6 +215,17 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
       </div>
     </li>
   );
+}
+
+/** What a rule does in one line, or that it now does nothing because its definition no longer parses. */
+function SummaryLine({ summary }: { summary: RuleSummary }) {
+  if ("unreadable" in summary) {
+    return <Warning>Its definition no longer parses, so it doesn&apos;t run. Open it to fix it.</Warning>;
+  }
+  // Three lines is more than the summary's own limit at phone width, so the cut is the one the
+  // summary makes, at a word, and never the browser's mid-word ellipsis. Broken anywhere, so a long
+  // unbroken value can't widen the page.
+  return <p className="line-clamp-3 text-sm wrap-anywhere">{summary.text}</p>;
 }
 
 /** What an Action does in words, where it goes, and where it can't deliver yet. */

@@ -968,7 +968,8 @@ describe("Rules", () => {
 
       await saved(id, classifierYaml("first"));
       await saved(id, agentClassifierYaml("second"));
-      await saved(id, extractorYaml(unique(), "third"));
+      const field = unique();
+      await saved(id, extractorYaml(field, "third"));
       await saved(theirs, classifierYaml("someone-elses"));
 
       const { classifiers, extractorRules } = await listRules(db, id);
@@ -977,6 +978,11 @@ describe("Rules", () => {
         { name: "second", kind: "agent", enabled: true },
       ]);
       expect(extractorRules.map(({ name }) => name)).toEqual(["third"]);
+
+      // Each row says what its rule does, read from the definition rather than passed through.
+      expect(classifiers[0]?.summary).toEqual({ text: containing("→ competitor-launch") });
+      expect(classifiers[1]?.summary).toEqual({ text: "May assign lead" });
+      expect(extractorRules[0]?.summary).toEqual({ text: containing(`→ ${field}`) });
     });
 
     it("lets an Agent-backed rule be saved with no model, and says there's none", async () => {
