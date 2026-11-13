@@ -322,6 +322,20 @@ describe("runExtractorRuleByHand", () => {
       expect(row?.message).toContain("The model is down");
     });
 
+    it("stores the reason a person reads under a key of its own", async () => {
+      const seeded = await seed();
+      const ruleId = await saveAgentRule(seeded, "Plans", [{ name: "plan", type: "string" }]);
+      await addModel(seeded);
+
+      await run(seeded, ruleId, answering({ status: 500, message: "The model is down" }).deps);
+
+      // `reason` names the kind of failure, so the notice has this sentence to show beside it.
+      const data = (await logOf(seeded))[0]?.data;
+      if (typeof data !== "object" || data === null) throw new Error("Expected the Log row's data");
+      expect("reason" in data ? data.reason : undefined).toBe("error");
+      expect("detail" in data ? data.detail : undefined).toBe("The model provider answered 500: The model is down");
+    });
+
     it("says so when the Workspace has no model, and makes no call", async () => {
       const seeded = await seed();
       const ruleId = await saveAgentRule(seeded, "Plans", [{ name: "plan", type: "string" }]);

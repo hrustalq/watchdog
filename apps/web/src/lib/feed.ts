@@ -164,19 +164,57 @@ interface LogRow {
   data: unknown;
 }
 
-const isManual = (row: LogRow): row is LogRow & { data: object } =>
+const isManual = (row: LogRow): row is LogRow & { data: Record<string, unknown> } =>
   typeof row.data === "object" && row.data !== null && "manual" in row.data;
+
+/** A field a manual run couldn't store, and why, as `storeExtraction` wrote it. */
+interface RunProblem {
+  name: string;
+  reason: string;
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
+
+/** The names in one of a run's lists, and nothing else a row might hold there. */
+const namesIn = (value: unknown) => (Array.isArray(value) ? value.filter((name): name is string => typeof name === "string") : []);
+
+/** The fields a run couldn't store, each with the reason it gave. */
+const problemsIn = (value: unknown): RunProblem[] =>
+  Array.isArray(value)
+    ? value.flatMap((entry: unknown) => {
+        if (!isObject(entry)) return [];
+        const { name, reason } = entry;
+        return typeof name === "string" && typeof reason === "string" ? [{ name, reason }] : [];
+      })
+    : [];
 
 /**
  * The manual run a URL names, from the Item's own Log, so a URL can only point at what this page
  * already shows. A provider's reason is too long and too private to go in the URL itself. Only the
  * newest run counts, so an old URL can't put a success above a later failure.
+ *
+ * The parts come from the row's data, which `storeExtraction` writes for what a rule filled, found
+ * empty or couldn't store, and `manual-run` writes `detail` for a failure's reason — `reason` already
+ * holds the call's failure type. A row from before `detail` carries its reason in its sentence alone,
+ * so the page falls back to `message`.
  */
 export function manualRunIn(log: LogRow[], runId: unknown) {
   const newest = log.findLast(isManual);
   if (newest === undefined || String(newest.id) !== runId) return undefined;
-  return { id: newest.id, message: newest.message, failed: "failed" in newest.data };
+  const { extractor, fields, empty, problems, detail } = newest.data;
+  return {
+    id: newest.id,
+    message: newest.message,
+    failed: "failed" in newest.data,
+    extractor: typeof extractor === "string" ? extractor : undefined,
+    fields: namesIn(fields),
+    empty: namesIn(empty),
+    problems: problemsIn(problems),
+    detail: typeof detail === "string" ? detail : undefined,
+  };
 }
+
+export type ManualRun = NonNullable<ReturnType<typeof manualRunIn>>;
 
 /** A failed send's Log row, which `deliver` marks with the next retry or as the last attempt. */
 export function isActFailure({ stage, data }: { stage: string; data: unknown }) {

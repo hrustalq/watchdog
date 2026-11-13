@@ -71,7 +71,13 @@ export async function runExtractorRuleByHand(
   const named = { extractorRuleId: rule.id, extractor: rule.name };
 
   const failure = (tx: Tx, reason: string, data: Record<string, unknown> = {}) =>
-    logRun(tx, itemId, `Extractor Rule ${rule.name} failed: ${reason}`, { ...named, ...data, failed: true });
+    logRun(tx, itemId, `Extractor Rule ${rule.name} failed: ${reason}`, {
+      ...named,
+      ...data,
+      // `reason` holds the call's failure type, so the sentence a person reads needs a key of its own.
+      detail: reason,
+      failed: true,
+    });
   const fail = (reason: string, data?: Record<string, unknown>) =>
     withItem(db, itemId, (tx) => failure(tx, reason, data));
   const unreadable = (error: z.ZodError) =>
