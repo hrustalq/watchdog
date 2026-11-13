@@ -177,22 +177,10 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
             before. An Agent-backed rule makes one call to your model, which your provider bills as usual.
           </p>
         </div>
-        {/* A new key for each run, so the notice takes focus again after a second run. */}
+        {/* A new key for each run, so the notice takes focus again after a second run. It sits outside
+            the list's disclosure: after a run its notice has to be visible without opening anything. */}
         {run === undefined ? null : <RunOutcome key={run.id} {...run} />}
-        {extractorRules.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            No Extractor Rules yet.{" "}
-            <Link href="/rules" className={inlineLink}>
-              Add one
-            </Link>
-          </p>
-        ) : (
-          <ul className="divide-y rounded-lg border">
-            {extractorRules.map((rule) => (
-              <RunRule key={rule.id} itemId={found.id} rule={rule} needsModel={rule.kind === "agent" && !hasModel} />
-            ))}
-          </ul>
-        )}
+        <RuleList itemId={found.id} rules={extractorRules} hasModel={hasModel} />
       </section>
       <section aria-labelledby="log" className="flex flex-col gap-3">
         <h2 id="log" className="scroll-mt-4 text-title">
@@ -214,6 +202,17 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
 
 const inlineLink =
   "rounded-sm text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60";
+
+/**
+ * How many Extractor Rules Item detail lists inline. A row is about 103px tall on a phone, so three
+ * keep the Log within a screen of the Extracted fields; a Workspace with more gets a disclosure,
+ * because the Log is what most visits come for and running a rule by hand is occasional.
+ */
+const inlineRulesUpTo = 3;
+
+/** A rule list's disclosure, at the 32px of a control, like the delete confirmation on the Rules screen. */
+const disclosure =
+  "flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium select-none outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:rounded-b-none group-open:border-b group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden";
 
 /**
  * One Log row's words. A failure carries a lamp of its own and says so in the accessibility tree, so it
@@ -267,6 +266,48 @@ function RunOutcome({ message, failed }: { message: string; failed: boolean }) {
     <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm break-words">
       {message}
     </Notice>
+  );
+}
+
+/**
+ * The Workspace's Extractor Rules: a sentence when there are none, the rows inline while they're few,
+ * and a disclosure past that. The rows are the same either way, so only the panel around them changes.
+ */
+function RuleList({
+  itemId,
+  rules,
+  hasModel,
+}: {
+  itemId: string;
+  rules: Awaited<ReturnType<typeof listRules>>["extractorRules"];
+  hasModel: boolean;
+}) {
+  if (rules.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No Extractor Rules yet.{" "}
+        <Link href="/rules" className={inlineLink}>
+          Add one
+        </Link>
+      </p>
+    );
+  }
+  const rows = rules.map((rule) => (
+    <RunRule key={rule.id} itemId={itemId} rule={rule} needsModel={rule.kind === "agent" && !hasModel} />
+  ));
+  if (rules.length <= inlineRulesUpTo) return <ul className="divide-y rounded-lg border">{rows}</ul>;
+  return (
+    <details className="group rounded-lg border">
+      <summary className={disclosure}>
+        <span className="group-open:hidden">
+          Show <span className="tabular-nums">{rules.length}</span> Extractor Rules
+        </span>
+        <span className="hidden group-open:inline">
+          Hide <span className="tabular-nums">{rules.length}</span> Extractor Rules
+        </span>
+      </summary>
+      <ul className="divide-y">{rows}</ul>
+    </details>
   );
 }
 
