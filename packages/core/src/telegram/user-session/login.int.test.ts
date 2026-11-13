@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { tl } from "@mtcute/node";
 import { NodeCryptoProvider } from "@mtcute/node/utils.js";
 import { createStub, StubTelegramClient } from "@mtcute/test";
-import { closeDb, createDb, type Db, eq, migrate, source, telegramLogin, telegramSession, user, workspace } from "@watchdog/db";
+import { closeDb, createDb, type Db, eq, migrate, source, sql, telegramLogin, telegramSession, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { decryptSecret, encryptSecret } from "../../secrets/secrets.ts";
@@ -171,13 +171,18 @@ describe("a Telegram user session", () => {
     const { loginId, job } = await login();
     await until("code");
     await db.update(telegramLogin).set({ expiresAt: new Date(Date.now() - 1000) });
-    expect(await loginState(db, workspaceId)).toMatchObject({ step: "failed", refusal: loginExpired });
+    // The job deletes a row it finds past its 5 minutes, so reading the failed step here would race
+    // that delete: whichever loses sees no row. Wait for the job, then assert the end it leaves.
     await job;
 
     expect(await rowOf(loginId)).toBeUndefined();
     jobs = [];
     expect(await startLogin(db, workspaceId, phone, enqueue)).toBe("started");
     expect(await loginState(db, workspaceId)).toMatchObject({ step: "starting" });
+    // The screen works the expiry out from the row itself, so no job has to have run for it to say
+    // the login ended, and nothing races this read.
+    await db.update(telegramLogin).set({ step: "code", expiresAt: sql`now() - interval '1 second'` });
+    expect(await loginState(db, workspaceId)).toEqual({ step: "failed", phone, refusal: loginExpired });
   });
 
   it("says to start over when the worker holding the login stops", async () => {
