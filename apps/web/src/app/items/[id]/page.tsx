@@ -10,10 +10,10 @@ import { requireWorkspace, server } from "@/lib/server";
 import { RatingControls } from "../../correct-rating";
 import { Refresher } from "../../refresher";
 import { kindLabel, modelLink } from "../../rules/words";
-import { Notice } from "../../sign-in/notice";
 import { SubmitButton } from "../../sign-in/submit-button";
 import { runExtractorRuleAction } from "./actions";
 import { CorrectCategories } from "./correct-categories";
+import { RunOutcome } from "./run-outcome";
 import { RunStatus } from "./run-status";
 
 // Only an Item that's here reaches this page: a missing one renders app/not-found.tsx under the
@@ -179,7 +179,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
         </div>
         {/* A new key for each run, so the notice takes focus again after a second run. It sits outside
             the list's disclosure: after a run its notice has to be visible without opening anything. */}
-        {run === undefined ? null : <RunOutcome key={run.id} {...run} />}
+        {run === undefined ? null : <RunOutcome key={run.id} run={run} />}
         <RuleList itemId={found.id} rules={extractorRules} hasModel={hasModel} />
       </section>
       <section aria-labelledby="log" className="flex flex-col gap-3">
@@ -251,23 +251,6 @@ function LogMessage({ row }: { row: { stage: string; data: unknown; message: str
 const waitingFor = 30 * 60_000;
 
 const readingText = "max-w-[70ch] text-base leading-[1.6] break-words whitespace-pre-line";
-
-function RunOutcome({ message, failed }: { message: string; failed: boolean }) {
-  return failed ? (
-    <Notice role="alert" className="flex items-start gap-2 text-sm text-alarm">
-      <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
-      <span className="min-w-0 break-words">
-        {message}
-        {/* The reason is someone else's sentence, and may not end in a full stop. */}
-        <span className="block text-muted-foreground">What this rule found before stays as it was.</span>
-      </span>
-    </Notice>
-  ) : (
-    <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm break-words">
-      {message}
-    </Notice>
-  );
-}
 
 /**
  * The Workspace's Extractor Rules: a sentence when there are none, the rows inline while they're few,
