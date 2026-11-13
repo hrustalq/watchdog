@@ -37,6 +37,7 @@ const input = (overrides: Partial<ModelInput> = {}): ModelInput => ({
   baseUrl: "https://llm.test/v1",
   modelName: "fake-model",
   apiKey: "",
+  clearKey: false,
   structured: false,
   inputPrice: "",
   outputPrice: "",
@@ -187,6 +188,7 @@ describe("the Model screen", () => {
       ["model-name", { modelName: "half \ud83d a pair" }],
       ["api-key", { apiKey: "two words" }],
       ["api-key", { apiKey: "кириллица" }],
+      ["api-key", { apiKey: "sk-new", clearKey: true }],
       ["input-price", { inputPrice: "-1" }],
       ["input-price", { inputPrice: "free" }],
       ["output-price", { outputPrice: "Infinity" }],
@@ -239,6 +241,48 @@ describe("the Model screen", () => {
       const after = await active(workspaceId);
       expect(after.id).toBe(before.id);
       expect(decryptSecret(present(after.apiKeyCiphertext), encryptionKey)).toBe("sk-new");
+    });
+
+    it("clears the key on the same row, which stays active with its agent_call rows", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const before = await active(workspaceId);
+      await testConnection(db, fakeDeps([{ json: { reply: "ok" } }]), workspaceId);
+
+      const result = await save(workspaceId, { clearKey: true });
+
+      expect(result.keyLeftBehind).toBe(false);
+      const [only, ...others] = await rows(workspaceId);
+      expect(others).toEqual([]);
+      expect(only).toMatchObject({ id: before.id, archivedAt: null, apiKeyCiphertext: null });
+      expect((await getModel(db, encryptionKey, workspaceId))?.storedKey).toBe("none");
+      expect(await db.select().from(agentCall).where(eq(agentCall.modelConfigId, before.id))).toHaveLength(1);
+    });
+
+    it("keeps the key when the key field is blank and the box isn't ticked", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const before = await active(workspaceId);
+
+      await save(workspaceId, { inputPrice: "1", clearKey: false });
+
+      const after = await active(workspaceId);
+      expect(after.id).toBe(before.id);
+      expect(after.apiKeyCiphertext).toBe(before.apiKeyCiphertext);
+      expect((await getModel(db, encryptionKey, workspaceId))?.storedKey).toBe("set");
+    });
+
+    it("refuses a new key beside the ticked box, and leaves the stored key alone", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const before = await active(workspaceId);
+
+      await expect(
+        saveModel(db, encryptionKey, workspaceId, input({ apiKey: "sk-new", clearKey: true })),
+      ).resolves.toEqual({ problem: "api-key" });
+
+      expect(await rows(workspaceId)).toEqual([before]);
+      expect((await getModel(db, encryptionKey, workspaceId))?.storedKey).toBe("set");
     });
 
     it("doesn't count a trailing slash as a new base URL", async () => {
@@ -311,6 +355,18 @@ describe("the Model screen", () => {
       const [archived, current] = await rows(workspaceId);
       expect(current?.archivedAt).toBeNull();
       expect(current?.apiKeyCiphertext).toBeNull();
+      expect(archived?.apiKeyCiphertext).toBeNull();
+    });
+
+    it("doesn't carry the key to a new row when the box is ticked", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+
+      const result = await save(workspaceId, { modelName: "other-model", clearKey: true });
+
+      expect(result.keyLeftBehind).toBe(false);
+      const [archived, current] = await rows(workspaceId);
+      expect(current).toMatchObject({ archivedAt: null, modelName: "other-model", apiKeyCiphertext: null });
       expect(archived?.apiKeyCiphertext).toBeNull();
     });
 
@@ -575,6 +631,20 @@ describe("the Model screen", () => {
 
       expect(query.has("keyTyped")).toBe(false);
       expect(query.has("structured")).toBe(false);
+    });
+
+    it("carries the ticked box through a refusal", () => {
+      const query = modelFormQuery("model-name", input({ clearKey: true }));
+
+      expect(query.get("clearKey")).toBe("1");
+    });
+
+    it("keeps the box ticked when the new key is what's refused", () => {
+      const query = modelFormQuery("api-key", input({ apiKey, clearKey: true }));
+
+      expect(query.get("clearKey")).toBe("1");
+      expect(query.get("keyTyped")).toBe("1");
+      expect(query.toString()).not.toContain(apiKey);
     });
   });
 });

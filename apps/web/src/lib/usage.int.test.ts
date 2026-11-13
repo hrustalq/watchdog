@@ -147,6 +147,7 @@ describe("the Usage screen", () => {
         structured: false,
         inputPrice: "",
         outputPrice: "",
+        clearKey: false,
       };
       await saveModel(db, encryptionKey, workspaceId, { ...form, modelName: "first" });
       const first = present(await db.query.modelConfig.findFirst({ where: (m, { eq }) => eq(m.workspaceId, workspaceId) }));

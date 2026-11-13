@@ -7,6 +7,8 @@ export interface ModelFormValues {
   providerType: string;
   baseUrl: string;
   modelName: string;
+  /** Kept through a refusal, so the box the user ticked stays ticked. */
+  clearKey: boolean;
   structured: boolean;
   inputPrice: string;
   outputPrice: string;
@@ -16,6 +18,12 @@ const keyHint: Record<StoredKey, string> = {
   none: "Most hosted providers need one. Leave it blank if this model doesn't.",
   set: "Changing the provider type or the host needs the key again, because Watchdog won't send a key to another address.",
   unreadable: "Left blank on the same provider and host, the unreadable key stays.",
+};
+
+/** What an empty field means, which the box changes. */
+const keyPlaceholder = (storedKey: StoredKey, clearKey: boolean) => {
+  if (storedKey !== "set") return undefined;
+  return clearKey ? "Leave blank to remove the stored key" : "Leave blank to keep the current key";
 };
 
 /**
@@ -109,17 +117,47 @@ export function ModelForm({
           type="password"
           autoComplete="off"
           spellCheck={false}
-          placeholder={storedKey === "set" ? "Leave blank to keep the current key" : undefined}
+          placeholder={keyPlaceholder(storedKey, values.clearKey)}
           {...invalid("api-key")}
           className={`${field} ${dataBox}`}
         />
+        {/* Only offered while a key is set: with none there's nothing to remove. */}
+        {storedKey === "set" ? (
+          <div className="flex flex-col gap-1">
+            {/* The label holds the box, so the whole row is the target. */}
+            <label htmlFor="clear-key" className={`${labelClass} flex min-h-6 items-center gap-2`}>
+              <input
+                id="clear-key"
+                name="clearKey"
+                type="checkbox"
+                defaultChecked={values.clearKey}
+                aria-describedby="clear-key-hint"
+                className="size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              />
+              Remove the stored key
+            </label>
+            <p id="clear-key-hint" className="pl-6 text-xs text-muted-foreground">
+              Deletes the saved key when you save, and keeps this model, its prices and its Usage history. Leave the
+              key field above blank.
+            </p>
+          </div>
+        ) : null}
         {note(
           "api-key",
           <>
             {keyTyped ? (
               <strong className="font-medium text-foreground">
-                The key you typed wasn&apos;t saved. Enter it again
-                {storedKey === "set" ? ", or leave this blank to keep the current one" : ""}.{" "}
+                {problem === "api-key" && values.clearKey && storedKey === "set" ? (
+                  <>
+                    A new key and the box that removes the stored key can&apos;t both be saved. Leave the key field
+                    blank to remove the stored key, or untick the box to save this one.{" "}
+                  </>
+                ) : (
+                  <>
+                    The key you typed wasn&apos;t saved. Enter it again
+                    {storedKey === "set" && !values.clearKey ? ", or leave this blank to keep the current one" : ""}.{" "}
+                  </>
+                )}
               </strong>
             ) : null}
             {storedKey === "unreadable" && !keyTyped ? (
