@@ -33,6 +33,7 @@ import {
 import { actionProblems } from "./actions.ts";
 import type { ActionKind, DeclaredField, DestinationChoice, RuleKind, RuleProblem, RuleType } from "./rule-draft.ts";
 import { aRule, inActionOrder, isMap, ruleNoun, unreadable } from "./rule-draft.ts";
+import { ruleSummary } from "./rule-summary.ts";
 import { isUuid } from "./uuid.ts";
 
 type Mode = Config["mode"];
@@ -50,12 +51,23 @@ export const isRuleType = (value: unknown): value is RuleType =>
 
 /** The Workspace's rules by type, oldest first, which is the order they run in. */
 export async function listRules(db: Db, workspaceId: string) {
-  const rulesIn = (table: typeof classifier | typeof extractorRule) =>
-    db
-      .select({ id: table.id, name: table.name, kind: table.kind, enabled: table.enabled })
-      .from(table)
-      .where(eq(table.workspaceId, workspaceId))
-      .orderBy(table.createdAt, table.id);
+  // A rule's definition is read here and parsed once, so its row can say what it does. A definition
+  // that no longer parses becomes `unreadable` rather than reaching the page as raw jsonb.
+  const rulesIn = async (table: typeof classifier | typeof extractorRule) =>
+    (
+      await db
+        .select({
+          id: table.id,
+          name: table.name,
+          kind: table.kind,
+          enabled: table.enabled,
+          definition: table.definition,
+        })
+        .from(table)
+        .where(eq(table.workspaceId, workspaceId))
+        .orderBy(table.createdAt, table.id)
+    ).map(({ definition, ...row }) => ({ ...row, summary: ruleSummary(definition) }));
+
   const [classifiers, extractorRules, actions, hasModel] = await Promise.all([
     rulesIn(classifier),
     rulesIn(extractorRule),
