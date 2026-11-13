@@ -1,5 +1,6 @@
 // The Schedule Trigger: when a Source is next polled (docs: Sources and ingestion, "Scheduling").
 import { CronExpressionParser } from "cron-parser";
+import { offsetAt, wallToInstant } from "./timezone.ts";
 import type { Config } from "./config.ts";
 
 type Mode = Config["mode"];
@@ -70,41 +71,6 @@ export function nextPollAt(schedule: string, mode: Mode, now: Date, random = Mat
   const next = firings.next().getTime();
   const interval = firings.next().getTime() - next;
   return new Date(next + random() * Math.min(interval / 10, minute));
-}
-
-const day = 24 * 60 * minute;
-const formats = new Map<string, Intl.DateTimeFormat>();
-
-/** How far a timezone's wall clock is ahead of UTC at an instant, in milliseconds. */
-function offsetAt(instant: number, timezone: string) {
-  let format = formats.get(timezone);
-  if (format === undefined) {
-    format = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
-      hourCycle: "h23",
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      hour: "numeric",
-      minute: "numeric",
-      second: "numeric",
-    });
-    formats.set(timezone, format);
-  }
-  const part = Object.fromEntries(format.formatToParts(instant).map(({ type, value }) => [type, Number(value)]));
-  const wall = Date.UTC(part.year ?? 0, (part.month ?? 1) - 1, part.day, part.hour, part.minute, part.second);
-  return wall - Math.floor(instant / 1000) * 1000;
-}
-
-/**
- * The instant a wall clock time happens in a timezone: the first of two when the clocks go back, and as
- * Postgres reads it when they go forward past it, moved on by the gap.
- */
-function wallToInstant(wall: number, timezone: string) {
-  const before = offsetAt(wall - day, timezone);
-  const after = offsetAt(wall + day, timezone);
-  const valid = [before, after].map((offset) => wall - offset).filter((t) => wall - offsetAt(t, timezone) === t);
-  return valid.length > 0 ? Math.min(...valid) : wall - before;
 }
 
 /**
