@@ -2,7 +2,7 @@ import { agentCall, closeDb, createDb, type Db, migrate, modelConfig, user, work
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { saveModel } from "./model.ts";
-import { usageForMonth } from "./usage.ts";
+import { isFloor, usageForMonth } from "./usage.ts";
 
 const month = "2026-10";
 const inMonth = new Date("2026-10-15T12:00:00.000Z");
@@ -175,6 +175,73 @@ describe("the Usage screen", () => {
       const { models } = await usageForMonth(db, workspaceId, month);
 
       expect(models.map(({ baseUrl }) => baseUrl).toSorted()).toEqual(["https://new.test/v1", "https://old.test/v1"]);
+    });
+
+    it("is one line when it's added back, adding up both rows at each row's own prices", async () => {
+      const workspaceId = await newWorkspace();
+      const before = await newModel(workspaceId, {
+        archivedAt: inMonth,
+        inputPricePerMillion: 2,
+        outputPricePerMillion: 10,
+      });
+      await call(before, { inputTokens: 1_000_000, outputTokens: 100_000 });
+      const after = await newModel(workspaceId, { inputPricePerMillion: 4, outputPricePerMillion: 20 });
+      await call(after, { inputTokens: 500_000, outputTokens: 50_000 });
+
+      const { models, total } = await usageForMonth(db, workspaceId, month);
+
+      // 1M input at 2.00 and 100k output at 10.00 is 3.00, and 500k at 4.00 and 50k at 20.00 is 3.00.
+      expect(models).toHaveLength(1);
+      expect(present(models[0])).toMatchObject({
+        modelName: "fake-model",
+        archived: false,
+        calls: 2,
+        inputTokens: 1_500_000,
+        outputTokens: 150_000,
+        unpricedCalls: 0,
+      });
+      expect(present(models[0]).cost).toBeCloseTo(6, 10);
+      expect(total).toMatchObject({ calls: 2, inputTokens: 1_500_000, outputTokens: 150_000, unpricedCalls: 0 });
+      expect(total.cost).toBeCloseTo(6, 10);
+    });
+
+    it("is a floor when one of its rows ran without prices", async () => {
+      const workspaceId = await newWorkspace();
+      const priced = await newModel(workspaceId, {
+        archivedAt: inMonth,
+        inputPricePerMillion: 2,
+        outputPricePerMillion: 10,
+      });
+      await call(priced, { inputTokens: 1_000_000, outputTokens: 0 });
+      await call(await newModel(workspaceId), { inputTokens: 7, outputTokens: 1 });
+
+      const { models, total } = await usageForMonth(db, workspaceId, month);
+
+      expect(present(models[0])).toMatchObject({ calls: 2, unpricedCalls: 1 });
+      expect(present(models[0]).cost).toBeCloseTo(2, 10);
+      expect(isFloor(present(models[0]))).toBe(true);
+      expect(isFloor(total)).toBe(true);
+    });
+
+    it("says Archived only when none of its rows is active", async () => {
+      const workspaceId = await newWorkspace();
+      await call(await newModel(workspaceId, { archivedAt: inMonth }));
+      await call(await newModel(workspaceId, { archivedAt: inMonth }));
+
+      const { models } = await usageForMonth(db, workspaceId, month);
+
+      expect(models).toHaveLength(1);
+      expect(present(models[0]).archived).toBe(true);
+    });
+
+    it("stays apart from the same name and address on another provider type", async () => {
+      const workspaceId = await newWorkspace();
+      await call(await newModel(workspaceId, { archivedAt: inMonth }));
+      await call(await newModel(workspaceId, { providerType: "anthropic" }));
+
+      const { models } = await usageForMonth(db, workspaceId, month);
+
+      expect(models.map(({ providerType }) => providerType).toSorted()).toEqual(["anthropic", "openai-compatible"]);
     });
   });
 

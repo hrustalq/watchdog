@@ -83,14 +83,16 @@ const count = (filter: SQL) => sql<number>`count(*) filter (where ${filter})`.ma
 const sum = (column: typeof agentCall.inputTokens | typeof agentCall.outputTokens) => sql<number>`coalesce(sum(${column}), 0)`.mapWith(Number);
 
 /**
- * A month's usage per model, an archived one included, and per purpose. `firstMonth` is the
- * Workspace's earliest month with a call, or undefined when it has never made one.
+ * A month's usage per model, one line per provider type, base URL and model name, so a model
+ * removed and added back is one line, and per purpose. `firstMonth` is the Workspace's earliest
+ * month with a call, or undefined when it has never made one.
  */
 export async function usageForMonth(db: Db, workspaceId: string, month: string) {
   const [counted, [first]] = await Promise.all([
     db
       .select({
         id: modelConfig.id,
+        providerType: modelConfig.providerType,
         modelName: modelConfig.modelName,
         baseUrl: modelConfig.baseUrl,
         archived: sql<boolean>`${modelConfig.archivedAt} is not null`,
@@ -142,7 +144,15 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
     cost: null,
   };
   type Row = (typeof rows)[number];
-  const models: (UsageTally & Omit<Row, "purpose">)[] = rollUp(rows, (row) => row.id);
+  // A model removed and added back is two rows with one provider type, base URL and name, and the
+  // month shows them as one line. So the line is archived only when none of its rows is still
+  // active, which rollUp can't tell from the first row it keeps.
+  const lineKey = (row: Row) => [row.providerType, row.baseUrl, row.modelName].join("\0");
+  const active = new Set(rows.filter((row) => !row.archived).map(lineKey));
+  const models: (UsageTally & Omit<Row, "purpose">)[] = rollUp(rows, lineKey).map((row) => ({
+    ...row,
+    archived: !active.has(lineKey(row)),
+  }));
   const purposes: (UsageTally & Pick<Row, "purpose">)[] = rollUp(rows, (row) => row.purpose);
   return {
     models,
