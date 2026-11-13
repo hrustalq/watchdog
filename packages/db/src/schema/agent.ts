@@ -75,6 +75,12 @@ export const agentCall = pgTable(
     /** Null when the provider reports no usage. */
     inputTokens: integer("input_tokens"),
     outputTokens: integer("output_tokens"),
+    /**
+     * The prices the model had when this call was made, so a later change to them leaves its cost
+     * as it was. Both are null or neither is: an estimate needs both.
+     */
+    inputPricePerMillion: numeric("input_price_per_million", { mode: "number" }),
+    outputPricePerMillion: numeric("output_price_per_million", { mode: "number" }),
     latencyMs: integer("latency_ms").notNull(),
     status: text("status", { enum: ["ok", "invalid_output", "error"] }).notNull(),
     /** Why the attempt failed, for the Model screen, with the API key redacted. Null when it worked. */
