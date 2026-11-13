@@ -1,23 +1,19 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-
-/** How often an open Feed checks for changes. */
-const interval = 30_000;
+import { useRefreshing } from "./refresher";
 
 /** How long the list ignores clicks after its rows moved. */
 const settleFor = 500;
 
 /**
- * Re-renders the Feed from the server every 30 seconds while the tab is visible, and once when it
- * becomes visible again, so new Items and what the pipeline adds to them appear without a reload.
+ * Re-renders the Feed from the server while the tab is visible, so new Items and what the pipeline adds
+ * to them appear without a reload (the timer itself is in `./refresher.tsx`, which Item detail shares).
  * Screen readers hear how many Items arrived. When the rows move, `data-settling` lets the Feed ignore
  * clicks for a moment, so a second click at the same spot can't correct a different Item. Editing mode
  * pauses the refreshing, so only the user's own Corrections move rows under the pointer.
  */
 export function FeedRefresher({ ids, paused }: { ids: string[]; paused: boolean }) {
-  const router = useRouter();
   const [shown, setShown] = useState(ids);
   const [announcement, setAnnouncement] = useState("");
   // Counts the moves, so one during the wait starts it again.
@@ -42,18 +38,7 @@ export function FeedRefresher({ ids, paused }: { ids: string[]; paused: boolean 
     };
   }, [settling]);
 
-  useEffect(() => {
-    if (paused) return undefined;
-    const refresh = () => {
-      if (document.visibilityState === "visible") router.refresh();
-    };
-    const timer = setInterval(refresh, interval);
-    document.addEventListener("visibilitychange", refresh);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", refresh);
-    };
-  }, [router, paused]);
+  useRefreshing({ paused });
 
   return (
     <p role="status" data-settling={settling > 0 ? "" : undefined} className="sr-only">
