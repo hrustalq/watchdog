@@ -15,15 +15,13 @@ import {
 } from "@/lib/usage";
 import { cn } from "@/lib/utils";
 import { modelLink } from "../rules/words";
+import { MonthNav } from "./month-nav";
 
 export const metadata: Metadata = { title: "Usage · Watchdog" };
 
 // The data is read without Suspense, because there's nothing to show until it's there and the month
 // links then work without JavaScript.
 export const instant = false;
-
-/** The month's URL. The current month has none of its own, so a saved link keeps following it. */
-const monthHref = (month: string, current: string) => (month === current ? "/usage" : `/usage?month=${month}`);
 
 const textLink =
   "inline-flex min-h-6 items-center rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
@@ -60,20 +58,7 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <h1 className="text-headline">Usage</h1>
-            {older === undefined && newer === undefined ? null : (
-              <nav aria-label="Month" className="flex flex-wrap gap-2">
-                {older === undefined ? null : (
-                  <Link href={monthHref(older, current)} className={buttonVariants({ variant: "outline" })}>
-                    <span aria-hidden="true">←</span> {monthLabel(older)}
-                  </Link>
-                )}
-                {newer === undefined ? null : (
-                  <Link href={monthHref(newer, current)} className={buttonVariants({ variant: "outline" })}>
-                    {monthLabel(newer)} <span aria-hidden="true">→</span>
-                  </Link>
-                )}
-              </nav>
-            )}
+            <MonthNav current={current} older={older} newer={newer} />
           </div>
           <p className="text-title">
             {monthLabel(month)}
