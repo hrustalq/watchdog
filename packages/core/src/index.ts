@@ -67,7 +67,7 @@ export { maxRegionLength, regionError } from "./sources/website/page.ts";
 export { renderModes } from "./sources/website/source-type.ts";
 export { createMailer, type MailMessage, type Mailer } from "./mail/mailer.ts";
 export { defaultSchedule, minimumMinutes, nextFiring, nextPollAt, scheduleError } from "./schedule.ts";
-export { decryptSecret, encryptSecret } from "./secrets/secrets.ts";
+export { decryptSecret, encryptSecret, keyFingerprint } from "./secrets/secrets.ts";
 export {
   type ConditionItem,
   evaluateActionCondition,

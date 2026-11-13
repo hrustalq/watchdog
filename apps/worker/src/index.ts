@@ -5,6 +5,7 @@ import {
   createMailer,
   createSenders,
   itemEnqueuer,
+  keyFingerprint,
   linkChat,
   loadConfig,
   runBot,
@@ -15,7 +16,7 @@ import {
 import { createChromiumRenderer, createObscuraRenderer } from "@watchdog/core/render";
 // Its own entry too, so only the worker loads mtcute.
 import { liveSessions, revokeSession, runLogin, runSession, sessionClient } from "@watchdog/core/telegram-session";
-import { createDb, migrate } from "@watchdog/db";
+import { createDb, instanceSettings, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { startDelivery } from "./delivery.ts";
 import { startPipeline } from "./pipeline.ts";
@@ -42,13 +43,22 @@ rmSync(readyFile, { force: true });
 await migrate(config.databaseUrl);
 console.log("Migrations applied");
 
+const db = createDb(config.databaseUrl);
+// Web compares this with the fingerprint of its own key, so a service recreated with a different
+// WATCHDOG_ENCRYPTION_KEY shows on the Model screen at once, rather than only failing calls. It goes
+// in before anything else runs, so web never starts against a stale value.
+const keyPrint = keyFingerprint(config.encryptionKey);
+await db
+  .insert(instanceSettings)
+  .values({ encryptionKeyFingerprint: keyPrint })
+  .onConflictDoUpdate({ target: instanceSettings.id, set: { encryptionKeyFingerprint: keyPrint } });
+
 // start() creates or upgrades the pgboss schema on first run.
 const boss = new PgBoss(config.databaseUrl);
 boss.on("error", (error) => {
   console.error("pg-boss error:", error);
 });
 await boss.start();
-const db = createDb(config.databaseUrl);
 // A send holds a connection for as long as it takes, up to one a job, so slow chats can't use up the
 // connections the pipeline and polls need.
 const deliveryDb = createDb(config.databaseUrl);
