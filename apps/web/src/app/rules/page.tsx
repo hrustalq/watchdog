@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import { textLink } from "@/components/field-classes";
 import { buttonVariants } from "@/components/ui/button";
+import { hasUnreadableKey } from "@/lib/model";
 import { type ActionKind, type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
 import type { RuleSummary } from "@/lib/rule-summary";
 import { listRules } from "@/lib/rules";
@@ -113,7 +114,11 @@ function AddRule({ type, description }: { type: RuleType; description: string })
 
 async function RuleLists() {
   const { workspace } = await requireWorkspace();
-  const { classifiers, extractorRules, actions, hasModel } = await listRules(server().db, workspace.id);
+  const { db, encryptionKey } = server();
+  const { classifiers, extractorRules, actions, hasModel } = await listRules(db, workspace.id);
+  // An Agent-backed rule can't run while the key can't be read, and the switch must still work, so
+  // this is its own line rather than part of `needsModel`.
+  const unreadableKey = await hasUnreadableKey(db, encryptionKey, workspace.id);
   // What each rule does, so two rules of one kind can be told apart without opening either.
   const summarised = (rules: (RuleRow & { summary: RuleSummary })[]) =>
     rules.map((rule) => ({ ...rule, detail: <SummaryLine summary={rule.summary} /> }));
@@ -125,6 +130,7 @@ async function RuleLists() {
         empty="None yet. Items get no Categories until you add one."
         rules={summarised(classifiers)}
         hasModel={hasModel}
+        unreadableKey={unreadableKey}
       />
       <RuleList
         type="extractor"
@@ -132,6 +138,7 @@ async function RuleLists() {
         empty="None yet. Items get no extracted fields until you add one."
         rules={summarised(extractorRules)}
         hasModel={hasModel}
+        unreadableKey={unreadableKey}
       />
       <RuleList
         type="action"
@@ -144,6 +151,7 @@ async function RuleLists() {
           noDestination: action.destinations.length === 0,
         }))}
         hasModel={hasModel}
+        unreadableKey={unreadableKey}
       />
     </>
   );
@@ -167,6 +175,7 @@ function RuleList({
   empty,
   rules,
   hasModel,
+  unreadableKey,
 }: {
   type: RuleType;
   heading: string;
@@ -174,6 +183,7 @@ function RuleList({
   empty: string;
   rules: RuleRow[];
   hasModel: boolean;
+  unreadableKey: boolean;
 }) {
   return (
     <section aria-labelledby={`${type}-rules`} className="flex flex-col gap-3">
@@ -186,7 +196,13 @@ function RuleList({
       ) : (
         <ul className="divide-y rounded-lg border">
           {rules.map((rule) => (
-            <RuleItem key={rule.id} type={type} rule={rule} needsModel={rule.kind === "agent" && !hasModel} />
+            <RuleItem
+              key={rule.id}
+              type={type}
+              rule={rule}
+              needsModel={rule.kind === "agent" && !hasModel}
+              unreadableKey={rule.kind === "agent" && unreadableKey}
+            />
           ))}
         </ul>
       )}
@@ -194,7 +210,17 @@ function RuleList({
   );
 }
 
-function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; needsModel: boolean }) {
+function RuleItem({
+  type,
+  rule,
+  needsModel,
+  unreadableKey,
+}: {
+  type: RuleType;
+  rule: RuleRow;
+  needsModel: boolean;
+  unreadableKey: boolean;
+}) {
   return (
     <li className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
       <div className="flex min-w-0 flex-col gap-1">
@@ -215,6 +241,16 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
               Set up a model
             </Link>
           </p>
+        ) : null}
+        {/* The switch still works, as it does today: the rule can be turned off and on again, and
+            entering the key is the only other step. */}
+        {unreadableKey ? (
+          <Warning>
+            This rule can&apos;t run until the API key is entered again, because Watchdog can&apos;t read it.{" "}
+            <Link href={modelLink} className={textLink}>
+              Enter the key again
+            </Link>
+          </Warning>
         ) : null}
       </div>
       <div className="flex shrink-0 items-start gap-2">

@@ -357,6 +357,19 @@ export async function getModel(db: Db, encryptionKey: Buffer, workspaceId: strin
 }
 
 /**
+ * Whether the active model's key can't be read, for the screens that would otherwise look healthy.
+ * A Workspace with no model reads false, and so does a model with no key: neither is this problem.
+ * It reads the key through `storedKey`, so there is one check, and it makes no call and records none.
+ */
+export async function hasUnreadableKey(db: Db, encryptionKey: Buffer, workspaceId: string) {
+  const [row] = await db
+    .select({ apiKeyCiphertext: modelConfig.apiKeyCiphertext })
+    .from(modelConfig)
+    .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
+  return row !== undefined && storedKey(row.apiKeyCiphertext, encryptionKey) === "unreadable";
+}
+
+/**
  * The active model's most recent failed call, or undefined. `recovered` means a call has worked
  * since, so the failure is history rather than something to fix.
  */
