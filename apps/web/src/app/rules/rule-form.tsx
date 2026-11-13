@@ -111,6 +111,7 @@ const patterns = {
 };
 
 const sourcesList = "rule-form-sources";
+const categoriesList = "rule-form-categories";
 
 interface Editing {
   draft: Draft;
@@ -122,6 +123,8 @@ interface Editing {
   remove: (path: Path) => void;
   destinations: DestinationChoice[];
   declared: DeclaredField[];
+  /** The Categories this Workspace knows, for the boxes that take one. */
+  categories: string[];
 }
 
 const EditingContext = createContext<Editing | null>(null);
@@ -166,6 +169,7 @@ function Problems({ at, exact = false }: { at: Path; exact?: boolean }) {
 export function RuleForm({
   draft,
   sources,
+  categories,
   destinations,
   declared,
   scheduleHelp,
@@ -175,6 +179,7 @@ export function RuleForm({
 }: {
   draft: Draft;
   sources: { id: string; name: string }[];
+  categories: string[];
   destinations: DestinationChoice[];
   declared: DeclaredField[];
   scheduleHelp: string;
@@ -204,8 +209,9 @@ export function RuleForm({
       },
       destinations,
       declared,
+      categories,
     }),
-    [draft, problems, onEdit, onReshape, destinations, declared],
+    [draft, problems, onEdit, onReshape, destinations, declared, categories],
   );
 
   // A change of shape can take away the button that was pressed, which drops focus out of the form.
@@ -240,7 +246,7 @@ export function RuleForm({
         {agent && type === "classifier" ? (
           <>
             <TextField path={["prompt"]} labelText="Prompt" hidden={hidden.includes("prompt")} multiline help="What the Agent decides about each Item, in plain language." />
-            <LinesField path={["categories"]} labelText="Categories the Agent may assign" hidden={hidden.includes("categories")} />
+            <LinesField path={["categories"]} labelText="Categories the Agent may assign" hidden={hidden.includes("categories")} known={categories} />
           </>
         ) : (
           <fieldset className="flex min-w-0 flex-col gap-2">
@@ -251,7 +257,7 @@ export function RuleForm({
         )}
 
         {type === "classifier" && !agent ? (
-          <LinesField path={["assign"]} labelText="Categories to assign" hidden={hidden.includes("assign")} />
+          <LinesField path={["assign"]} labelText="Categories to assign" hidden={hidden.includes("assign")} known={categories} />
         ) : null}
 
         {type === "extractor" ? (
@@ -290,6 +296,12 @@ export function RuleForm({
             <option key={source.id} value={source.id}>
               {source.name}
             </option>
+          ))}
+        </datalist>
+
+        <datalist id={categoriesList}>
+          {categories.map((category) => (
+            <option key={category} value={category} />
           ))}
         </datalist>
       </div>
@@ -355,10 +367,24 @@ function TextField({
   );
 }
 
-function LinesField({ path, labelText, hidden }: { path: Path; labelText: string; hidden: boolean }) {
+function LinesField({
+  path,
+  labelText,
+  hidden,
+  known = [],
+}: {
+  path: Path;
+  labelText: string;
+  hidden: boolean;
+  /** The Categories the Workspace knows, for a box that takes one. A textarea can't have a datalist. */
+  known?: string[];
+}) {
   const { draft } = useEditing();
   const id = `rule-${pathKey(path)}`;
   const value = valueAt(draft, path);
+  const list = isScalarList(value) ? value : [];
+  // The ones already typed are the box's own, so only what else the Workspace knows is worth saying.
+  const suggestions = known.filter((category) => !list.includes(category));
   return (
     <div className="flex flex-col gap-2">
       {hidden ? null : (
@@ -366,9 +392,10 @@ function LinesField({ path, labelText, hidden }: { path: Path; labelText: string
           <label htmlFor={id} className={label}>
             {labelText}
           </label>
-          <LinesBox id={id} path={path} list={isScalarList(value) ? value : []} helpId={`${id}-help`} />
+          <LinesBox id={id} path={path} list={list} helpId={`${id}-help`} />
           <p id={`${id}-help`} className="text-xs text-muted-foreground">
             One per line.
+            {suggestions.length === 0 ? null : <> Known Categories: {suggestions.join(", ")}.</>}
           </p>
         </>
       )}
@@ -674,6 +701,12 @@ function numericHint(field: unknown, numeric: boolean) {
   return ratingFields.some(([rating]) => rating === field) ? "1 to 5" : "A number";
 }
 
+/** What the value box suggests: a Source's id, or a Category the Workspace knows. */
+function suggestedValues(field: unknown) {
+  if (field === "source") return sourcesList;
+  return field === "category" ? categoriesList : undefined;
+}
+
 function PredicateValue({ path, node, numeric }: { path: Path; node: Record<string, unknown>; numeric: boolean }) {
   const { edit } = useEditing();
   const valuePath = [...path, "value"];
@@ -690,7 +723,7 @@ function PredicateValue({ path, node, numeric }: { path: Path; node: Record<stri
       aria-label="Value"
       spellCheck={false}
       placeholder={numericHint(node.field, numeric) ?? valueHints[op]}
-      list={node.field === "source" ? sourcesList : undefined}
+      list={suggestedValues(node.field)}
       value={textOf(value)}
       onChange={(event) => {
         edit(valuePath, typedValue(op, value, event.target.value, numeric));

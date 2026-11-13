@@ -1,5 +1,12 @@
 import { minimumMinutes } from "@watchdog/core";
-import { declaredFields, destinationChoices, hasActiveModel, problemsInDraft, type RuleTarget } from "@/lib/rules";
+import {
+  declaredFields,
+  destinationChoices,
+  hasActiveModel,
+  knownCategories,
+  problemsInDraft,
+  type RuleTarget,
+} from "@/lib/rules";
 import { server } from "@/lib/server";
 import { listSources } from "@/lib/sources";
 import { RuleEditor } from "./rule-editor";
@@ -28,9 +35,10 @@ export async function EditorScreen({
   const { db, mode } = server();
   const workspaceId = workspace.id;
   const sentBack = typeof query.draft === "string" ? query.draft : undefined;
-  const [hasModel, sources, destinations, declared, problems] = await Promise.all([
+  const [hasModel, sources, categories, destinations, declared, problems] = await Promise.all([
     hasActiveModel(db, workspaceId),
     listSources(db, workspaceId),
+    knownCategories(db, workspaceId),
     destinationChoices(db, workspaceId),
     declaredFields(db, workspaceId),
     sentBack === undefined ? [] : problemsInDraft(db, workspaceId, target, sentBack, mode),
@@ -53,6 +61,7 @@ export async function EditorScreen({
           initialProblems={[...tooLong, ...problems]}
           hasModel={hasModel}
           sources={sources.map(({ id, name }) => ({ id, name }))}
+          categories={categories}
           destinations={destinations}
           declared={declared}
           scheduleHelp={`A cron expression in this Workspace's timezone (${workspace.timezone}), such as 0 9 * * 1 for Mondays at 09:00. It can't run more often than every ${String(minimumMinutes[mode])} minutes on ${mode}.`}
