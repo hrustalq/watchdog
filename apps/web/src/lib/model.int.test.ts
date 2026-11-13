@@ -24,8 +24,10 @@ import {
   type ModelInput,
   type ModelProblem,
   modelFormQuery,
+  type PriceProblem,
   removeModel,
   saveModel,
+  setArchivedPrices,
   testConnection,
 } from "./model.ts";
 
@@ -491,6 +493,126 @@ describe("the Model screen", () => {
 
       expect(await rows(workspaceId)).toHaveLength(2);
       expect(await hasActiveModel(db, workspaceId)).toBe(true);
+    });
+  });
+
+  describe("pricing an archived model", () => {
+    /** A row of the Workspace's own, by the address it ran at. */
+    const at = async (workspaceId: string, baseUrl: string) =>
+      (await rows(workspaceId)).filter((row) => row.baseUrl === baseUrl);
+
+    /** Archives a first model, so the Workspace has one at each address. */
+    const replace = async (workspaceId: string) => {
+      await save(workspaceId, { apiKey, baseUrl: "https://llm.test/v1", inputPrice: "1" });
+      await save(workspaceId, { baseUrl: "https://llm.test/v2", inputPrice: "5" });
+    };
+
+    it("prices the model it replaced, and leaves the row archived without a key", async () => {
+      const workspaceId = await newWorkspace();
+      await replace(workspaceId);
+      const old = present((await at(workspaceId, "https://llm.test/v1"))[0]);
+
+      await expect(setArchivedPrices(db, workspaceId, old.id, { inputPrice: "2.5", outputPrice: "10" })).resolves.toEqual(
+        { saved: true },
+      );
+
+      expect(present((await at(workspaceId, "https://llm.test/v1"))[0])).toMatchObject({
+        archivedAt: old.archivedAt,
+        apiKeyCiphertext: null,
+        inputPricePerMillion: 2.5,
+        outputPricePerMillion: 10,
+      });
+      // The active model is the one it was before, at its own prices.
+      expect(await active(workspaceId)).toMatchObject({
+        baseUrl: "https://llm.test/v2",
+        inputPricePerMillion: 5,
+        outputPricePerMillion: null,
+      });
+    });
+
+    it("clears a price left blank, as the Model form does", async () => {
+      const workspaceId = await newWorkspace();
+      await replace(workspaceId);
+      const old = present((await at(workspaceId, "https://llm.test/v1"))[0]);
+
+      await setArchivedPrices(db, workspaceId, old.id, { inputPrice: "2", outputPrice: "3" });
+      await setArchivedPrices(db, workspaceId, old.id, { inputPrice: "", outputPrice: "3" });
+
+      expect(present((await at(workspaceId, "https://llm.test/v1"))[0])).toMatchObject({
+        inputPricePerMillion: null,
+        outputPricePerMillion: 3,
+      });
+    });
+
+    it.each<[PriceProblem, { inputPrice: string; outputPrice: string }]>([
+      ["input-price", { inputPrice: "-1", outputPrice: "1" }],
+      ["input-price", { inputPrice: "free", outputPrice: "1" }],
+      ["output-price", { inputPrice: "1", outputPrice: "Infinity" }],
+    ])("refuses with %s, and changes nothing", async (problem, typed) => {
+      const workspaceId = await newWorkspace();
+      await replace(workspaceId);
+      const old = present((await at(workspaceId, "https://llm.test/v1"))[0]);
+
+      await expect(setArchivedPrices(db, workspaceId, old.id, typed)).resolves.toEqual({ problem });
+
+      expect(present((await at(workspaceId, "https://llm.test/v1"))[0])).toMatchObject({
+        inputPricePerMillion: 1,
+        outputPricePerMillion: null,
+      });
+    });
+
+    it("refuses another Workspace's model, and changes nothing", async () => {
+      const mine = await newWorkspace();
+      await replace(mine);
+      const old = present((await at(mine, "https://llm.test/v1"))[0]);
+      const theirs = await newWorkspace();
+
+      await expect(setArchivedPrices(db, theirs, old.id, { inputPrice: "2", outputPrice: "2" })).resolves.toEqual({
+        problem: "model",
+      });
+
+      expect(present((await at(mine, "https://llm.test/v1"))[0])).toMatchObject({
+        inputPricePerMillion: 1,
+        outputPricePerMillion: null,
+      });
+      expect(await rows(theirs)).toEqual([]);
+    });
+
+    it("refuses the active model, whose prices change on the Model screen", async () => {
+      const workspaceId = await newWorkspace();
+      await replace(workspaceId);
+      const current = await active(workspaceId);
+
+      await expect(
+        setArchivedPrices(db, workspaceId, current.id, { inputPrice: "3", outputPrice: "3" }),
+      ).resolves.toEqual({ problem: "model" });
+
+      expect(await active(workspaceId)).toMatchObject({ inputPricePerMillion: 5, outputPricePerMillion: null });
+    });
+
+    it("refuses an id that isn't one, without asking Postgres", async () => {
+      const workspaceId = await newWorkspace();
+      await replace(workspaceId);
+
+      await expect(setArchivedPrices(db, workspaceId, "not-a-uuid", { inputPrice: "1", outputPrice: "1" })).resolves.toEqual(
+        { problem: "model" },
+      );
+    });
+
+    it("prices every archived row of the line the Usage screen shows as one model", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { baseUrl: "https://llm.test/v1" });
+      await save(workspaceId, { baseUrl: "https://llm.test/v2" });
+      await save(workspaceId, { baseUrl: "https://llm.test/v1" });
+      await save(workspaceId, { baseUrl: "https://llm.test/v2" });
+      const onFirstAddress = await at(workspaceId, "https://llm.test/v1");
+      expect(onFirstAddress.map((row) => row.archivedAt !== null)).toEqual([true, true]);
+
+      await setArchivedPrices(db, workspaceId, present(onFirstAddress[0]).id, { inputPrice: "2", outputPrice: "4" });
+
+      expect((await at(workspaceId, "https://llm.test/v1")).map((row) => row.inputPricePerMillion)).toEqual([2, 2]);
+      // The other address is another line, and the active row isn't priced this way.
+      expect((await at(workspaceId, "https://llm.test/v2")).map((row) => row.inputPricePerMillion)).toEqual([null, null]);
     });
   });
 

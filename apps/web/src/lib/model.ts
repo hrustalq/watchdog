@@ -1,7 +1,21 @@
 // A Workspace's model, as the Model screen reads and changes it (ADR 0005). Every query is scoped to
 // the Workspace, and nothing here returns the key or its ciphertext to the page.
 import { type AgentFetch, encryptSecret, readApiKey, testModelConnection } from "@watchdog/core";
-import { agentCall, and, type Db, desc, eq, isNull, modelConfig, type SQL, sql, type Tx, workspace } from "@watchdog/db";
+import {
+  agentCall,
+  and,
+  type Db,
+  desc,
+  eq,
+  isNotNull,
+  isNull,
+  modelConfig,
+  type SQL,
+  sql,
+  type Tx,
+  workspace,
+} from "@watchdog/db";
+import { isUuid } from "./uuid.ts";
 
 export const providerTypes = [
   { value: "openai-compatible", label: "OpenAI-compatible", baseUrl: "https://api.openai.com/v1" },
@@ -246,6 +260,71 @@ export const removeModel = (db: Db, workspaceId: string) =>
     await takeTurns(tx, workspaceId);
     return archiveModel(tx, workspaceId);
   });
+
+/** What the Usage screen's form posts for a model it can't estimate: two prices, as text. */
+export interface PriceInput {
+  inputPrice: string;
+  outputPrice: string;
+}
+
+/** Why an archived model's prices weren't saved. `model` is an id that isn't archived in this Workspace. */
+export const priceProblems = ["input-price", "output-price", "model"] as const;
+export type PriceProblem = (typeof priceProblems)[number];
+
+// The two prices are the Model form's, so a refusal reads the same on either screen.
+export const priceProblemMessage: Record<PriceProblem, string> = {
+  "input-price": modelProblemMessage["input-price"],
+  "output-price": modelProblemMessage["output-price"],
+  model: "That model isn't an archived model in this Workspace, so nothing changed.",
+};
+
+/**
+ * Prices an archived model, so the calls that ran before it had any get an estimate on the Usage
+ * screen. Only the two prices change: the row stays archived, keeps whatever key it has, and can't
+ * become the active model this way. Every archived row on the model's Usage line gets the prices,
+ * because the screen shows one line for a model that ran more than once.
+ */
+export async function setArchivedPrices(
+  db: Db,
+  workspaceId: string,
+  modelId: string,
+  input: PriceInput,
+): Promise<{ problem: PriceProblem } | { saved: true }> {
+  const inputPrice = cleanPrice(input.inputPrice);
+  if (inputPrice === undefined) return { problem: "input-price" } as const;
+  const outputPrice = cleanPrice(input.outputPrice);
+  if (outputPrice === undefined) return { problem: "output-price" } as const;
+  // Postgres refuses a malformed uuid with an error rather than matching nothing.
+  if (!isUuid(modelId)) return { problem: "model" } as const;
+
+  return db.transaction(async (tx) => {
+    const [line] = await tx
+      .select({ providerType: modelConfig.providerType, baseUrl: modelConfig.baseUrl, modelName: modelConfig.modelName })
+      .from(modelConfig)
+      .where(
+        and(eq(modelConfig.id, modelId), eq(modelConfig.workspaceId, workspaceId), isNotNull(modelConfig.archivedAt)),
+      );
+    if (line === undefined) return { problem: "model" } as const;
+    const prices = { inputPricePerMillion: inputPrice, outputPricePerMillion: outputPrice };
+    const priced = await tx
+      .update(modelConfig)
+      .set(prices)
+      .where(
+        and(
+          eq(modelConfig.workspaceId, workspaceId),
+          isNotNull(modelConfig.archivedAt),
+          eq(modelConfig.providerType, line.providerType),
+          eq(modelConfig.baseUrl, line.baseUrl),
+          eq(modelConfig.modelName, line.modelName),
+        ),
+      )
+      .returning({ id: modelConfig.id });
+    // As saving the active model's prices does: calls that recorded none take these, so the estimate
+    // covers what already ran rather than only the calls still to come. A recorded price stays.
+    for (const row of priced) await fillCallPrices(tx, row.id, prices);
+    return { saved: true } as const;
+  });
+}
 
 export type StoredKey = "none" | "set" | "unreadable";
 

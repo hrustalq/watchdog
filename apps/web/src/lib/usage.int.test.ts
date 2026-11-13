@@ -1,7 +1,7 @@
 import { agentCall, closeDb, createDb, type Db, migrate, modelConfig, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import { saveModel } from "./model.ts";
+import { saveModel, setArchivedPrices } from "./model.ts";
 import { isFloor, usageForMonth } from "./usage.ts";
 
 const month = "2026-10";
@@ -457,6 +457,40 @@ describe("the Usage screen", () => {
 
       await save(workspaceId, { inputPrice: "60", outputPrice: "100" });
       expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeCloseTo(8, 10);
+    });
+
+    it("fills an archived model's calls once the Usage screen sets its prices", async () => {
+      const workspaceId = await newWorkspace();
+      const current = await newModel(workspaceId, { modelName: "current", ...priced });
+      const replaced = await newModel(workspaceId, { modelName: "replaced", archivedAt: inMonth });
+      await call(replaced, { inputTokens: 1_000_000, outputTokens: 100_000 });
+      await call(current, { inputTokens: 1_000_000, outputTokens: 0 });
+
+      const before = await usageForMonth(db, workspaceId, month);
+      expect(before.total.cost).toBeCloseTo(2.5, 10);
+      expect(isFloor(before.total)).toBe(true);
+
+      await expect(
+        setArchivedPrices(db, workspaceId, replaced.id, { inputPrice: "2.5", outputPrice: "10" }),
+      ).resolves.toEqual({ saved: true });
+
+      const after = await usageForMonth(db, workspaceId, month);
+      const line = present(after.models.find((row) => row.modelName === "replaced"));
+      // 1M input at 2.50 and 100k output at 10.00 is 3.50, and the row is still archived.
+      expect(line).toMatchObject({ archived: true, unpricedCalls: 0 });
+      expect(line.cost).toBeCloseTo(3.5, 10);
+      expect(after.total.cost).toBeCloseTo(6, 10);
+      expect(isFloor(after.total)).toBe(false);
+      // The call that recorded no prices took these, as saving the active model's prices does.
+      const recorded = present(
+        await db.query.agentCall.findFirst({ where: (c, { eq }) => eq(c.modelConfigId, replaced.id) }),
+      );
+      expect(recorded).toMatchObject({ inputPricePerMillion: 2.5, outputPricePerMillion: 10 });
+      // The active model is the one it was, at its own prices.
+      const active = present(
+        await db.query.modelConfig.findFirst({ where: (m, { eq }) => eq(m.id, current.id) }),
+      );
+      expect(active).toMatchObject({ archivedAt: null, inputPricePerMillion: 2.5, outputPricePerMillion: 10 });
     });
   });
 
