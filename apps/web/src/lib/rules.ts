@@ -8,6 +8,7 @@ import {
   type Config,
   extractorRuleSchema,
   type Rule,
+  ruleInstructions,
   ruleSchema,
 } from "@watchdog/core";
 import { draftFromYaml, draftToYaml } from "@watchdog/core/rules/draft";
@@ -473,10 +474,98 @@ async function storeRule(
   return row;
 }
 
+/** What a Workspace's enabled rules cost: the regex instructions they run, and how many there are. */
+interface RuleCost {
+  instructions: number;
+  rules: number;
+}
+
+const noCost: RuleCost = { instructions: 0, rules: 0 };
+
+/** A stored definition's cost. One that no longer parses runs nothing, so it costs nothing. */
+function costOf(definition: unknown): RuleCost {
+  const parsed = ruleSchema.safeParse(definition);
+  return parsed.success ? { instructions: ruleInstructions(parsed.data), rules: 1 } : noCost;
+}
+
+/**
+ * What the Workspace's enabled rules cost, without `skip`. Read inside the writer's transaction and
+ * under its lock, so two writes can't both pass a limit check.
+ */
+async function enabledCost(
+  reader: Pick<Tx, "select">,
+  workspaceId: string,
+  skip: RuleTarget | null,
+): Promise<RuleCost> {
+  // One at a time: a transaction holds a single connection, and pg deprecates overlapping queries on
+  // one client.
+  const classifiers = await reader
+    .select({ id: classifier.id, definition: classifier.definition })
+    .from(classifier)
+    .where(and(eq(classifier.workspaceId, workspaceId), eq(classifier.enabled, true)));
+  const extractors = await reader
+    .select({ id: extractorRule.id, definition: extractorRule.definition })
+    .from(extractorRule)
+    .where(and(eq(extractorRule.workspaceId, workspaceId), eq(extractorRule.enabled, true)));
+  const actions = await reader
+    .select({ id: action.id, definition: action.definition })
+    .from(action)
+    .where(and(eq(action.workspaceId, workspaceId), eq(action.enabled, true)));
+  const counted = (rows: { id: string; definition: unknown }[], type: RuleType) =>
+    rows
+      .filter((row) => skip === null || skip.type !== type || skip.id !== row.id)
+      .map((row) => costOf(row.definition));
+  return [...counted(classifiers, "classifier"), ...counted(extractors, "extractor"), ...counted(actions, "action")]
+    .reduce(
+      (total, cost) => ({
+        instructions: total.instructions + cost.instructions,
+        rules: total.rules + cost.rules,
+      }),
+      noCost,
+    );
+}
+
+/**
+ * Why the Workspace would be over a hosted plan's rule limits once this rule is counted, or
+ * undefined. The message names the limit and the usage, because neither is visible on the rule.
+ */
+function overRuleLimits(limits: Config["ruleLimits"], cost: RuleCost): RuleProblem | undefined {
+  if (limits === undefined) return undefined;
+  if (cost.rules > limits.rules) {
+    return {
+      path: "",
+      message: `The hosted plan allows a Workspace ${limits.rules.toLocaleString("en")} rules, counting Classifiers, Extractor Rules and Actions. This would make ${cost.rules.toLocaleString("en")}. Disable or delete one to make room.`,
+    };
+  }
+  if (cost.instructions > limits.instructions) {
+    return {
+      path: "",
+      message: `The hosted plan allows a Workspace's rules ${limits.instructions.toLocaleString("en")} regex instructions in total, and this would use ${cost.instructions.toLocaleString("en")}. Disable a rule, or make one's regexes simpler, to make room.`,
+    };
+  }
+  return undefined;
+}
+
+/** Whether a rule is enabled once saved: a new one is, and an edit keeps the flag it has. */
+async function enabledAfterSave(
+  reader: Pick<Tx, "select">,
+  workspaceId: string,
+  target: RuleTarget | null,
+): Promise<boolean | undefined> {
+  if (target === null) return true;
+  const table = tables[target.type];
+  const [row] = await reader
+    .select({ enabled: table.enabled })
+    .from(table)
+    .where(and(eq(table.workspaceId, workspaceId), eq(table.id, target.id)));
+  return row?.enabled;
+}
+
 /**
  * Validates the YAML with the rule model and the Workspace's other rules, and creates the rule or
  * updates the target. A later Item is the first it applies to (docs: Processing pipeline, "When
- * rules change").
+ * rules change"). A hosted plan's rule limits are checked in the same transaction, under the
+ * Workspace's lock, and `limits` is undefined on a self-hosted install, which sets none.
  */
 export async function saveRule(
   db: Db,
@@ -484,6 +573,7 @@ export async function saveRule(
   target: RuleTarget | null,
   text: string,
   mode: Mode,
+  limits: Config["ruleLimits"],
 ): Promise<{ saved: RuleTarget } | { problems: RuleProblem[] }> {
   const parsed = parseRule(text, target);
   if ("problems" in parsed) return parsed;
@@ -495,6 +585,8 @@ export async function saveRule(
     // so a capture inserting under this Workspace isn't held up.
     await tx.select({ id: workspace.id }).from(workspace).where(eq(workspace.id, workspaceId)).for("no key update");
 
+    const enabled = await enabledAfterSave(tx, workspaceId, target);
+    if (enabled === undefined) return missing;
     const others = await conflicts(tx, workspaceId, parsed, target?.id);
     // Held until this commits, as a send holds them, so one can't be removed between the check and the
     // foreign key. Before the Action's row, in the order `removeDestination` takes them, so the two
@@ -502,6 +594,15 @@ export async function saveRule(
     const held = "action" in rule ? await destinationsIn(tx, workspaceId).for("key share") : [];
     const problems = "action" in rule ? [...others, ...actionProblems(rule, held, mode)] : others;
     if (problems.length > 0) return { problems };
+
+    // A disabled rule costs the worker nothing, which is why disabling one frees its share.
+    const used = await enabledCost(tx, workspaceId, target);
+    const own = enabled ? { instructions: ruleInstructions(rule), rules: 1 } : noCost;
+    const refusal = overRuleLimits(limits, {
+      instructions: used.instructions + own.instructions,
+      rules: used.rules + own.rules,
+    });
+    if (refusal !== undefined) return { problems: [refusal] };
 
     const row =
       "action" in rule
@@ -531,26 +632,63 @@ async function canEnableAction(tx: Tx, workspaceId: string, id: string) {
   return row !== undefined && (await tx.$count(actionDestination, eq(actionDestination.actionId, id))) > 0;
 }
 
+/** What enabling or disabling a rule did. */
+export interface EnableResult {
+  /** Whether it now has the flag that was asked for. */
+  enabled: boolean;
+  /** Why a hosted plan's rule limit refused the enable. */
+  problems: RuleProblem[];
+}
+
 /**
- * Returns false when the Workspace has no such rule, which includes another Workspace's, and when an
- * Action has no Destination to enable it with.
+ * Enables or disables the rule. An enable is checked against a hosted plan's rule limits in the
+ * Workspace's transaction, as a save is, and returns why it was refused. Disabling always frees the
+ * rule's share.
  */
-export async function setRuleEnabled(db: Db, workspaceId: string, type: RuleType, id: string, enabled: boolean) {
-  if (!isUuid(id)) return false;
+export async function setRuleEnabled(
+  db: Db,
+  workspaceId: string,
+  type: RuleType,
+  id: string,
+  enabled: boolean,
+  limits: Config["ruleLimits"],
+): Promise<EnableResult> {
+  const refused = (problems: RuleProblem[] = []): EnableResult => ({ enabled: false, problems });
+  if (!isUuid(id)) return refused();
   const table = tables[type];
-  if (type === "action" && enabled) {
-    return db.transaction(async (tx) => {
-      if (!(await canEnableAction(tx, workspaceId, id))) return false;
-      await tx.update(action).set({ enabled }).where(eq(action.id, id));
-      return true;
-    });
+  // Disabling costs nothing, so it needs neither the limit check nor the lock behind a save.
+  if (!enabled) {
+    const changed = await db
+      .update(table)
+      .set({ enabled })
+      .where(and(eq(table.workspaceId, workspaceId), eq(table.id, id)))
+      .returning({ id: table.id });
+    return { enabled: changed.length > 0, problems: [] };
   }
-  const changed = await db
-    .update(table)
-    .set({ enabled })
-    .where(and(eq(table.workspaceId, workspaceId), eq(table.id, id)))
-    .returning({ id: table.id });
-  return changed.length > 0;
+  return db.transaction(async (tx) => {
+    // Two enables, or an enable and a save, take turns, so each reads the other's committed usage.
+    await tx.select({ id: workspace.id }).from(workspace).where(eq(workspace.id, workspaceId)).for("no key update");
+    const [row] = await tx
+      .select({ definition: table.definition })
+      .from(table)
+      .where(and(eq(table.workspaceId, workspaceId), eq(table.id, id)))
+      .for("no key update");
+    if (row === undefined) return refused();
+    if (type === "action" && !(await canEnableAction(tx, workspaceId, id))) return refused();
+    // The rule is disabled now, so `used` can't include it; its own cost is added here.
+    const used = await enabledCost(tx, workspaceId, { type, id });
+    const own = costOf(row.definition);
+    const refusal = overRuleLimits(limits, {
+      instructions: used.instructions + own.instructions,
+      rules: used.rules + own.rules,
+    });
+    if (refusal !== undefined) return refused([refusal]);
+    await tx
+      .update(table)
+      .set({ enabled: true })
+      .where(and(eq(table.workspaceId, workspaceId), eq(table.id, id)));
+    return { enabled: true, problems: [] };
+  });
 }
 
 /**

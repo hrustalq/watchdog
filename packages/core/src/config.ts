@@ -85,6 +85,10 @@ const schema = z
         }
         return rules;
       }),
+    // The hosted plan's per-Workspace rule limits (docs: Business model and licensing). Hosted
+    // enforces them on a save and on an enable; self-hosted sets no limit.
+    HOSTED_MAX_RULE_INSTRUCTIONS: z.coerce.number().int().positive().default(5000),
+    HOSTED_MAX_RULES: z.coerce.number().int().positive().default(100),
     GLITCHTIP_DSN: z.url({ protocol: /^https?$/ }).optional(),
   })
   .refine((env) => env.WATCHDOG_MODE !== "hosted" || env.smtp !== undefined, {
@@ -134,6 +138,12 @@ const schema = z
     obscura: { cdpUrl: env.OBSCURA_CDP_URL, cdpToken: env.OBSCURA_CDP_TOKEN },
     chromium: env.chromium && { url: env.chromium.CHROMIUM_URL, token: env.chromium.CHROMIUM_TOKEN },
     egressAllowlist: env.EGRESS_ALLOWLIST,
+    // A Workspace's rules cost the shared worker per Item, so hosted caps them; self-hosted has no
+    // limit, and the two values are absent rather than infinite (docs: Business model and licensing).
+    ruleLimits:
+      env.WATCHDOG_MODE === "hosted"
+        ? { instructions: env.HOSTED_MAX_RULE_INSTRUCTIONS, rules: env.HOSTED_MAX_RULES }
+        : undefined,
     glitchtipDsn: env.GLITCHTIP_DSN,
   }));
 
@@ -171,6 +181,14 @@ export function loadConfig(
     if (result.data.mode === "hosted" && input.telegramApi !== undefined) {
       warn(
         "TELEGRAM_API_ID and TELEGRAM_API_HASH are ignored when WATCHDOG_MODE=hosted: hosted Watchdog offers no Telegram user sessions.",
+      );
+    }
+    if (
+      result.data.mode !== "hosted" &&
+      (input.HOSTED_MAX_RULE_INSTRUCTIONS !== undefined || input.HOSTED_MAX_RULES !== undefined)
+    ) {
+      warn(
+        "HOSTED_MAX_RULE_INSTRUCTIONS and HOSTED_MAX_RULES are ignored when WATCHDOG_MODE=self-hosted: a self-hosted Watchdog sets no rule limits.",
       );
     }
     if (result.data.encryptionKey.equals(placeholderKey)) {

@@ -34,7 +34,7 @@ export default function RulesPage({ searchParams }: PageProps<"/rules">) {
         </div>
         {/* What the last save said is read from the URL, so it streams in. */}
         <Suspense fallback={null}>
-          <SavedNotice searchParams={searchParams} />
+          <PageNotice searchParams={searchParams} />
         </Suspense>
         <section aria-labelledby="add-rule" className="flex flex-col gap-4 rounded-lg border p-4">
           <h2 id="add-rule" className="text-title">
@@ -61,8 +61,16 @@ export default function RulesPage({ searchParams }: PageProps<"/rules">) {
   );
 }
 
-async function SavedNotice({ searchParams }: Pick<PageProps<"/rules">, "searchParams">) {
-  const { saved } = await searchParams;
+async function PageNotice({ searchParams }: Pick<PageProps<"/rules">, "searchParams">) {
+  const { saved, refused } = await searchParams;
+  // A rule a hosted limit refused isn't saved, and the message names the limit and the usage.
+  if (typeof refused === "string") {
+    return (
+      <Notice role="alert" className="rounded-lg bg-muted px-3 py-2 text-sm">
+        {refused}
+      </Notice>
+    );
+  }
   if (saved === undefined) return null;
   return (
     <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">

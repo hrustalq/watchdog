@@ -43,18 +43,21 @@ export async function saveRuleAction(
   const posted = typeof withoutScript === "string" ? withoutScript : formData.get("yaml");
   const yaml = typeof posted === "string" ? posted : "";
 
-  const { db, mode } = server();
-  const result = await saveRule(db, workspace.id, target, yaml, mode);
+  const { db, mode, ruleLimits } = server();
+  const result = await saveRule(db, workspace.id, target, yaml, mode, ruleLimits);
   if ("saved" in result) redirect("/rules?saved=1");
   if (typeof withoutScript === "string") redirect(editorWithDraft(target, yaml));
   return { problems: result.problems };
 }
 
-/** An id outside the user's Workspace changes nothing. */
+/** An id outside the user's Workspace changes nothing. A hosted limit refusal says why, in the page. */
 export async function setRuleEnabledAction(type: unknown, id: unknown, enabled: unknown) {
   const { workspace } = await requireWorkspace();
   if (isRuleType(type) && typeof id === "string" && typeof enabled === "boolean") {
-    await setRuleEnabled(server().db, workspace.id, type, id, enabled);
+    const { db, ruleLimits } = server();
+    const { problems } = await setRuleEnabled(db, workspace.id, type, id, enabled, ruleLimits);
+    const [problem] = problems;
+    if (problem !== undefined) redirect(`/rules?refused=${encodeURIComponent(problem.message)}`);
   }
   redirect("/rules");
 }
