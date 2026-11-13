@@ -443,8 +443,10 @@ function presetSchedule(posted: string) {
 
 /** The dedup key Postgres builds for a GitHub Source (docs: Sources and ingestion, "Uniqueness"). */
 function githubKey(config: { kind: "releases" | "issues"; repo: string } | { kind: "mentions"; term: string; within?: string }) {
+  // GitHub search ignores case, so a term in another case is the same search. The term is stored as
+  // the user typed it.
   return config.kind === "mentions"
-    ? `mentions:${config.within ?? ""}:${config.term}`
+    ? `mentions:${config.within ?? ""}:${config.term.toLowerCase()}`
     : `${config.kind}:${config.repo.toLowerCase()}`;
 }
 
