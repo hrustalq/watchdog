@@ -248,6 +248,21 @@ describe("the Telegram bot runner", () => {
     expect(telegram.replies()).toEqual([]);
   });
 
+  it("never skips an update when the database takes too long to answer", async () => {
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const batch = [startMessage(10, "/start abc")];
+    const telegram = fakeTelegram([batch, batch, batch, batch]);
+    const timedOut = () => Promise.reject(new Error("Connection terminated due to connection timeout"));
+    const linkChat = vi.fn(timedOut);
+
+    // The pool's connect limit rejects the ping, so the runner waits and reads the same update again.
+    await run(telegram, linkChat, timedOut);
+
+    expect(linkChat).toHaveBeenCalledTimes(4);
+    expect(telegram.polls().every(({ offset }) => offset === undefined)).toBe(true);
+    expect(telegram.replies()).toEqual([]);
+  });
+
   it("asks a skipped chat once to try again, and its code still links afterwards", async () => {
     vi.spyOn(process.stderr, "write").mockReturnValue(true);
     const start = startMessage(10, "/start abc");
