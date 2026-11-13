@@ -1,6 +1,14 @@
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
-import { captureRegexError, firstCapture, regexError, regexMatches } from "./regex.ts";
+import {
+  captureRegexError,
+  firstCapture,
+  patternInstructions,
+  regexError,
+  regexMatches,
+  ruleInstructions,
+} from "./regex.ts";
+import type { Rule } from "./schema.ts";
 
 describe("regexError", () => {
   it("accepts a pattern with the inline case-insensitive flag", () => {
@@ -76,5 +84,47 @@ describe("firstCapture", () => {
 
   it("returns undefined when the match skips the group", () => {
     expect(firstCapture("v(\\d+)?x", "vx")).toBeUndefined();
+  });
+});
+
+describe("patternInstructions", () => {
+  it("counts the compiled program of a validated pattern", () => {
+    expect(patternInstructions("a")).toBe(3);
+    expect(patternInstructions("[a-z]{1,499}[bc]")).toBe(1000);
+  });
+});
+
+describe("ruleInstructions", () => {
+  const matches = (value: string) => ({ field: "title", op: "matches", value }) as const;
+
+  it("counts every matches predicate, nested ones included", () => {
+    const rule: Rule = {
+      classifier: "launches",
+      when: {
+        all: [
+          matches("a"),
+          { not: { field: "body", op: "matches", value: "a" } },
+          {
+            any: [matches("a"), { field: "author", op: "contains", value: "bot" }],
+          },
+        ],
+      },
+      assign: ["competitor-launch"],
+    };
+    // Three `matches` at 3 instructions each; `contains` runs no regex.
+    expect(ruleInstructions(rule)).toBe(9);
+  });
+
+  it("counts a regex field as well as the Condition", () => {
+    const rule: Rule = {
+      extractor: "cves",
+      when: matches("a"),
+      fields: [{ name: "cve", type: "string", from: "title", regex: "(CVE-\\d+-\\d+)" }],
+    };
+    expect(ruleInstructions(rule)).toBe(3 + 13);
+  });
+
+  it("counts nothing for a rule with no regex", () => {
+    expect(ruleInstructions({ classifier: "leads", prompt: "Is it a lead?", categories: ["lead"] })).toBe(0);
   });
 });

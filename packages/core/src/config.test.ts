@@ -297,4 +297,37 @@ describe("loadConfig", () => {
     loadConfig({ ...minimal, ...smtp, WATCHDOG_MODE: "hosted" }, warn);
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it("caps a hosted Workspace's rules by default, and sets no limit on self-hosted", () => {
+    expect(loadConfig(minimal).ruleLimits).toBeUndefined();
+    expect(loadConfig({ ...minimal, ...smtp, WATCHDOG_MODE: "hosted" }).ruleLimits).toEqual({
+      instructions: 5000,
+      rules: 100,
+    });
+  });
+
+  it("takes both rule limits from the environment", () => {
+    expect(
+      loadConfig({
+        ...minimal,
+        ...smtp,
+        WATCHDOG_MODE: "hosted",
+        HOSTED_MAX_RULE_INSTRUCTIONS: "2500",
+        HOSTED_MAX_RULES: "3",
+      }).ruleLimits,
+    ).toEqual({ instructions: 2500, rules: 3 });
+  });
+
+  it("rejects a rule limit that isn't a positive whole number, naming the variable", () => {
+    expect(() => loadConfig({ ...minimal, HOSTED_MAX_RULES: "0" })).toThrow(/HOSTED_MAX_RULES/);
+    expect(() => loadConfig({ ...minimal, HOSTED_MAX_RULE_INSTRUCTIONS: "lots" })).toThrow(
+      /HOSTED_MAX_RULE_INSTRUCTIONS/,
+    );
+  });
+
+  it("warns at boot that self-hosted ignores the rule limits", () => {
+    const warn = vi.fn();
+    loadConfig({ ...minimal, HOSTED_MAX_RULES: "3" }, warn);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/HOSTED_MAX_RULES are ignored/));
+  });
 });

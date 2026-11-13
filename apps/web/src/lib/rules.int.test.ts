@@ -41,6 +41,8 @@ import {
 } from "./rules.ts";
 
 const unique = () => crypto.randomUUID();
+/** The hosted plan's per-Workspace rule limits (docs: Business model and licensing). */
+const hostedLimits = { instructions: 5_000, rules: 100 };
 const containing = (text: string): unknown => expect.stringContaining(text);
 /** These Workspaces have no model, so the pipeline makes no Agent call. */
 const pipelineDeps = {
@@ -114,13 +116,13 @@ describe("Rules", () => {
 
   /** Saves a rule that has to be valid, and returns where it went. */
   async function saved(workspaceId: string, yaml: string, target: RuleTarget | null = null) {
-    const result = await saveRule(db, workspaceId, target, yaml, "hosted");
+    const result = await saveRule(db, workspaceId, target, yaml, "hosted", hostedLimits);
     if ("problems" in result) throw new Error(`Not saved: ${JSON.stringify(result.problems)}`);
     return result.saved;
   }
 
   async function problems(yaml: string, target: RuleTarget | null = null, workspaceId = ours) {
-    const result = await saveRule(db, workspaceId, target, yaml, "hosted");
+    const result = await saveRule(db, workspaceId, target, yaml, "hosted", hostedLimits);
     if ("saved" in result) throw new Error("Expected the rule to be refused");
     return result.problems;
   }
@@ -186,7 +188,7 @@ describe("Rules", () => {
 
     it("keeps a rule's enabled flag through an edit", async () => {
       const { type, id } = await saved(ours, classifierYaml());
-      await setRuleEnabled(db, ours, type, id, false);
+      await setRuleEnabled(db, ours, type, id, false, hostedLimits);
       await saved(ours, classifierYaml(), { type, id });
       expect(await getRule(db, ours, type, id)).toMatchObject({ enabled: false });
     });
@@ -326,7 +328,7 @@ describe("Rules", () => {
 
     it("stores text that only looks like an escape of those", async () => {
       const yaml = `classifier: ${unique()}\nwhen: { field: title, op: contains, value: '\\u0000 \\ud800' }\nassign: [x]\n`;
-      expect(await saveRule(db, ours, null, yaml, "hosted")).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, yaml, "hosted", hostedLimits)).toHaveProperty("saved");
     });
 
     it("refuses a second rule of the same type with the same name, beside the name", async () => {
@@ -340,8 +342,8 @@ describe("Rules", () => {
     it("lets a Classifier and an Extractor Rule share a name, and another Workspace use it", async () => {
       const name = unique();
       await saved(ours, classifierYaml(name));
-      expect(await saveRule(db, ours, null, extractorYaml(unique(), name), "hosted")).toHaveProperty("saved");
-      expect(await saveRule(db, theirs, null, classifierYaml(name), "hosted")).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, extractorYaml(unique(), name), "hosted", hostedLimits)).toHaveProperty("saved");
+      expect(await saveRule(db, theirs, null, classifierYaml(name), "hosted", hostedLimits)).toHaveProperty("saved");
     });
 
     it("refuses turning a saved Classifier into an Extractor Rule", async () => {
@@ -424,7 +426,7 @@ describe("Rules", () => {
     it("saves a Condition on severity, importance and an extracted field", async () => {
       const mine = await addDestination("email");
       const yaml = `action: ${unique()}\nwhen:\n  all:\n    - { field: severity, op: gte, value: 4 }\n    - { field: importance, op: lte, value: 2 }\n    - { field: fields.cve, op: exists }\nkind: alert\n${listed([mine.name])}`;
-      expect(await saveRule(db, ours, null, yaml, "hosted")).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, yaml, "hosted", hostedLimits)).toHaveProperty("saved");
     });
 
     it("refuses an email Destination on a webhook Action, naming it", async () => {
@@ -461,7 +463,7 @@ describe("Rules", () => {
     it("lets self-hosted use a schedule hosted refuses", async () => {
       const mine = await addDestination("email");
       const yaml = digestYaml([mine.name], 'schedule: "*/5 * * * *"\n');
-      expect(await saveRule(db, ours, null, yaml, "self-hosted")).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, yaml, "self-hosted", undefined)).toHaveProperty("saved");
     });
 
     it("finds what saving would refuse in a draft the page was sent back with", async () => {
@@ -552,7 +554,7 @@ describe("Rules", () => {
     it("shows a disabled Action left with no Destination in the model's order, for the user to add one", async () => {
       const mine = await addDestination("email");
       const { type, id } = await saved(ours, alertYaml([mine.name]));
-      await setRuleEnabled(db, ours, type, id, false);
+      await setRuleEnabled(db, ours, type, id, false, hostedLimits);
       expect(await removeDestination(db, ours, mine.id)).toEqual({ changed: [id] });
 
       const yaml = (await getRule(db, ours, type, id))?.yaml ?? "";
@@ -581,9 +583,9 @@ describe("Rules", () => {
       }
 
       expect(await deliveriesAfterCapture()).toBe(1);
-      expect(await setRuleEnabled(db, ours, "action", id, false)).toBe(true);
+      expect((await setRuleEnabled(db, ours, "action", id, false, hostedLimits)).enabled).toBe(true);
       expect(await deliveriesAfterCapture()).toBe(0);
-      expect(await setRuleEnabled(db, ours, "action", id, true)).toBe(true);
+      expect((await setRuleEnabled(db, ours, "action", id, true, hostedLimits)).enabled).toBe(true);
       expect(await deliveriesAfterCapture()).toBe(1);
     });
 
@@ -593,7 +595,7 @@ describe("Rules", () => {
       const { type, id } = await saved(ours, alertYaml([other.name]));
       // Either the save finds the Destination gone, or it goes first and the remove takes it out again.
       await Promise.all([
-        saveRule(db, ours, { type, id }, alertYaml([mine.name, other.name]), "hosted"),
+        saveRule(db, ours, { type, id }, alertYaml([mine.name, other.name]), "hosted", hostedLimits),
         removeDestination(db, ours, mine.id),
       ]);
 
@@ -652,7 +654,7 @@ describe("Rules", () => {
 
         await db.transaction(async (tx) => {
           await tx.select({ id: action.id }).from(action).where(eq(action.id, id)).for("key share");
-          save = saveRule(db, ours, { type, id }, alertYaml([kept.name], name), "hosted");
+          save = saveRule(db, ours, { type, id }, alertYaml([kept.name], name), "hosted", hostedLimits);
           // Long enough for a save that doesn't wait to have finished, and so to find nothing to drop.
           await new Promise((resolve) => setTimeout(resolve, 300));
           await tx.insert(delivery).values({ actionId: id, itemId: queued, destinationId: gone.id });
@@ -732,17 +734,17 @@ describe("Rules", () => {
     it("won't be enabled with no Destination, and can be once it has one", async () => {
       const mine = await addDestination("email");
       const { type, id } = await saved(ours, alertYaml([mine.name]));
-      await setRuleEnabled(db, ours, type, id, false);
+      await setRuleEnabled(db, ours, type, id, false, hostedLimits);
       await removeDestination(db, ours, mine.id);
 
-      expect(await setRuleEnabled(db, ours, type, id, true)).toBe(false);
+      expect((await setRuleEnabled(db, ours, type, id, true, hostedLimits)).enabled).toBe(false);
       expect(await getRule(db, ours, type, id)).toMatchObject({ enabled: false });
       // Turning it off is always allowed.
-      expect(await setRuleEnabled(db, ours, type, id, false)).toBe(true);
+      expect((await setRuleEnabled(db, ours, type, id, false, hostedLimits)).enabled).toBe(true);
 
       const another = await addDestination("email");
       await saved(ours, alertYaml([another.name]), { type, id });
-      expect(await setRuleEnabled(db, ours, type, id, true)).toBe(true);
+      expect((await setRuleEnabled(db, ours, type, id, true, hostedLimits)).enabled).toBe(true);
       expect(await getRule(db, ours, type, id)).toMatchObject({ enabled: true });
     });
 
@@ -757,7 +759,7 @@ describe("Rules", () => {
       const { type, id } = await saved(theirs, alertYaml([theirsToo.name]));
 
       expect(await getRule(db, ours, type, id)).toBeUndefined();
-      expect(await setRuleEnabled(db, ours, type, id, false)).toBe(false);
+      expect((await setRuleEnabled(db, ours, type, id, false, hostedLimits)).enabled).toBe(false);
       expect(await removeRule(db, ours, type, id)).toBe(false);
       const mine = await addDestination("email");
       expect(await problems(alertYaml([mine.name]), { type, id })).toEqual([
@@ -857,7 +859,7 @@ describe("Rules", () => {
     it("counts a disabled rule's fields and an Agent-backed rule's", async () => {
       const disabled = unique();
       const { id } = await saved(ours, extractorYaml(disabled));
-      await setRuleEnabled(db, ours, "extractor", id, false);
+      await setRuleEnabled(db, ours, "extractor", id, false, hostedLimits);
       expect(await problems(extractorYaml(disabled))).toHaveLength(1);
 
       const agentField = unique();
@@ -868,27 +870,27 @@ describe("Rules", () => {
     it("lets a rule keep its own field names through an edit", async () => {
       const field = unique();
       const target = await saved(ours, extractorYaml(field));
-      expect(await saveRule(db, ours, target, extractorYaml(field), "hosted")).toHaveProperty("saved");
+      expect(await saveRule(db, ours, target, extractorYaml(field), "hosted", hostedLimits)).toHaveProperty("saved");
     });
 
     it("frees a field name when the rule declaring it is deleted", async () => {
       const field = unique();
       const { id } = await saved(ours, extractorYaml(field));
       await removeRule(db, ours, "extractor", id);
-      expect(await saveRule(db, ours, null, extractorYaml(field), "hosted")).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, extractorYaml(field), "hosted", hostedLimits)).toHaveProperty("saved");
     });
 
     it("doesn't count another Workspace's rules", async () => {
       const field = unique();
       await saved(theirs, extractorYaml(field));
-      expect(await saveRule(db, ours, null, extractorYaml(field), "hosted")).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, extractorYaml(field), "hosted", hostedLimits)).toHaveProperty("saved");
     });
 
     it("lets only one of two concurrent saves declare a field", async () => {
       const field = unique();
       const results = await Promise.all([
-        saveRule(db, ours, null, extractorYaml(field), "hosted"),
-        saveRule(db, ours, null, extractorYaml(field), "hosted"),
+        saveRule(db, ours, null, extractorYaml(field), "hosted", hostedLimits),
+        saveRule(db, ours, null, extractorYaml(field), "hosted", hostedLimits),
       ]);
       expect(results.filter((result) => "saved" in result)).toHaveLength(1);
     });
@@ -900,7 +902,7 @@ describe("Rules", () => {
         kind: "deterministic",
         definition: { extractor: "old", fields: "not a list" },
       });
-      expect(await saveRule(db, ours, null, extractorYaml(unique()), "hosted")).toHaveProperty("saved");
+      expect(await saveRule(db, ours, null, extractorYaml(unique()), "hosted", hostedLimits)).toHaveProperty("saved");
     });
   });
 
@@ -951,10 +953,10 @@ describe("Rules", () => {
       // Other tests' rules run on these Items too, so only this rule's Category counts.
       expect(await capture(sourceId, "A launch")).toContain(category);
 
-      expect(await setRuleEnabled(db, ours, "classifier", id, false)).toBe(true);
+      expect((await setRuleEnabled(db, ours, "classifier", id, false, hostedLimits)).enabled).toBe(true);
       expect(await capture(sourceId, "Another launch")).not.toContain(category);
 
-      expect(await setRuleEnabled(db, ours, "classifier", id, true)).toBe(true);
+      expect((await setRuleEnabled(db, ours, "classifier", id, true, hostedLimits)).enabled).toBe(true);
       expect(await capture(sourceId, "A third launch")).toContain(category);
     });
   });
@@ -1009,7 +1011,7 @@ describe("Rules", () => {
       const { type, id } = await saved(theirs, classifierYaml(name));
 
       expect(await getRule(db, ours, type, id)).toBeUndefined();
-      expect(await setRuleEnabled(db, ours, type, id, false)).toBe(false);
+      expect((await setRuleEnabled(db, ours, type, id, false, hostedLimits)).enabled).toBe(false);
       expect(await removeRule(db, ours, type, id)).toBe(false);
       expect(await problems(classifierYaml(), { type, id })).toEqual([
         { path: "", message: containing("doesn't exist") },
@@ -1021,7 +1023,7 @@ describe("Rules", () => {
     it("is the same as an id nobody has, or one that isn't an id", async () => {
       for (const id of [crypto.randomUUID(), "not-a-uuid"]) {
         expect(await getRule(db, ours, "classifier", id)).toBeUndefined();
-        expect(await setRuleEnabled(db, ours, "classifier", id, false)).toBe(false);
+        expect((await setRuleEnabled(db, ours, "classifier", id, false, hostedLimits)).enabled).toBe(false);
         expect(await removeRule(db, ours, "classifier", id)).toBe(false);
         expect(await problems(classifierYaml(), { type: "classifier", id })).toEqual([
           { path: "", message: containing("doesn't exist") },
@@ -1050,6 +1052,103 @@ describe("Rules", () => {
       expect(await db.select().from(itemCategory).where(eq(itemCategory.itemId, row?.id ?? ""))).toMatchObject([
         { category, classifierId: null },
       ]);
+    });
+  });
+  describe("a hosted plan's rule limits", () => {
+    /** A Workspace of its own, so one test's rules don't spend another's budget. */
+    async function ownWorkspace() {
+      // One Workspace per user, so each gets its own owner.
+      const owner = unique();
+      await db.insert(user).values({ id: owner, name: "Limit", email: `${owner}@example.com` });
+      const [row] = await db
+        .insert(workspace)
+        .values({ name: unique(), ownerUserId: owner })
+        .returning({ id: workspace.id });
+      return row?.id ?? "";
+    }
+
+    /** A Classifier whose Condition runs `patterns` regexes of 1,000 instructions each. */
+    const classifierOf = (patterns: number, name = unique()) =>
+      `classifier: ${name}\nwhen:\n  all:\n${Array.from(
+        { length: patterns },
+        () => `    - { field: title, op: matches, value: "[a-z]{1,499}[bc]" }`,
+      ).join("\n")}\nassign: [x]\n`;
+
+    it("accepts 5,000 instructions and refuses a rule that would take it to 6,000", async () => {
+      const workspaceId = await ownWorkspace();
+      expect(
+        await saveRule(db, workspaceId, null, classifierOf(5), "hosted", hostedLimits),
+      ).toHaveProperty("saved");
+
+      const refused = await saveRule(db, workspaceId, null, classifierOf(1), "hosted", hostedLimits);
+      const [problem] = "problems" in refused ? refused.problems : [];
+      expect(problem?.path).toBe("");
+      expect(problem?.message).toContain("5,000");
+      expect(problem?.message).toContain("6,000");
+      // The refused rule isn't stored.
+      expect((await listRules(db, workspaceId)).classifiers).toHaveLength(1);
+    });
+
+    it("counts every matches predicate in a single rule", async () => {
+      const workspaceId = await ownWorkspace();
+      const refused = await saveRule(db, workspaceId, null, classifierOf(6), "hosted", hostedLimits);
+      const [problem] = "problems" in refused ? refused.problems : [];
+      expect(problem?.message).toContain("6,000");
+    });
+
+    it("frees a disabled rule's share of the budget, and checks an enable like a save", async () => {
+      const workspaceId = await ownWorkspace();
+      const { id: big } = await saved(workspaceId, classifierOf(5));
+      expect(
+        await saveRule(db, workspaceId, null, classifierOf(1), "hosted", hostedLimits),
+      ).toHaveProperty("problems");
+
+      expect((await setRuleEnabled(db, workspaceId, "classifier", big, false, hostedLimits)).enabled).toBe(
+        true,
+      );
+      const { id: small } = await saved(workspaceId, classifierOf(1));
+
+      // Enabling the big one again would leave 6,000 of the 5,000 allowed.
+      const again = await setRuleEnabled(db, workspaceId, "classifier", big, true, hostedLimits);
+      expect(again.enabled).toBe(false);
+      expect(again.problems[0]?.message).toContain("6,000");
+      expect(await getRule(db, workspaceId, "classifier", big)).toMatchObject({ enabled: false });
+
+      // With the small one's share gone, the big one fits again.
+      await setRuleEnabled(db, workspaceId, "classifier", small, false, hostedLimits);
+      expect((await setRuleEnabled(db, workspaceId, "classifier", big, true, hostedLimits)).enabled).toBe(
+        true,
+      );
+    });
+
+    it("accepts on self-hosted what hosted refuses", async () => {
+      const workspaceId = await ownWorkspace();
+      expect(
+        await saveRule(db, workspaceId, null, classifierOf(6), "self-hosted", undefined),
+      ).toHaveProperty("saved");
+    });
+
+    it("refuses the 101st rule, counting Classifiers, Extractor Rules and Actions", async () => {
+      const workspaceId = await ownWorkspace();
+      const definitions = Array.from({ length: 100 }, (_, i) => ({
+        workspaceId,
+        name: `rule-${String(i)}`,
+        kind: "deterministic" as const,
+        definition: { classifier: `rule-${String(i)}`, when: { field: "title", op: "exists" }, assign: ["x"] },
+      }));
+      await db.insert(classifier).values(definitions);
+
+      const refused = await saveRule(
+        db,
+        workspaceId,
+        null,
+        `classifier: ${unique()}\nwhen: { field: title, op: exists }\nassign: [x]\n`,
+        "hosted",
+        hostedLimits,
+      );
+      const [problem] = "problems" in refused ? refused.problems : [];
+      expect(problem?.message).toContain("100 rules");
+      expect(problem?.message).toContain("101");
     });
   });
 });

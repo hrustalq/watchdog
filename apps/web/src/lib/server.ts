@@ -35,6 +35,8 @@ function start() {
     db,
     auth,
     mode: config.mode,
+    /** A hosted plan's per-Workspace rule limits; undefined on self-hosted, which sets none. */
+    ruleLimits: config.ruleLimits,
     /** Which browsers this install runs, so a website Source can be rendered. */
     renderers: { obscura: config.obscura.cdpUrl !== undefined, chromium: config.chromium !== undefined },
     /** The egress guard's fetch, for checking a feed URL before its Source is saved. */
