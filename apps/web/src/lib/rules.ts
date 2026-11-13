@@ -7,6 +7,7 @@ import {
   conditionToWords,
   type Config,
   extractorRuleSchema,
+  jsonPathFansOut,
   type Rule,
   ruleInstructions,
   ruleSchema,
@@ -474,18 +475,37 @@ async function storeRule(
   return row;
 }
 
-/** What a Workspace's enabled rules cost: the regex instructions they run, and how many there are. */
+/**
+ * What a Workspace's enabled rules cost: the regex instructions they run, how many there are, and how
+ * many of their fields read a JSONPath that can fan out.
+ */
 interface RuleCost {
   instructions: number;
   rules: number;
+  jsonPathFields: number;
 }
 
-const noCost: RuleCost = { instructions: 0, rules: 0 };
+const noCost: RuleCost = { instructions: 0, rules: 0, jsonPathFields: 0 };
+
+/**
+ * How many of a rule's fields read their value with a path that can fan out. Only those can cost the
+ * worker per node of the Item; a path of names and indexes reads a fixed route (GitHub issue #111).
+ */
+function fanOutFields(rule: Rule): number {
+  if (!("extractor" in rule)) return 0;
+  let fields = 0;
+  for (const field of rule.fields) {
+    if ("jsonpath" in field && jsonPathFansOut(field.jsonpath)) fields += 1;
+  }
+  return fields;
+}
 
 /** A stored definition's cost. One that no longer parses runs nothing, so it costs nothing. */
 function costOf(definition: unknown): RuleCost {
   const parsed = ruleSchema.safeParse(definition);
-  return parsed.success ? { instructions: ruleInstructions(parsed.data), rules: 1 } : noCost;
+  return parsed.success
+    ? { instructions: ruleInstructions(parsed.data), rules: 1, jsonPathFields: fanOutFields(parsed.data) }
+    : noCost;
 }
 
 /**
@@ -520,6 +540,7 @@ async function enabledCost(
       (total, cost) => ({
         instructions: total.instructions + cost.instructions,
         rules: total.rules + cost.rules,
+        jsonPathFields: total.jsonPathFields + cost.jsonPathFields,
       }),
       noCost,
     );
@@ -541,6 +562,12 @@ function overRuleLimits(limits: Config["ruleLimits"], cost: RuleCost): RuleProbl
     return {
       path: "",
       message: `The hosted plan allows a Workspace's rules ${limits.instructions.toLocaleString("en")} regex instructions in total, and this would use ${cost.instructions.toLocaleString("en")}. Disable a rule, or make one's regexes simpler, to make room.`,
+    };
+  }
+  if (cost.jsonPathFields > limits.jsonPathFields) {
+    return {
+      path: "",
+      message: `The hosted plan allows a Workspace's rules ${limits.jsonPathFields.toLocaleString("en")} JSONPath fields that can fan out, counting a path with "..", "*", a selector list or a filter, and this would use ${cost.jsonPathFields.toLocaleString("en")}. Disable a rule, or read a field by name and index, to make room.`,
     };
   }
   return undefined;
@@ -597,10 +624,13 @@ export async function saveRule(
 
     // A disabled rule costs the worker nothing, which is why disabling one frees its share.
     const used = await enabledCost(tx, workspaceId, target);
-    const own = enabled ? { instructions: ruleInstructions(rule), rules: 1 } : noCost;
+    const own = enabled
+      ? { instructions: ruleInstructions(rule), rules: 1, jsonPathFields: fanOutFields(rule) }
+      : noCost;
     const refusal = overRuleLimits(limits, {
       instructions: used.instructions + own.instructions,
       rules: used.rules + own.rules,
+      jsonPathFields: used.jsonPathFields + own.jsonPathFields,
     });
     if (refusal !== undefined) return { problems: [refusal] };
 
@@ -681,6 +711,7 @@ export async function setRuleEnabled(
     const refusal = overRuleLimits(limits, {
       instructions: used.instructions + own.instructions,
       rules: used.rules + own.rules,
+      jsonPathFields: used.jsonPathFields + own.jsonPathFields,
     });
     if (refusal !== undefined) return refused([refusal]);
     await tx
