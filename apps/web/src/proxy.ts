@@ -1,6 +1,6 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextResponse, type NextRequest } from "next/server";
-import { isDetailPath, missing, notFoundPath } from "./lib/missing.ts";
+import { isDetailPath, isItemPath, itemMissHeader, missing, notFoundPath } from "./lib/missing.ts";
 import { pathHeader, returnTo, signInPath } from "./lib/return-to.ts";
 import { server } from "./lib/server.ts";
 
@@ -9,9 +9,10 @@ import { server } from "./lib/server.ts";
  * and answers an API call with no session cookie with a 401. This only checks that the cookie
  * exists; the page or route validates the session itself and rejects an expired or forged one too.
  *
- * It also answers a missing Item or rule, which the page can't: Next.js starts streaming a page's
- * response, and fixes its status, before the page's own lookup finishes, so a `notFound()` there
- * renders the not-found UI with status 200 (bundled Next.js docs, loading.js, "Status codes").
+ * It also gives a missing Item or rule's answer its 404, which the page can't: Next.js starts
+ * streaming a page's response, and fixes its status, before the page's own lookup finishes, so a
+ * `notFound()` there renders the not-found UI with status 200 (bundled Next.js docs, loading.js,
+ * "Status codes").
  */
 export async function proxy(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
@@ -27,7 +28,13 @@ export async function proxy(request: NextRequest) {
     const { auth, db } = server();
     const session = await auth.api.getSession({ headers: request.headers });
     if (session !== null && (await missing(db, session.user.id, pathname))) {
-      return NextResponse.rewrite(new URL(notFoundPath, request.url));
+      // The rewrite replaces the address with Next.js's not-found route, so it says what the miss was
+      // in a header: a missing Item is the one that explains why an Item can be gone, and another
+      // Workspace's Item takes the same road as an id that never existed.
+      const headers = new Headers(request.headers);
+      headers.delete(itemMissHeader);
+      if (isItemPath(pathname)) headers.set(itemMissHeader, "1");
+      return NextResponse.rewrite(new URL(notFoundPath, request.url), { request: { headers } });
     }
   }
   // So the page's own redirect to sign-in can keep the path too.

@@ -16,6 +16,8 @@ import { runExtractorRuleAction } from "./actions";
 import { CorrectCategories } from "./correct-categories";
 import { RunStatus } from "./run-status";
 
+// Only an Item that's here reaches this page: a missing one renders app/not-found.tsx under the
+// layout's own title.
 export const metadata: Metadata = { title: "Item · Watchdog" };
 
 // The data is read without Suspense, so the Item is in the first HTML, which is how it and its
