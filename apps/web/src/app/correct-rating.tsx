@@ -154,7 +154,7 @@ function ScaleGuide() {
   return (
     <details className="w-full">
       <summary
-        className={`w-fit cursor-pointer rounded-sm py-1 ${label} text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30`}
+        className={`w-fit cursor-pointer rounded-sm py-1 ${label} text-muted-foreground outline-hidden hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/60`}
       >
         What the levels mean
       </summary>

@@ -13,9 +13,9 @@ colors:
   muted-foreground: "oklch(0.7187 0 0)"
   accent: "oklch(0.3211 0 0)"
   border: "oklch(0.3012 0 0)"
-  input: "oklch(0.3211 0 0)"
+  input: "oklch(0.5000 0 0)"
   ring: "oklch(0.7187 0 0)"
-  alarm: "oklch(0.6600 0.2150 27.0000)"
+  alarm: "oklch(0.6800 0.1900 27.0000)"
   alarm-foreground: "oklch(0.1448 0 0)"
   caution: "oklch(0.8190 0.1496 84.9468)"
   ok: "oklch(0.7499 0.1506 149.9295)"
@@ -158,14 +158,14 @@ A graphite instrument panel: achromatic neutrals carry the whole interface, and 
 - **Raised Graphite** (`card`): Panels, feed rows on hover or expanded, inspector sheets, node slabs in the scene.
 - **Overlay Graphite** (`popover`): Menus, popovers, command palette, tooltips; the only surfaces that also get a shadow.
 - **Instrument Well** (`secondary` / `muted`): Inset wells, secondary buttons, input fills, code and log blocks, skeletons.
-- **Pressed Graphite** (`accent`, `input`): Hover/pressed fill for ghost controls and the input border.
+- **Pressed Graphite** (`accent`, `input`): Hover/pressed fill for ghost controls, the switch's off track, and the 1px edge of a text box. The edge is its lightest use, at 3.17:1 on Graphite Floor.
 - **Hairline** (`border`): All dividers, panel edges, table rules, and edges between nodes in the scene. 1px only.
 - **Readout White** (`foreground`): Primary text and icons.
 - **Dimmed Readout** (`muted-foreground`): Metadata, timestamps, secondary labels, placeholder text, low-severity items. Passes 4.5:1 on every dark surface (7.05:1 on card).
-- **Focus Grey** (`ring`): Keyboard focus border and the 30% focus halo. Neutral on purpose; focus is never red.
+- **Focus Grey** (`ring`): Keyboard focus border and the 60% focus halo, 3.47:1 on Graphite Floor. Neutral on purpose; focus is never red.
 
 ### Signal (severity and health)
-- **Alarm Red** (`alarm`; light: `light-alarm`): High severity and critical items, firing alerts, failed sources or actions, errors, invalid fields, destructive confirmations. Text-safe on every surface in both themes (dark ≥4.57:1 on popover, light 5.4:1 on white). Solid fills use `alarm-foreground` (near-black in dark, white in light). `destructive` is set to the same value: there is exactly one red per theme.
+- **Alarm Red** (`alarm`; light: `light-alarm`): High severity and critical items, firing alerts, failed sources or actions, errors, invalid fields, destructive confirmations. Text-safe on every surface in both themes (dark ≥4.57:1 on Instrument Well and 5.0:1 on popover, light 5.4:1 on white). Solid fills use `alarm-foreground` (near-black in dark, white in light). `destructive` is set to the same value: there is exactly one red per theme.
 - **Caution Amber** (`caution`; light: `light-caution`): Medium severity, degraded or rate-limited sources, items waiting for review. Text-safe in both themes, at rest and on a hovered Feed row: 4.79:1 on white and on its own 10% tint in light, 9.07:1 at rest and 8.19:1 on a hovered row in dark. The light value is deepened for the tint; it was 4.21:1.
 - **Healthy Green** (`ok`; light: `light-ok`): Source connected, action succeeded, test passed. Shown sparingly, mostly as small status lamps; healthy is the expected state and should not shout.
 
@@ -262,12 +262,12 @@ Character: precise and quiet; the action is clear from the label and position, n
 - **Outline:** Graphite Floor fill with a hairline border (transparent fill in dark); hover fills with Instrument Well.
 - **Secondary:** Instrument Well fill; hover mixes 5% foreground into it.
 - **Ghost:** No fill; hover fills with Instrument Well (50% in dark).
-- **Destructive:** Alarm Red text on a 10% (dark 20%) red tint, never a solid red slab; hover deepens the tint. Used only to confirm deleting or disabling something.
-- **Focus:** Border switches to Focus Grey with a 3px halo at 30%. Pressed state nudges down 1px. Disabled: 50% opacity, no pointer events. Invalid: red border with a red halo.
+- **Destructive:** Alarm Red text on a 10% red tint in both themes, never a solid red slab; hover deepens it to 15%. Used only to confirm deleting or disabling something, and the confirmation sits on a card rather than the Instrument Well: red on the well is 4.57:1 with no tint, so any tint would take its text below 4.5:1.
+- **Focus:** Border switches to Focus Grey with a 3px halo at 60%. Pressed state nudges down 1px. Disabled: 50% opacity, no pointer events. Invalid: red border with a red halo.
 - **Sizes:** xs 24px, sm 28px, default 32px, lg 36px; matching square icon sizes.
 
 ### Rating chips (`apps/web/src/components/rating.tsx`)
-- **Severity:** `rounded-sm`, Label type, the word, the level and the scale ("Severity 4/5"), with the level in Data type. High (4–5): Alarm Red text on a 10% red tint with a solid 6px Alarm Red lamp. Medium (3): same pattern in Caution Amber. Low (1–2): Dimmed Readout text, no tint, hollow lamp. The tint stays at 10% because 15% drops Alarm Red below 4.5:1 on a hovered row.
+- **Severity:** `rounded-sm`, Label type, the word, the level and the scale ("Severity 4/5"), with the level in Data type. High (4–5): Alarm Red text on a 10% red tint with a solid 6px Alarm Red lamp. Medium (3): same pattern in Caution Amber. Low (1–2): Dimmed Readout text, no tint, hollow lamp. The tint stays at 10%: 15% would leave only 4.63:1 on a hovered row.
 - **Importance:** Same shape and words, with no lamp, no fill and no signal color, because it says what matters and not that something is wrong. High (4–5): Readout White. Otherwise: Dimmed Readout.
 - **Unrated:** The word on a dashed hairline, with no number and no lamp, so it can't read as an error or a low score.
 - **Rule:** The word, the level and the scale always appear together, and screen readers hear "Severity 4 of 5", so a Rating never relies on color alone. In forced colors a filled lamp is drawn in `CanvasText`, so it doesn't vanish.
@@ -300,7 +300,7 @@ Character: precise and quiet; the action is clear from the label and position, n
 
 ### Inputs / Fields (to build)
 - **Style:** 32px, `rounded-lg`, Instrument Well or transparent fill, 1px `input` border.
-- **Focus:** Same as buttons (Focus Grey border + 30% halo).
+- **Focus:** Same as buttons (Focus Grey border + 60% halo).
 - **Error:** Alarm Red border and halo, with an error message in Label type that names the problem and the fix.
 - **Expressions:** Classifier and extractor rule editors use Data type (MONO 1).
 

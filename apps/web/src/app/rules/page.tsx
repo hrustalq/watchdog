@@ -201,7 +201,7 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
         <h3 className="text-title break-words">
           <Link
             href={`/rules/${type}/${rule.id}`}
-            className="inline-flex min-h-6 items-center rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+            className="inline-flex min-h-6 items-center rounded-sm underline-offset-4 outline-hidden hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
           >
             {rule.name}
           </Link>
@@ -211,7 +211,7 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
         {needsModel ? (
           <p className="text-sm text-muted-foreground">
             Disabled until this Workspace has a model.{" "}
-            <Link href={modelLink} className="rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+            <Link href={modelLink} className="rounded-sm text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60">
               Set up a model
             </Link>
           </p>
@@ -292,7 +292,7 @@ function EnableSwitch({ type, rule, locked }: { type: RuleType; rule: RuleRow; l
         role="switch"
         aria-checked={on}
         disabled={locked}
-        className="group flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-muted/50"
+        className="group flex h-8 cursor-pointer items-center gap-2 rounded-lg px-2 outline-hidden hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent dark:hover:bg-muted/50"
       >
         <span className="sr-only">{rule.name}: </span>
         <span aria-hidden="true" className="flex h-5 w-9 items-center rounded-md bg-input p-0.5 group-aria-checked:justify-end group-aria-checked:bg-primary">
@@ -312,7 +312,7 @@ function DeleteRule({ type, rule }: { type: RuleType; rule: RuleRow }) {
       : `Deleting ${rule.name} stops it running. The ${type === "classifier" ? "Categories it already assigned" : "fields it already extracted"} stay on their Items.`;
   return (
     <details className="group sm:max-w-64">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
         <span className="group-open:hidden">
           Delete<span className="sr-only"> {rule.name}</span>
         </span>
@@ -325,8 +325,7 @@ function DeleteRule({ type, rule }: { type: RuleType; rule: RuleRow }) {
           {consequence} This can&apos;t be undone.
         </p>
         <form action={removeRuleAction.bind(null, type, rule.id)}>
-          {/* A lighter tint than the button's own, which leaves its text at 3.3:1. */}
-          <SubmitButton variant="destructive" pendingLabel="Deleting…" className="dark:bg-destructive/15">
+          <SubmitButton variant="destructive" pendingLabel="Deleting…">
             Delete {ruleNoun[type]}
           </SubmitButton>
         </form>

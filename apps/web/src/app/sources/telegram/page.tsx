@@ -22,7 +22,7 @@ export const metadata: Metadata = { title: "Telegram (your account) · Watchdog"
 export const instant = false;
 
 const crumb =
-  "rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30";
+  "rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60";
 
 // Shown over the page. A wrong phone number or an empty field is shown at its field instead.
 const problems: Record<string, string> = {

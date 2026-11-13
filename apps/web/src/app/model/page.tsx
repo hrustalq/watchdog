@@ -26,7 +26,7 @@ export default function ModelPage({ searchParams }: PageProps<"/model">) {
       <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
         <Link
           href="/"
-          className="inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
         >
           Workspace
         </Link>
@@ -59,7 +59,7 @@ const blankForm: ModelFormValues = {
 
 const noticeClass = "rounded-lg bg-muted px-3 py-2 text-sm";
 const keyLink =
-  "rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+  "rounded-sm text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60";
 
 async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchParams">) {
   const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
@@ -291,7 +291,7 @@ function FailedCall({
 function RemoveModel({ name }: { name: string }) {
   return (
     <details className="group shrink-0 sm:max-w-64">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
         <span className="group-open:hidden">Remove</span>
         <span className="hidden group-open:inline">Keep it</span>
       </summary>

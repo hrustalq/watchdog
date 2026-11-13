@@ -38,7 +38,7 @@ async function DifferentEmail({ searchParams }: Pick<PageProps<"/sign-in/check-e
   return (
     <Link
       href={signInPath(returnTo(next))}
-      className="inline-flex h-8 items-center self-start rounded-sm text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+      className="inline-flex h-8 items-center self-start rounded-sm text-sm font-medium underline-offset-4 outline-hidden hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
     >
       Use a different email
     </Link>

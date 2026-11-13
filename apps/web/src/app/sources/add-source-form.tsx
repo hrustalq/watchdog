@@ -40,7 +40,7 @@ type FieldName =
  * choices looking the same. A disabled one is dimmed and takes no pointer.
  */
 const choice =
-  "inline-flex h-8 cursor-pointer items-center rounded-lg border border-transparent px-3 text-sm font-medium select-none hover:bg-muted has-checked:bg-primary has-checked:text-primary-foreground has-checked:hover:bg-primary/80 has-focus-visible:border-ring has-focus-visible:ring-3 has-focus-visible:ring-ring/30 has-disabled:pointer-events-none has-disabled:opacity-50 dark:hover:bg-muted/50 forced-colors:has-checked:bg-[Highlight] forced-colors:has-checked:text-[HighlightText] forced-colors:has-checked:forced-color-adjust-none";
+  "inline-flex h-8 cursor-pointer items-center rounded-lg border border-transparent px-3 text-sm font-medium select-none hover:bg-muted has-checked:bg-primary has-checked:text-primary-foreground has-checked:hover:bg-primary/80 has-focus-visible:border-ring has-focus-visible:ring-3 has-focus-visible:ring-ring/60 has-disabled:pointer-events-none has-disabled:opacity-50 dark:hover:bg-muted/50 forced-colors:has-checked:bg-[Highlight] forced-colors:has-checked:text-[HighlightText] forced-colors:has-checked:forced-color-adjust-none";
 
 // Each type's fields show while its choice is checked, which CSS decides, so it works without
 // JavaScript. No field is `required`, and the URL isn't `type="url"`: a hidden field the browser
