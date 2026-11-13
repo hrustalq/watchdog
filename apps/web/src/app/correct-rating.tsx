@@ -14,6 +14,16 @@ const levels = [1, 2, 3, 4, 5];
 /** Dims while saving, which `CorrectionStatus` signals. */
 const saving = "has-data-pending:opacity-60";
 
+/** The current level in Panel Ink, and forced colors' Highlight, which would otherwise drop the fill. */
+const currentLook = (current: boolean) =>
+  current ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]" : "";
+
+/**
+ * The level the Agent gave, marked by a dashed outline rather than a colour, so the mark reads without
+ * one: the scale's line says in words what the outline means. It stays a hairline in forced colors.
+ */
+const agentLook = (agent: boolean) => (agent ? "border-dashed border-current" : "");
+
 function Step({ axis, current, step, title }: { axis: RatingAxis; current: number; step: -1 | 1; title: string }) {
   const { name } = ratingScale[axis];
   const lower = step < 0;
@@ -83,9 +93,20 @@ export function RatingStepper({
   );
 }
 
-function Scale({ axis, current }: { axis: RatingAxis; current: number }) {
+function Scale({
+  axis,
+  current,
+  original,
+}: {
+  axis: RatingAxis;
+  current: number;
+  /** The level the Agent gave this axis in the Rating Correction's `before`, if the axis was corrected. */
+  original: number | null | undefined;
+}) {
   const { name } = ratingScale[axis];
   const meaning = ratingMeaning(axis, current);
+  // Only an axis the user actually moved has one: the Agent gave no level to an Item it left unrated.
+  const agentLevel = original === undefined || original === null || original === current ? undefined : original;
   return (
     <div className="flex w-full flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
       <div role="group" aria-label={`Correct ${name}`} className="flex min-w-0 shrink-0 flex-wrap items-center gap-1">
@@ -104,10 +125,13 @@ function Scale({ axis, current }: { axis: RatingAxis; current: number }) {
               variant={level === current ? "default" : "ghost"}
               aria-current={level === current ? "true" : undefined}
               // Forced colors drop the fill, which would hide which level is the current one.
-              className={`font-mono ${level === current ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]" : ""}`}
+              className={`font-mono ${currentLook(level === current)} ${agentLook(level === agentLevel)}`}
             >
               <span aria-hidden="true">{level}</span>
-              <span className="sr-only">{`Set ${name} to ${String(level)} of 5, ${ratingMeaning(axis, level)}`}</span>
+              <span className="sr-only">
+                {`Set ${name} to ${String(level)} of 5, ${ratingMeaning(axis, level)}`}
+                {level === agentLevel ? ", which was the Agent's Rating" : ""}
+              </span>
             </CorrectionButton>
           ))}
         </span>
@@ -115,8 +139,14 @@ function Scale({ axis, current }: { axis: RatingAxis; current: number }) {
       {/* Lines up under the buttons on a phone, and loses the indent when they wrapped under the label
           instead. One text node for a screen reader, as on the chips. */}
       <p className={`pl-19 ${label} text-muted-foreground first-letter:uppercase @max-[13.25rem]:pl-0 sm:pl-0`}>
-        <span className="sr-only">{`${name}: ${meaning}`}</span>
-        <span aria-hidden="true">{meaning}</span>
+        <span className="sr-only">
+          {`${name}: ${meaning}`}
+          {agentLevel === undefined ? "" : `. The Agent rated this ${String(agentLevel)} of 5`}
+        </span>
+        <span aria-hidden="true">
+          {meaning}
+          {agentLevel === undefined ? "" : ` · the Agent rated this ${String(agentLevel)} of 5`}
+        </span>
       </p>
     </div>
   );
@@ -192,10 +222,13 @@ export function RatingControls({
   itemId,
   severity,
   importance,
+  originalRating,
 }: {
   itemId: string;
   severity: number | null;
   importance: number | null;
+  /** A Rating Correction's `before`, which holds the Agent's own levels however often the Rating changes. */
+  originalRating?: { severity: number | null; importance: number | null } | undefined;
 }) {
   return (
     <form action={correctRatingAction} className={`flex w-full flex-wrap items-center gap-x-4 gap-y-2 ${saving}`}>
@@ -211,8 +244,8 @@ export function RatingControls({
         </>
       ) : (
         <>
-          <Scale axis="severity" current={severity} />
-          <Scale axis="importance" current={importance} />
+          <Scale axis="severity" current={severity} original={originalRating?.severity} />
+          <Scale axis="importance" current={importance} original={originalRating?.importance} />
         </>
       )}
       <ScaleGuide />
