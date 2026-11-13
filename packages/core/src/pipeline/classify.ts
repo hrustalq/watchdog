@@ -21,6 +21,7 @@ import { loadProfile } from "../agent/profile.ts";
 import { buildAgentPrompt, type PromptContext } from "../agent/prompt.ts";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
 import { type AgentClassifier, agentClassifierSchema, deterministicClassifierSchema } from "../rules/schema.ts";
+import { callFailureInLog } from "./call-failure.ts";
 import { logOnce, rulesFor } from "./rules-for-item.ts";
 
 export type AgentDeps = Pick<CallAgentOptions<z.ZodObject>, "encryptionKey" | "fetch">;
@@ -208,10 +209,10 @@ export async function runAgentClassifiers(
     }),
   });
   if (!result.ok) {
-    // Each failure gets its own row. The job's error reaches pg-boss, which stores it as JSONB.
-    const message = storableMessage(result.message);
-    await logClassify(db, itemId, `The classify call failed: ${message}`, { reason: result.reason });
-    return { ...result, message };
+    // The Log names the cause in plain words, while the call's full detail stays in its meter row and
+    // reaches pg-boss as the job's error. Each failure gets its own row.
+    await logClassify(db, itemId, `The classify call failed: ${callFailureInLog(result)}`, { reason: result.reason });
+    return { ...result, message: storableMessage(result.message) };
   }
   await storeCategories(db, itemId, rules, result.output.categories, now);
   return undefined;
