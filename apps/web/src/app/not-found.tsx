@@ -10,7 +10,7 @@ export default function NotFound() {
         This page doesn&apos;t exist. An Item is removed with its Source, so a link to one can stop
         working.
       </p>
-      <Link href="/" className={`${buttonVariants({ variant: "outline" })} mt-6`}>
+      <Link href="/" className={buttonVariants({ variant: "outline", className: "mt-6" })}>
         Back to the Feed
       </Link>
     </main>

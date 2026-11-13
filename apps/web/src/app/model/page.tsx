@@ -154,7 +154,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             {/* A test can't help while the key is unreadable: it makes no call, and the screen already knows. */}
             {model.storedKey === "unreadable" ? (
-              <a href="#api-key" className={`${buttonVariants()} w-full sm:w-auto`}>
+              <a href="#api-key" className={buttonVariants({ className: "w-full sm:w-auto" })}>
                 Enter the key again
               </a>
             ) : (

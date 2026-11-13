@@ -122,7 +122,7 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
           <Link
             // Top's fallback pages through Latest, so its "Show older" goes there.
             href={feedHref(latest || fallback, edit, older)}
-            className={`${buttonVariants({ variant: "outline" })} self-center`}
+            className={buttonVariants({ variant: "outline", className: "self-center" })}
           >
             Show older
           </Link>
@@ -148,7 +148,12 @@ function ViewControl({ latest, edit }: { latest: boolean; edit: boolean }) {
       href={href}
       aria-current={selected ? "true" : undefined}
       // Forced colors drop the fill, which would leave the two views looking the same.
-      className={`${buttonVariants({ variant: selected ? "default" : "ghost" })} ${selected ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]" : ""}`}
+      className={buttonVariants({
+        variant: selected ? "default" : "ghost",
+        className: selected
+          ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]"
+          : undefined,
+      })}
     >
       {label}
     </Link>
@@ -200,7 +205,7 @@ function FeedBody({
           This Workspace has no Sources. Once you add one, every Item it captures shows up in the
           Feed here.
         </p>
-        <Link href="/sources" className={`${buttonVariants()} mt-6`}>
+        <Link href="/sources" className={buttonVariants({ className: "mt-6" })}>
           Add a Source
         </Link>
       </EmptyState>
