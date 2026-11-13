@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createEgressFetch, decryptSecret, linkChat, loadConfig, pollSource } from "@watchdog/core";
@@ -8,6 +9,7 @@ import {
   createDb,
   type Db,
   eq,
+  githubRateLimit,
   item,
   itemLog,
   lte,
@@ -604,6 +606,69 @@ describe("Sources", () => {
     it("saves an issues Source on the owner's GitHub sign-in token, storing no token of its own", async () => {
       const row = await saved(await issues(signedIn, "denoland/deno"));
       expect(row).toMatchObject({ config: { kind: "issues", repo: "denoland/deno" }, secretCiphertext: null });
+    });
+
+    describe("a rate limit holding a Source's polls", () => {
+      // The pause githubGet keeps, keyed as it keeps it: the token's SHA-256 and its API resource.
+      const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
+      const secrets = { encryptionKey, authSecret: "unused-by-pause-tests" };
+      const listed = async (workspaceId: string, id: string) =>
+        (await listSources(db, workspaceId, 0, secrets)).find((entry) => entry.id === id);
+      const pause = (hash: string, resource: "core" | "search", pausedUntil: Date) =>
+        db
+          .insert(githubRateLimit)
+          .values({ tokenHash: hash, resource, pausedUntil })
+          .onConflictDoUpdate({
+            target: [githubRateLimit.tokenHash, githubRateLimit.resource],
+            set: { pausedUntil },
+          });
+
+      it("says when a GitHub issues Source's pause ends, and refuses Check now until then", async () => {
+        const token = "github_pat_paused";
+        const row = await saved(await issues(tokenless, "octo-org/paused", token));
+        const id = row?.id ?? "";
+        const until = new Date(Date.now() + 30 * 60_000);
+        await pause(tokenHash(token), "core", until);
+        // Not due until the pause ends, as the poll that was put off left it.
+        const later = new Date(Date.now() + 3_600_000);
+        await db.update(source).set({ nextPollAt: later }).where(eq(source.id, id));
+
+        const shown = await listed(tokenless, id);
+        expect(shown?.pausedUntil).toEqual(until);
+        // A pause isn't a failure, so the chip reads as Health has it.
+        expect(shown?.health).toBe("ok");
+
+        expect(await checkSourceNow(db, tokenless, id, 0, secrets)).toBe(false);
+        const [after] = await db.select({ nextPollAt: source.nextPollAt }).from(source).where(eq(source.id, id));
+        expect(after?.nextPollAt).toEqual(later);
+        // Without the keys no pause is read, which is how the rules editor lists Sources.
+        expect((await listSources(db, tokenless)).find((entry) => entry.id === id)?.pausedUntil).toBeUndefined();
+      });
+
+      it("says nothing once the pause has passed, and takes Check now again", async () => {
+        const token = "github_pat_over";
+        const row = await saved(await issues(tokenless, "octo-org/over", token));
+        const id = row?.id ?? "";
+        await pause(tokenHash(token), "core", new Date(Date.now() - 60_000));
+        const later = new Date(Date.now() + 3_600_000);
+        await db.update(source).set({ nextPollAt: later }).where(eq(source.id, id));
+
+        expect((await listed(tokenless, id))?.pausedUntil).toBeUndefined();
+        expect(await checkSourceNow(db, tokenless, id, 0, secrets)).toBe(true);
+        expect((await listed(tokenless, id))?.due).toBe(true);
+      });
+
+      it("reads a mentions Source's pause from the Search resource it polls", async () => {
+        const token = "github_pat_search_paused";
+        const row = await saved(await mentions(tokenless, "search pause", "", token));
+        const id = row?.id ?? "";
+        const until = new Date(Date.now() + 30 * 60_000);
+        // The token's core limit is another Source's resource, so it doesn't hold this one.
+        await pause(tokenHash(token), "core", until);
+        expect((await listed(tokenless, id))?.pausedUntil).toBeUndefined();
+        await pause(tokenHash(token), "search", until);
+        expect((await listed(tokenless, id))?.pausedUntil).toEqual(until);
+      });
     });
 
     it("saves nothing without a pasted or a sign-in token, and says what to do", async () => {

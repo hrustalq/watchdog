@@ -9,6 +9,8 @@ import {
   FeedHttpError,
   fetchFeed,
   fetchReleases,
+  type GithubSecrets,
+  githubPause,
   issueLinkCode,
   liveLinkCode,
   mappingError,
@@ -647,9 +649,18 @@ export const checkGapMinutes = (mode: Config["mode"]) => (mode === "hosted" ? mi
 const lastPollBefore = (table: Pick<typeof source, "lastSuccessAt" | "lastErrorAt">, minutes: number) =>
   sql<boolean>`coalesce(greatest(${table.lastSuccessAt}, ${table.lastErrorAt}) <= now() - make_interval(mins => ${minutes}), true)`;
 
-/** The Workspace's Sources, newest first. `checkable` is whether Check now would be taken, given the gap. */
-export function listSources(db: Db, workspaceId: string, gapMinutes = 0) {
-  return db.query.source.findMany({
+/**
+ * The Workspace's Sources, newest first. `checkable` is whether Check now would be taken, given the gap,
+ * and `pausedUntil` is when a GitHub Source's rate limit lets its polls run again, for one it holds now.
+ */
+export async function listSources(
+  db: Db,
+  workspaceId: string,
+  gapMinutes = 0,
+  /** Reads the token a GitHub Source's rate limit is keyed by. Without it, no row's pause is read. */
+  secrets?: GithubSecrets,
+) {
+  const rows = await db.query.source.findMany({
     where: eq(source.workspaceId, workspaceId),
     columns: {
       id: true,
@@ -669,16 +680,66 @@ export function listSources(db: Db, workspaceId: string, gapMinutes = 0) {
     }),
     orderBy: (table, { desc }) => [desc(table.createdAt), desc(table.id)],
   });
+  const pauses = await githubPauses(db, workspaceId, rows, secrets);
+  return rows.map((row) => ({ ...row, pausedUntil: pauses.get(row.id) }));
+}
+
+/**
+ * When each GitHub Source's token is paused, by Source id. The pause is keyed by the token's hash, which
+ * only the encrypted token gives, so it is looked up per Source rather than joined in the query above.
+ */
+async function githubPauses(
+  db: Db,
+  workspaceId: string,
+  rows: { id: string; type: string; config: unknown }[],
+  secrets: GithubSecrets | undefined,
+): Promise<Map<string, Date>> {
+  const pauses = new Map<string, Date>();
+  const github = rows.filter((row) => row.type === "github");
+  if (secrets === undefined || github.length === 0) return pauses;
+  const stored = await db
+    .select({ id: source.id, secretCiphertext: source.secretCiphertext })
+    .from(source)
+    .where(
+      and(
+        eq(source.workspaceId, workspaceId),
+        inArray(
+          source.id,
+          github.map((row) => row.id),
+        ),
+      ),
+    );
+  const ciphers = new Map(stored.map((row) => [row.id, row.secretCiphertext]));
+  const now = new Date();
+  await Promise.all(
+    github.map(async (row) => {
+      const paused = await githubPause(
+        db,
+        { workspaceId, config: row.config, secretCiphertext: ciphers.get(row.id) ?? null },
+        secrets,
+        now,
+      );
+      if (paused !== undefined) pauses.set(row.id, paused);
+    }),
+  );
+  return pauses;
 }
 
 /**
  * Makes a Schedule Source due, so the worker's next tick polls it, within a minute. The tick queues one
  * poll a Source at a time, so asking twice polls once. A failing Source's hour between polls doesn't
- * hold it back. Returns false for a Source the Workspace doesn't have, one that is never polled, and
- * one whose last poll ended less than `gapMinutes` ago.
+ * hold it back. Returns false for a Source the Workspace doesn't have, one that is never polled, one
+ * whose last poll ended less than `gapMinutes` ago, and a GitHub Source whose rate limit holds its polls.
  */
-export async function checkSourceNow(db: Db, workspaceId: string, sourceId: string, gapMinutes = 0) {
+export async function checkSourceNow(
+  db: Db,
+  workspaceId: string,
+  sourceId: string,
+  gapMinutes = 0,
+  secrets?: GithubSecrets,
+) {
   if (!isUuid(sourceId)) return false;
+  if (secrets !== undefined && (await githubHeld(db, workspaceId, sourceId, secrets))) return false;
   const due = await db
     .update(source)
     .set({ nextPollAt: sql`now()` })
@@ -692,6 +753,15 @@ export async function checkSourceNow(db: Db, workspaceId: string, sourceId: stri
     )
     .returning({ id: source.id });
   return due.length > 0;
+}
+
+/** Whether a GitHub Source's token is paused, so the poll a check would ask for only waits. */
+async function githubHeld(db: Db, workspaceId: string, sourceId: string, secrets: GithubSecrets) {
+  const [row] = await db
+    .select({ config: source.config, secretCiphertext: source.secretCiphertext })
+    .from(source)
+    .where(and(eq(source.workspaceId, workspaceId), eq(source.id, sourceId), eq(source.type, "github")));
+  return row !== undefined && (await githubPause(db, { workspaceId, ...row }, secrets, new Date())) !== undefined;
 }
 
 /** The GitHub Sources that read the API with a token: a releases Source reads its feed without one. */

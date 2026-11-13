@@ -2,7 +2,7 @@
 // the API with a token (docs: Sources and ingestion, "GitHub").
 import { z } from "zod";
 import type { SourceTypeImpl } from "../types.ts";
-import { githubGet, githubToken } from "./client.ts";
+import { githubGet, githubResource, githubToken } from "./client.ts";
 import { pollIssues } from "./issues.ts";
 import { pollMentions } from "./mentions.ts";
 import { fetchReleases } from "./releases.ts";
@@ -27,10 +27,11 @@ export const github: SourceTypeImpl = {
       return { drafts: fetched.entries, fetchState: { ...fetched.fetchState } };
     }
     const token = await githubToken(deps.db, source, deps.secrets);
+    const resource = githubResource(settings.kind);
     if (settings.kind === "issues") {
-      const get = (url: string, etag?: string) => githubGet(url, { token, resource: "core", etag }, deps);
+      const get = (url: string, etag?: string) => githubGet(url, { token, resource, etag }, deps);
       return pollIssues(settings.repo, source.fetchState, get, deps.now);
     }
-    return pollMentions(settings, (url) => githubGet(url, { token, resource: "search" }, deps));
+    return pollMentions(settings, (url) => githubGet(url, { token, resource }, deps));
   },
 };

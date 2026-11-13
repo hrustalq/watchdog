@@ -120,9 +120,9 @@ async function SourceList({ searchParams }: Pick<PageProps<"/sources">, "searchP
     return undefined;
   };
   const { workspace } = await requireWorkspace();
-  const { db, mode, telegramAvailable, telegramBotName, telegramSessionAvailable } = server();
+  const { db, mode, telegramAvailable, telegramBotName, telegramSessionAvailable, encryptionKey, authSecret } = server();
   const [sources, session] = await Promise.all([
-    listSources(db, workspace.id, checkGapMinutes(mode)),
+    listSources(db, workspace.id, checkGapMinutes(mode), { encryptionKey, authSecret }),
     telegramSessionAvailable ? sessionOf(db, workspace.id) : undefined,
   ]);
   const link = telegramAvailable
@@ -224,6 +224,13 @@ async function SourceList({ searchParams }: Pick<PageProps<"/sources">, "searchP
                       : {withoutUrl(row, row.lastError)}
                     </p>
                   )}
+                  {/* A pause isn't a failure, so the chip stays as Health has it; the row says why it waits. */}
+                  {row.pausedUntil === undefined ? null : (
+                    <p className="text-sm text-caution">
+                      GitHub&apos;s rate limit holds its polls until{" "}
+                      <Timestamp at={row.pausedUntil} className="whitespace-nowrap" />, and Check now waits.
+                    </p>
+                  )}
                   {row.due ? (
                     <p role="status" className="text-sm text-muted-foreground">
                       A poll is due, and the worker usually runs it within a minute.{" "}
@@ -236,8 +243,9 @@ async function SourceList({ searchParams }: Pick<PageProps<"/sources">, "searchP
                   ) : null}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-start gap-2">
-                  {/* On hosted, not until the shortest schedule has passed since the last poll. */}
-                  {row.schedule === null || !row.checkable ? null : (
+                  {/* On hosted, not until the shortest schedule has passed since the last poll, and never
+                      while a rate limit holds the Source's polls. */}
+                  {row.schedule === null || !row.checkable || row.pausedUntil !== undefined ? null : (
                     <form action={checkSourceNowAction.bind(null, row.id)}>
                       <SubmitButton variant="outline" pendingLabel="Asking…">
                         Check now<span className="sr-only"> for {row.name}</span>
