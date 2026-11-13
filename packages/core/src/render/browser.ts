@@ -64,10 +64,22 @@ export function createBrowserRenderer<Prepared>({
       const close = () => (closing ??= browser.close().catch(() => undefined));
       const onStop = () => void close();
       stop.addEventListener("abort", onStop, { once: true });
+      // Closing is the only thing that ends a call the browser stopped answering, and a starved browser
+      // can ignore the close too. So the answer is raced with the stop itself: whatever the browser does,
+      // the render ends at its deadline, as the page's own caller was promised.
+      const stopping = new Promise<never>((_, reject) => {
+        const fail = () => {
+          reject(stopped() ?? new Error(`Rendering ${url} was stopped`));
+        };
+        if (stop.aborted) fail();
+        else stop.addEventListener("abort", fail, { once: true });
+      });
+      // Rejects only when the work below wins the race, and then nobody is waiting for it.
+      void stopping.catch(() => undefined);
       let answer;
       try {
         stop.throwIfAborted();
-        answer = await visit(await open(browser, prepared, stop));
+        answer = await Promise.race([open(browser, prepared, stop).then(visit), stopping]);
       } catch (error) {
         throw stopped() ?? new Error(`${url} couldn't be rendered: ${firstLine(error)}`);
       } finally {
