@@ -189,7 +189,7 @@ function RuleItem({ type, rule, needsModel }: { type: RuleType; rule: RuleRow; n
         <h3 className="text-title break-words">
           <Link
             href={`/rules/${type}/${rule.id}`}
-            className="rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+            className="inline-flex min-h-6 items-center rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
           >
             {rule.name}
           </Link>
