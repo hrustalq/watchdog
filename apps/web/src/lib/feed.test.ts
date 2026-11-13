@@ -5,17 +5,75 @@ const id = "0b6f2a4e-8c1d-4f3a-9e2b-7d5c6a1f0e9d";
 
 describe("manualRunIn", () => {
   const captured = { id: 1, message: "Captured from Blog", data: {} };
-  const worked = { id: 2, message: "Manual run: extracted cve", data: { manual: true } };
-  const failed = { id: 3, message: "Manual run: failed", data: { manual: true, failed: true } };
+  const worked = {
+    id: 2,
+    message: "Manual run: Extractor Rule Plans extracted plan",
+    data: { manual: true, extractor: "Plans", fields: ["plan"], empty: [], problems: [] },
+  };
+  const failed = {
+    id: 3,
+    message: "Manual run: Extractor Rule Plans failed: The model is down",
+    data: { manual: true, extractor: "Plans", reason: "error", detail: "The model is down", failed: true },
+  };
   const later = { id: 4, message: "Rated", data: {} };
 
-  it("finds the run the URL names and whether it failed", () => {
+  it("finds the run the URL names, whether it failed, and what it did with each field", () => {
     expect(manualRunIn([captured, worked, later], "2")).toEqual({
       id: 2,
-      message: "Manual run: extracted cve",
+      message: "Manual run: Extractor Rule Plans extracted plan",
       failed: false,
+      extractor: "Plans",
+      fields: ["plan"],
+      empty: [],
+      problems: [],
+      detail: undefined,
     });
-    expect(manualRunIn([captured, failed], "3")).toEqual({ id: 3, message: "Manual run: failed", failed: true });
+    expect(manualRunIn([captured, failed], "3")).toEqual({
+      id: 3,
+      message: "Manual run: Extractor Rule Plans failed: The model is down",
+      failed: true,
+      extractor: "Plans",
+      fields: [],
+      empty: [],
+      problems: [],
+      detail: "The model is down",
+    });
+  });
+
+  it("keeps the fields a run found empty and those it couldn't store, with their reasons", () => {
+    const partial = {
+      id: 5,
+      message: "Manual run: Extractor Rule Plans extracted plan; found no value for author",
+      data: {
+        manual: true,
+        extractor: "Plans",
+        fields: ["plan"],
+        empty: ["author"],
+        problems: [{ name: "cve", reason: "no page HTML on this Item" }],
+      },
+    };
+    expect(manualRunIn([partial], "5")).toMatchObject({
+      fields: ["plan"],
+      empty: ["author"],
+      problems: [{ name: "cve", reason: "no page HTML on this Item" }],
+    });
+  });
+
+  it("has no parts to show for a failure's reason, and nothing a row holds in another shape", () => {
+    const old = { id: 6, message: "Manual run: Extractor Rule Plans failed: it was deleted", data: { manual: true, failed: true } };
+    expect(manualRunIn([old], "6")).toMatchObject({ failed: true, extractor: undefined, detail: undefined, fields: [] });
+
+    const odd = {
+      id: 7,
+      message: "Manual run",
+      data: { manual: true, extractor: 3, fields: "plan", empty: [1, "cve"], problems: [null, { name: "cve" }, { name: 1, reason: 2 }] },
+    };
+    expect(manualRunIn([odd], "7")).toMatchObject({
+      extractor: undefined,
+      fields: [],
+      empty: ["cve"],
+      problems: [],
+    });
   });
 
   it("ignores a run a newer one replaced, so a success can't sit above a later failure", () => {

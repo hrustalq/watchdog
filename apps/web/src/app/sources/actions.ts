@@ -75,9 +75,11 @@ export async function newSourceLinkAction(sourceId: unknown) {
 /** Check now: makes a Schedule Source of the Workspace due, and the worker's next tick polls it. */
 export async function checkSourceNowAction(sourceId: unknown) {
   const { workspace } = await requireWorkspace();
-  const { db, mode } = server();
+  const { db, mode, encryptionKey, authSecret } = server();
   // The page offers no button for a check this refuses, so there's nothing to say when it does.
-  if (typeof sourceId === "string") await checkSourceNow(db, workspace.id, sourceId, checkGapMinutes(mode));
+  if (typeof sourceId === "string") {
+    await checkSourceNow(db, workspace.id, sourceId, checkGapMinutes(mode), { encryptionKey, authSecret });
+  }
   redirect("/sources");
 }
 

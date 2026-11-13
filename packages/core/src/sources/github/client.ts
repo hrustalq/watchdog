@@ -93,6 +93,47 @@ export interface GithubGetDeps extends FetchFeedDeps {
 /** GitHub allows each token 30 Search requests a minute. */
 const searchPerMinute = 30;
 
+/** The key a token's rate limits are kept under, so the token itself is never stored. */
+const tokenHashOf = (value: string) => createHash("sha256").update(value).digest("hex");
+
+/** The API resource a GitHub Source's polls read: an issues Source the core one, a mentions the search. */
+export function githubResource(kind: "issues" | "mentions"): "core" | "search" {
+  return kind === "issues" ? "core" : "search";
+}
+
+/** The kind of work a GitHub Source's config names, or undefined when the config isn't a GitHub one. */
+function githubKind(config: unknown): "releases" | "issues" | "mentions" | undefined {
+  if (typeof config !== "object" || config === null || !("kind" in config)) return undefined;
+  const { kind } = config;
+  return kind === "releases" || kind === "issues" || kind === "mentions" ? kind : undefined;
+}
+
+/**
+ * When the Source's token is paused for the API resource its polls read, so its polls wait, and
+ * undefined when they may run now. A releases Source reads no API, and a Source with no token has no
+ * poll to hold, so both answer undefined.
+ */
+export async function githubPause(
+  db: Db,
+  source: { workspaceId: string; config: unknown; secretCiphertext: string | null },
+  secrets: GithubSecrets,
+  now: Date,
+): Promise<Date | undefined> {
+  const kind = githubKind(source.config);
+  if (kind === undefined || kind === "releases") return undefined;
+  // The pause is keyed by the token's hash, so the token has to be read to look it up.
+  const token = await githubToken(db, source, secrets).catch(() => undefined);
+  if (token === undefined) return undefined;
+  const [row] = await db
+    .select({ pausedUntil: githubRateLimit.pausedUntil })
+    .from(githubRateLimit)
+    .where(
+      and(eq(githubRateLimit.tokenHash, tokenHashOf(token.value)), eq(githubRateLimit.resource, githubResource(kind))),
+    );
+  const paused = row?.pausedUntil ?? null;
+  return paused !== null && paused > now ? paused : undefined;
+}
+
 /**
  * GETs a GitHub API URL with the token, unless the token's limits for `resource` put it off. An
  * answer with none remaining, or with a `retry-after`, puts off the token's later requests too.
@@ -103,7 +144,7 @@ export async function githubGet(
   { token, resource, etag }: { token: GithubToken; resource: "core" | "search"; etag?: string | undefined },
   { db, fetch, now }: GithubGetDeps,
 ): Promise<GithubResponse | Deferred> {
-  const tokenHash = createHash("sha256").update(token.value).digest("hex");
+  const tokenHash = tokenHashOf(token.value);
   const key = and(eq(githubRateLimit.tokenHash, tokenHash), eq(githubRateLimit.resource, resource));
   const [limit] = await db.select().from(githubRateLimit).where(key);
   if (limit?.pausedUntil && limit.pausedUntil > now) return { deferUntil: limit.pausedUntil };
