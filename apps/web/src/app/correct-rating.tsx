@@ -1,7 +1,7 @@
 // The controls that correct a Rating (DESIGN.md, "Correction controls"). They're plain forms, so they
 // work without JavaScript. Each button posts one axis and the action keeps the other at its current
 // level, and the buttons stay focusable at either end of the scale, so focus isn't lost by reaching it.
-import { type RatingAxis, ratingAnchor, ratingMeaning, ratingScale } from "@watchdog/core";
+import { type RatingAxis, ratingAbout, ratingAnchor, ratingAxes, ratingMeaning, ratingScale } from "@watchdog/core";
 import { Minus, Plus } from "lucide-react";
 import { field, label } from "@/components/field-classes";
 import { ImportanceChip, SeverityChip } from "@/components/rating";
@@ -42,8 +42,8 @@ function Step({ axis, current, step, title }: { axis: RatingAxis; current: numbe
       <Glyph aria-hidden="true" className={inScale ? undefined : "opacity-50"} />
       <span className="sr-only">
         {inScale
-          ? `${lower ? "Lower" : "Raise"} ${name} to ${String(level)}, ${ratingMeaning(axis, level)}: ${title}`
-          : `${name} is at its ${lower ? "lowest" : "highest"}, ${ratingMeaning(axis, current)}: ${title}`}
+          ? `${lower ? "Lower" : "Raise"} ${name} to ${String(level)}, ${ratingMeaning(axis, level, "you")}: ${title}`
+          : `${name} is at its ${lower ? "lowest" : "highest"}, ${ratingMeaning(axis, current, "you")}: ${title}`}
       </span>
     </CorrectionButton>
   );
@@ -104,7 +104,7 @@ function Scale({
   original: number | null | undefined;
 }) {
   const { name } = ratingScale[axis];
-  const meaning = ratingMeaning(axis, current);
+  const meaning = ratingMeaning(axis, current, "you");
   // Only an axis the user actually moved has one: the Agent gave no level to an Item it left unrated.
   const agentLevel = original === undefined || original === null || original === current ? undefined : original;
   return (
@@ -129,7 +129,7 @@ function Scale({
             >
               <span aria-hidden="true">{level}</span>
               <span className="sr-only">
-                {`Set ${name} to ${String(level)} of 5, ${ratingMeaning(axis, level)}`}
+                {`Set ${name} to ${String(level)} of 5, ${ratingMeaning(axis, level, "you")}`}
                 {level === agentLevel ? ", which was the Agent's Rating" : ""}
               </span>
             </CorrectionButton>
@@ -171,7 +171,7 @@ function Choice({ axis }: { axis: RatingAxis }) {
         </option>
         {levels.map((level) => (
           <option key={level} value={level}>
-            {`${String(level)} of 5, ${ratingMeaning(axis, level)}`}
+            {`${String(level)} of 5, ${ratingMeaning(axis, level, "you")}`}
           </option>
         ))}
       </select>
@@ -189,25 +189,28 @@ function ScaleGuide() {
         What the levels mean
       </summary>
       <div className="mt-1 flex flex-col gap-3">
-        {Object.values(ratingScale).map(({ name, about, levels: scale }) => (
-          <div key={name} className="flex flex-col gap-1">
-            <p className={`${label} text-muted-foreground`}>{`${name}, ${about}`}</p>
-            <ul className="flex flex-col gap-1 text-sm">
-              {scale.map((entry) => (
-                <li key={entry.level} className="flex gap-2">
-                  {/* One text node for a screen reader, as on the chips. */}
-                  <span className="sr-only">{`${String(entry.level)} of 5: ${ratingAnchor(entry)}`}</span>
-                  <span aria-hidden="true" className="font-mono">
-                    {entry.level}
-                  </span>
-                  <span aria-hidden="true" className="first-letter:uppercase">
-                    {ratingAnchor(entry)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ))}
+        {ratingAxes.map((axis) => {
+          const { name, levels: scale } = ratingScale[axis];
+          return (
+            <div key={name} className="flex flex-col gap-1">
+              <p className={`${label} text-muted-foreground`}>{`${name}, ${ratingAbout(ratingScale[axis], "you")}`}</p>
+              <ul className="flex flex-col gap-1 text-sm">
+                {scale.map((entry) => (
+                  <li key={entry.level} className="flex gap-2">
+                    {/* One text node for a screen reader, as on the chips. */}
+                    <span className="sr-only">{`${String(entry.level)} of 5: ${ratingAnchor(entry, "you")}`}</span>
+                    <span aria-hidden="true" className="font-mono">
+                      {entry.level}
+                    </span>
+                    <span aria-hidden="true" className="first-letter:uppercase">
+                      {ratingAnchor(entry, "you")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
       </div>
     </details>
   );
