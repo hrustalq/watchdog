@@ -30,6 +30,7 @@ import {
   declaredFields,
   destinationChoices,
   getRule,
+  knownCategories,
   listRules,
   maxRuleYaml,
   problemsInDraft,
@@ -786,6 +787,58 @@ describe("Rules", () => {
         { name: "plan", type: "string" },
         { name: "price", type: "integer" },
       ]);
+    });
+  });
+
+  describe("the Categories the Workspace knows", () => {
+    /** A Workspace of its own, so no other test's Categories can be in the answer. */
+    async function newWorkspace(name: string) {
+      const owner = unique();
+      await db.insert(user).values({ id: owner, name, email: `${owner}@example.com` });
+      const [row] = await db.insert(workspace).values({ name, ownerUserId: owner }).returning({ id: workspace.id });
+      const id = row?.id ?? "";
+      const [feed] = await db
+        .insert(source)
+        .values({ workspaceId: id, type: "rss", name: "Blog", config: { url: `https://example.com/${unique()}` }, schedule: "*/15 * * * *" })
+        .returning({ id: source.id });
+      return { id, sourceId: feed?.id ?? "" };
+    }
+
+    async function categoryOnItem(workspaceId: string, sourceId: string, category: string) {
+      const [row] = await db
+        .insert(item)
+        .values({ workspaceId, sourceId, externalId: unique(), title: "T", body: "", raw: {} })
+        .returning({ id: item.id });
+      await db.insert(itemCategory).values({ itemId: row?.id ?? "", category });
+    }
+
+    it("has those the Items carry and the Classifiers declare, and no other Workspace's", async () => {
+      const us = await newWorkspace("Categoried");
+      const them = await newWorkspace("Other");
+      const onItem = unique();
+      const assigned = unique();
+      const declared = unique();
+      const theirsOnItem = unique();
+      const theirsAssigned = unique();
+
+      await categoryOnItem(us.id, us.sourceId, onItem);
+      await saved(us.id, `classifier: ${unique()}\nwhen: { field: title, op: exists }\nassign: [${assigned}]\n`);
+      await saved(us.id, `classifier: ${unique()}\nprompt: Sort it.\ncategories: [${declared}]\n`);
+      await categoryOnItem(them.id, them.sourceId, theirsOnItem);
+      await saved(them.id, `classifier: ${unique()}\nwhen: { field: title, op: exists }\nassign: [${theirsAssigned}]\n`);
+
+      expect(await knownCategories(db, us.id)).toEqual([onItem, assigned, declared].sort((a, b) => a.localeCompare(b)));
+      expect(await knownCategories(db, them.id)).toEqual([theirsOnItem, theirsAssigned].sort((a, b) => a.localeCompare(b)));
+    });
+
+    it("still saves a Category no Item has yet", async () => {
+      const us = await newWorkspace("Brand new");
+      const category = unique();
+
+      const { id } = await saved(us.id, `classifier: ${unique()}\nwhen: { field: title, op: exists }\nassign: [${category}]\n`);
+
+      expect((await getRule(db, us.id, "classifier", id))?.yaml).toContain(category);
+      expect(await knownCategories(db, us.id)).toEqual([category]);
     });
   });
 
