@@ -23,6 +23,19 @@ function alertText({ title, source, rating, summary, link, why }: AlertMessage) 
 }
 
 /**
+ * Whether the server refused the recipient itself, for good: a 5xx answer to RCPT TO. A failed login,
+ * a refused sender or a 4xx is the install's or the moment's trouble, and a retry can get past it.
+ * nodemailer's `smtp-connection` sets `command` and `responseCode` on the error it rejects with, both
+ * for one refused recipient and for its "all recipients were rejected" error.
+ */
+function refusedAddress(error: unknown) {
+  if (!(error instanceof Error)) return false;
+  if (!("command" in error) || !("responseCode" in error)) return false;
+  const { command, responseCode } = error;
+  return command === "RCPT TO" && typeof responseCode === "number" && responseCode >= 500 && responseCode <= 599;
+}
+
+/**
  * Plain text, with no markup part, so nothing in an Item's text can format the mail. A subject is a single
  * header line, so a title's line breaks go. On hosted the mail server is the operator's and the Log is the
  * user's, so the server's own answer goes to the worker's log.
@@ -64,6 +77,9 @@ export function createEmailSender(mailer: Mailer, from: string | undefined): Ale
       } catch (error) {
         const answer = error instanceof Error ? error.message : String(error);
         process.stderr.write(`Sending a mail to Destination ${destination.id} failed: ${answer}\n`);
+        // The address won't start working, and another attempt at a hard bounce is what hurts the
+        // hosted subdomain's sending reputation.
+        if (refusedAddress(error)) throw new FinalSendError("the mail server refused this address");
         throw new Error("the mail server can't be reached or refused the mail", { cause: error });
       }
     },

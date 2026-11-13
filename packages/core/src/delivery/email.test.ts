@@ -1,5 +1,5 @@
 import { Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createMailer, type MailMessage } from "../mail/mailer.ts";
 import type { AlertMessage } from "./content.ts";
 import type { Destination } from "./deliver.ts";
@@ -45,6 +45,15 @@ function recording(from?: string) {
     from,
   );
   return { sent, sender };
+}
+
+/**
+ * The error nodemailer rejects with when the server answers a command with a failure: its
+ * `smtp-connection` sets `code`, `command` and, for a reply with a code, `responseCode` (see
+ * smtp.int.test.ts for the real ones).
+ */
+function smtpError(text: string, fields: { code: string; command: string; responseCode?: number }) {
+  return Object.assign(new Error(text), fields);
 }
 
 describe("createEmailSender", () => {
@@ -181,6 +190,64 @@ describe("createEmailSender", () => {
     expect(failure).not.toBeInstanceOf(FinalSendError);
     expect(String(failure)).not.toContain("10.0.3.7");
     expect(String(failure)).toContain("mail server");
+  });
+
+  it("fails for good when the server refuses the address, and keeps its answer for the worker's log", async () => {
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const refused = smtpError(
+      "Can't send mail - all recipients were rejected: 550 5.1.1 <me@example.com>: recipient address rejected",
+      { code: "EENVELOPE", command: "RCPT TO", responseCode: 550 },
+    );
+    const sender = createEmailSender({ send: () => Promise.reject(refused) }, undefined);
+
+    const failure = await sender.send(confirmed, message).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(FinalSendError);
+    expect(String(failure)).toContain("the mail server refused this address");
+    expect(String(failure)).not.toContain("550");
+    expect(String(failure)).not.toContain("me@example.com");
+    expect(stderr.mock.calls.join()).toContain("recipient address rejected");
+    stderr.mockRestore();
+  });
+
+  it.each([
+    [
+      "a failed login",
+      smtpError("Invalid login: 535 5.7.8 Authentication credentials invalid", {
+        code: "EAUTH",
+        command: "AUTH PLAIN",
+        responseCode: 535,
+      }),
+    ],
+    [
+      "a refused sender",
+      smtpError("Mail command failed: 550 5.1.8 Sender address rejected", {
+        code: "EENVELOPE",
+        command: "MAIL FROM",
+        responseCode: 550,
+      }),
+    ],
+    [
+      "a temporary refusal of the recipient",
+      smtpError("Recipient command failed: 450 4.2.0 Try again later", {
+        code: "EENVELOPE",
+        command: "RCPT TO",
+        responseCode: 450,
+      }),
+    ],
+    [
+      "a refused connection",
+      smtpError("connect ECONNREFUSED 10.0.3.7:587", { code: "ESOCKET", command: "CONN" }),
+    ],
+  ])("queues a retry after %s", async (_name, refused) => {
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    const sender = createEmailSender({ send: () => Promise.reject(refused) }, undefined);
+
+    const failure = await sender.send(confirmed, message).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(FinalSendError);
+    expect(String(failure)).toContain("the mail server can't be reached or refused the mail");
   });
 
   it("cuts a long title in the subject, and doesn't split a character made of two UTF-16 units", async () => {
