@@ -88,28 +88,33 @@ function Scale({ axis, current }: { axis: RatingAxis; current: number }) {
   const meaning = ratingMeaning(axis, current);
   return (
     <div className="flex w-full flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
-      <div role="group" aria-label={`Correct ${name}`} className="flex shrink-0 items-center gap-1">
-        <span aria-hidden="true" className={`w-18 ${label} text-muted-foreground`}>
+      <div role="group" aria-label={`Correct ${name}`} className="flex min-w-0 shrink-0 flex-wrap items-center gap-1">
+        {/* The label and the five buttons don't fit a phone's column at large text, so the label takes
+            its own line and the buttons wrap rather than pushing the row past the page's gutter. */}
+        <span aria-hidden="true" className={`w-18 min-w-0 break-words ${label} text-muted-foreground`}>
           {name}
         </span>
-        {levels.map((level) => (
-          <CorrectionButton
-            key={level}
-            // The current level posts nothing, and stays focusable after its click made it current.
-            {...(level === current ? { type: "button" } : { type: "submit", name: axis, value: String(level) })}
-            size="icon-xs"
-            variant={level === current ? "default" : "ghost"}
-            aria-current={level === current ? "true" : undefined}
-            // Forced colors drop the fill, which would hide which level is the current one.
-            className={`font-mono ${level === current ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]" : ""}`}
-          >
-            <span aria-hidden="true">{level}</span>
-            <span className="sr-only">{`Set ${name} to ${String(level)} of 5, ${ratingMeaning(axis, level)}`}</span>
-          </CorrectionButton>
-        ))}
+        <span className="flex min-w-0 flex-wrap items-center gap-1">
+          {levels.map((level) => (
+            <CorrectionButton
+              key={level}
+              // The current level posts nothing, and stays focusable after its click made it current.
+              {...(level === current ? { type: "button" } : { type: "submit", name: axis, value: String(level) })}
+              size="icon-xs"
+              variant={level === current ? "default" : "ghost"}
+              aria-current={level === current ? "true" : undefined}
+              // Forced colors drop the fill, which would hide which level is the current one.
+              className={`font-mono ${level === current ? "forced-color-adjust-none forced-colors:bg-[Highlight] forced-colors:text-[HighlightText]" : ""}`}
+            >
+              <span aria-hidden="true">{level}</span>
+              <span className="sr-only">{`Set ${name} to ${String(level)} of 5, ${ratingMeaning(axis, level)}`}</span>
+            </CorrectionButton>
+          ))}
+        </span>
       </div>
-      {/* Lines up under the buttons on a phone. One text node for a screen reader, as on the chips. */}
-      <p className={`pl-19 ${label} text-muted-foreground first-letter:uppercase sm:pl-0`}>
+      {/* Lines up under the buttons on a phone, and loses the indent when they wrapped under the label
+          instead. One text node for a screen reader, as on the chips. */}
+      <p className={`pl-19 ${label} text-muted-foreground first-letter:uppercase @max-[13.25rem]:pl-0 sm:pl-0`}>
         <span className="sr-only">{`${name}: ${meaning}`}</span>
         <span aria-hidden="true">{meaning}</span>
       </p>
@@ -193,7 +198,7 @@ export function RatingControls({
   importance: number | null;
 }) {
   return (
-    <form action={correctRatingAction} className={`flex flex-wrap items-center gap-x-4 gap-y-2 ${saving}`}>
+    <form action={correctRatingAction} className={`flex w-full flex-wrap items-center gap-x-4 gap-y-2 ${saving}`}>
       <input type="hidden" name="itemId" value={itemId} />
       <CorrectionStatus result={ratingResult(severity, importance)} />
       {severity === null || importance === null ? (
