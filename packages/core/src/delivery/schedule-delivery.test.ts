@@ -71,6 +71,47 @@ describe("scheduleDelivery", () => {
       });
     });
 
+    it("ends at the first moment after an end time the clocks skipped, not the next day", () => {
+      const havana = { ...settings, timezone: "America/Havana", quietHoursStart: "22:00:00", quietHoursEnd: "00:00:00" };
+      // Clocks in Havana go from 00:00 to 01:00 on 8 March 2026, so 00:00 that day never happens.
+      // 04:00 UTC is 23:00 on the 7th there, and quiet hours end an hour later, at 01:00 local.
+      const now = new Date("2026-03-08T04:00:00Z");
+      expect(scheduleDelivery({ settings: havana, now, severity: 4, recentSends: [] })).toEqual({
+        kind: "hold",
+        reason: "quiet hours",
+        until: new Date("2026-03-08T05:00:00Z"),
+      });
+    });
+
+    it("ends inside the gap on a European change day", () => {
+      const berlin = { ...settings, timezone: "Europe/Berlin", quietHoursStart: "01:00:00", quietHoursEnd: "02:30:00" };
+      // Clocks in Berlin go from 02:00 to 03:00 on 29 March 2026, so 02:30 that day never happens.
+      const now = new Date("2026-03-29T00:30:00Z");
+      expect(scheduleDelivery({ settings: berlin, now, severity: 4, recentSends: [] })).toEqual({
+        kind: "hold",
+        reason: "quiet hours",
+        until: new Date("2026-03-29T01:00:00Z"),
+      });
+    });
+
+    it("ends at the first reading of an end time the clocks repeat", () => {
+      const berlin = { ...settings, timezone: "Europe/Berlin", quietHoursStart: "22:00:00", quietHoursEnd: "02:30:00" };
+      // Clocks in Berlin go from 03:00 to 02:00 on 25 October 2026, so 02:30 happens twice, an hour apart.
+      const hold = (now: string) =>
+        scheduleDelivery({ settings: berlin, now: new Date(now), severity: 4, recentSends: [] });
+      expect(hold("2026-10-24T21:00:00Z")).toEqual({
+        kind: "hold",
+        reason: "quiet hours",
+        until: new Date("2026-10-25T00:30:00Z"),
+      });
+      // Past the first reading of it, the second one ends them.
+      expect(hold("2026-10-25T01:10:00Z")).toEqual({
+        kind: "hold",
+        reason: "quiet hours",
+        until: new Date("2026-10-25T01:30:00Z"),
+      });
+    });
+
     it("lets Severity 5 through only with the bypass on", () => {
       const bypass = { ...overnight, severity5BypassesQuietHours: true };
       const now = at("23:00:00");
