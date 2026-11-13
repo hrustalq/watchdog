@@ -156,6 +156,15 @@ async function loadDue(reader: Db | Tx, ...which: (SQL | undefined)[]) {
 
 type DueDelivery = Awaited<ReturnType<typeof loadDue>>[number];
 
+/** Why a row waits, as the column keeps it. A Settings save reads this to leave the email cap's hold alone. */
+type HoldReason = NonNullable<(typeof delivery.$inferSelect)["holdReason"]>;
+
+/** The holds the settings' own checks make, and the words the Log says for each. */
+const settingsHolds: Record<"quiet hours" | "rate limit", HoldReason> = {
+  "quiet hours": "quiet-hours",
+  "rate limit": "rate-limit",
+};
+
 /**
  * Puts held and grouped Deliveries whose time has come back in the queue, and returns them. A row another
  * transaction holds is passed over, because that one is releasing it, and the next sweep finds any that
@@ -169,7 +178,7 @@ export async function releaseDueDeliveries(tx: Tx, which?: SQL) {
     .for("update", { skipLocked: true });
   return tx
     .update(delivery)
-    .set({ status: "queued", nextAttemptAt: null })
+    .set({ status: "queued", nextAttemptAt: null, holdReason: null })
     .where(inArray(delivery.id, due))
     .returning({ id: delivery.id });
 }
@@ -255,14 +264,20 @@ async function applySchedule(
   const [settings] = await tx.select().from(workspace).where(eq(workspace.id, target.workspaceId));
   if (settings === undefined) return [];
 
-  const hold = (row: DueDelivery, until: Date, reason: string, groupId: string | null) =>
+  const hold = (row: DueDelivery, until: Date, why: { reason: HoldReason; words: string }, groupId: string | null) =>
     record(
       tx,
       row,
       target,
-      { status: groupId === null ? "held" : "grouped", nextAttemptAt: until, retryFrom: until, groupId },
       {
-        message: `Held until ${localTime(until, settings.timezone)}: ${reason}`,
+        status: groupId === null ? "held" : "grouped",
+        nextAttemptAt: until,
+        retryFrom: until,
+        groupId,
+        holdReason: why.reason,
+      },
+      {
+        message: `Held until ${localTime(until, settings.timezone)}: ${why.words}`,
         data: { heldUntil: until.toISOString() },
       },
     );
@@ -283,7 +298,7 @@ async function applySchedule(
       continue;
     }
     if (decision.kind === "hold") {
-      await hold(row, decision.until, decision.reason, null);
+      await hold(row, decision.until, { reason: settingsHolds[decision.reason], words: decision.reason }, null);
       continue;
     }
     if (groupId === undefined) {
@@ -294,14 +309,14 @@ async function applySchedule(
         .limit(1);
       groupId = open?.groupId ?? crypto.randomUUID();
     }
-    await hold(row, decision.until, "burst window", groupId);
+    await hold(row, decision.until, { reason: "burst-window", words: "burst window" }, groupId);
   }
 
   // Last, because a mail another setting holds back isn't one of the day's 50 yet.
   if (emailCap === undefined || sending.length === 0) return sending;
   const capEnd = await emailCapEnd(tx, settings, now);
   if (capEnd === undefined) return sending;
-  for (const row of sending) await hold(row, capEnd, capReason, null);
+  for (const row of sending) await hold(row, capEnd, { reason: "email-cap", words: capReason }, null);
   await queueCapNoticeOnce(tx, settings, capEnd, emailCap);
   return [];
 }
