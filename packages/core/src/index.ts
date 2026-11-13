@@ -97,5 +97,6 @@ export {
   ruleSchema,
 } from "./rules/schema.ts";
 export { regexError, ruleInstructions } from "./rules/regex.ts";
+export { jsonPathFansOut } from "./rules/jsonpath.ts";
 export { conditionToWords } from "./rules/words.ts";
 export { ruleFromYaml, ruleToYaml } from "./rules/yaml.ts";

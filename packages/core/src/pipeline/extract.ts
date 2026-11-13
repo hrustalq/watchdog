@@ -3,7 +3,7 @@ import { and, type Db, eq, extractorRule, inArray, itemCategory, itemField, sql,
 import type { z } from "zod";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
 import { cssValues, parseHtml } from "../rules/css.ts";
-import { jsonPathValues, maxFieldValues } from "../rules/jsonpath.ts";
+import { jsonPathNodeCount, jsonPathValues, maxFieldValues } from "../rules/jsonpath.ts";
 import { firstCapture } from "../rules/regex.ts";
 import { type DeterministicExtractorRule, deterministicExtractorRuleSchema } from "../rules/schema.ts";
 import { logOnce, rulesFor } from "./rules-for-item.ts";
@@ -36,9 +36,16 @@ function pageOf(source: ExtractionSource, html: string) {
   return pages.get(source);
 }
 
-/** What the field finds, or why it can't read anything. */
-function read(field: Field, source: ExtractionSource): unknown[] | string {
-  if ("jsonpath" in field) return jsonPathValues(field.jsonpath, source.raw) ?? "the Item's raw payload nests too deeply to read";
+/**
+ * What the field finds, or why it can't read anything. `jsonPathRefusal` is why no JSONPath field can
+ * read this Item at all, which is the node limit rather than anything about the field.
+ */
+function read(field: Field, source: ExtractionSource, jsonPathRefusal?: string): unknown[] | string {
+  if ("jsonpath" in field) {
+    return (
+      jsonPathRefusal ?? jsonPathValues(field.jsonpath, source.raw) ?? "the Item's raw payload nests too deeply to read"
+    );
+  }
   if ("css" in field) {
     // Only a website Item keeps page HTML, and another Source's payload can have an `html` key too.
     if (source.sourceType !== "website") return "no page HTML on this Item";
@@ -118,9 +125,16 @@ export function toExtraction<Declared extends { name: string; type: Field["type"
   return extraction;
 }
 
-/** Reads each field of a deterministic rule from the Item. */
-export function extractFields(fields: readonly Field[], source: ExtractionSource): Extraction {
-  return toExtraction(fields, (field) => read(field, source));
+/**
+ * Reads each field of a deterministic rule from the Item. `jsonPathRefusal` says why the Item's
+ * payload is too large to read with a JSONPath, and then only the JSONPath fields store nothing.
+ */
+export function extractFields(
+  fields: readonly Field[],
+  source: ExtractionSource,
+  jsonPathRefusal?: string,
+): Extraction {
+  return toExtraction(fields, (field) => read(field, source, jsonPathRefusal));
 }
 
 export async function categoriesOf(db: Pick<Db | Tx, "select">, itemId: string) {
@@ -195,12 +209,15 @@ export async function storeExtraction(
  * it sees every Classifier that ran before this stage, deterministic or Agent-backed (GitHub issue
  * #79). A retry runs them all again with the Categories it has now. It clears what they stored first,
  * so a field from an attempt whose classify call failed can't outlive a Condition that no longer holds
- * or beat an older rule that now fills it.
+ * or beat an older rule that now fills it. `jsonPathNodes` is the most nodes a hosted Item's `raw` may
+ * hold for its JSONPath fields to run: a payload over it is read once and refused, and every other
+ * field still runs (GitHub issue #111).
  */
 export async function runDeterministicExtractorRules(
   tx: Tx,
   itemId: string,
   target: ConditionItem & ExtractionSource,
+  jsonPathNodes?: number,
 ) {
   const rules = await rulesFor(tx, extractorRule, itemId, "deterministic");
   if (rules.length === 0) return;
@@ -213,6 +230,12 @@ export async function runDeterministicExtractorRules(
   );
 
   const categories = await categoriesOf(tx, itemId);
+  // Counted once per Item, since every rule's fields read the same payload, and the count stops one
+  // past the limit, so refusing a 10 MB payload is as cheap as reading one at the limit.
+  const jsonPathRefusal =
+    jsonPathNodes === undefined || jsonPathNodeCount(target.raw, jsonPathNodes) <= jsonPathNodes
+      ? undefined
+      : `the Item's raw payload holds more than ${jsonPathNodes.toLocaleString("en")} nodes, so Watchdog didn't read it`;
 
   for (const rule of rules) {
     const parsed = deterministicExtractorRuleSchema.safeParse(rule.definition);
@@ -221,6 +244,6 @@ export async function runDeterministicExtractorRules(
       continue;
     }
     if (!evaluateCondition(parsed.data.when, { ...target, categories })) continue;
-    await storeExtraction(tx, log, itemId, rule, extractFields(parsed.data.fields, target));
+    await storeExtraction(tx, log, itemId, rule, extractFields(parsed.data.fields, target, jsonPathRefusal));
   }
 }

@@ -303,10 +303,12 @@ describe("loadConfig", () => {
     expect(loadConfig({ ...minimal, ...smtp, WATCHDOG_MODE: "hosted" }).ruleLimits).toEqual({
       instructions: 5000,
       rules: 100,
+      jsonPathFields: 50,
+      jsonPathNodes: 50_000,
     });
   });
 
-  it("takes both rule limits from the environment", () => {
+  it("takes the rule limits from the environment", () => {
     expect(
       loadConfig({
         ...minimal,
@@ -314,8 +316,10 @@ describe("loadConfig", () => {
         WATCHDOG_MODE: "hosted",
         HOSTED_MAX_RULE_INSTRUCTIONS: "2500",
         HOSTED_MAX_RULES: "3",
+        HOSTED_MAX_RULE_JSONPATH_FIELDS: "7",
+        HOSTED_MAX_JSONPATH_NODES: "1000",
       }).ruleLimits,
-    ).toEqual({ instructions: 2500, rules: 3 });
+    ).toEqual({ instructions: 2500, rules: 3, jsonPathFields: 7, jsonPathNodes: 1000 });
   });
 
   it("rejects a rule limit that isn't a positive whole number, naming the variable", () => {
@@ -323,11 +327,19 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...minimal, HOSTED_MAX_RULE_INSTRUCTIONS: "lots" })).toThrow(
       /HOSTED_MAX_RULE_INSTRUCTIONS/,
     );
+    expect(() => loadConfig({ ...minimal, HOSTED_MAX_RULE_JSONPATH_FIELDS: "-1" })).toThrow(
+      /HOSTED_MAX_RULE_JSONPATH_FIELDS/,
+    );
+    expect(() => loadConfig({ ...minimal, HOSTED_MAX_JSONPATH_NODES: "many" })).toThrow(
+      /HOSTED_MAX_JSONPATH_NODES/,
+    );
   });
 
   it("warns at boot that self-hosted ignores the rule limits", () => {
     const warn = vi.fn();
     loadConfig({ ...minimal, HOSTED_MAX_RULES: "3" }, warn);
-    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/HOSTED_MAX_RULES are ignored/));
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/HOSTED_MAX_RULES.*are ignored/));
+    loadConfig({ ...minimal, HOSTED_MAX_JSONPATH_NODES: "10" }, warn);
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/HOSTED_MAX_JSONPATH_NODES.*are ignored/));
   });
 });

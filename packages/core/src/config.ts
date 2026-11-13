@@ -19,6 +19,17 @@ const groups = {
 
 const oauth = (id: string, secret: string) => ({ clientId: id, clientSecret: secret });
 
+/** The variables that only a hosted install's rule limits use: self-hosted ignores them and warns. */
+const hostedLimitNames = [
+  "HOSTED_MAX_RULE_INSTRUCTIONS",
+  "HOSTED_MAX_RULES",
+  "HOSTED_MAX_RULE_JSONPATH_FIELDS",
+  "HOSTED_MAX_JSONPATH_NODES",
+];
+
+const hostedLimitsSet = (input: Record<string, unknown>) =>
+  hostedLimitNames.some((name) => input[name] !== undefined);
+
 // The key in .env.example, which lets a copied file start the stack. It's public, so it protects
 // nothing, and a secret stored under it can't move to a real key without being entered again.
 const placeholderKey = Buffer.from("replace-with-32-random-key-bytes");
@@ -86,9 +97,13 @@ const schema = z
         return rules;
       }),
     // The hosted plan's per-Workspace rule limits (docs: Business model and licensing). Hosted
-    // enforces them on a save and on an enable; self-hosted sets no limit.
+    // enforces them on a save and on an enable; self-hosted sets no limit. A JSONPath field that can
+    // fan out costs nodes, not bytes, so 50,000 nodes is about 50 of the slowest path measured
+    // (2.6 s on node:26-alpine), and a bigger payload is refused rather than walked.
     HOSTED_MAX_RULE_INSTRUCTIONS: z.coerce.number().int().positive().default(5000),
     HOSTED_MAX_RULES: z.coerce.number().int().positive().default(100),
+    HOSTED_MAX_RULE_JSONPATH_FIELDS: z.coerce.number().int().positive().default(50),
+    HOSTED_MAX_JSONPATH_NODES: z.coerce.number().int().positive().default(50_000),
     GLITCHTIP_DSN: z.url({ protocol: /^https?$/ }).optional(),
   })
   .refine((env) => env.WATCHDOG_MODE !== "hosted" || env.smtp !== undefined, {
@@ -139,10 +154,15 @@ const schema = z
     chromium: env.chromium && { url: env.chromium.CHROMIUM_URL, token: env.chromium.CHROMIUM_TOKEN },
     egressAllowlist: env.EGRESS_ALLOWLIST,
     // A Workspace's rules cost the shared worker per Item, so hosted caps them; self-hosted has no
-    // limit, and the two values are absent rather than infinite (docs: Business model and licensing).
+    // limit, and the values are absent rather than infinite (docs: Business model and licensing).
     ruleLimits:
       env.WATCHDOG_MODE === "hosted"
-        ? { instructions: env.HOSTED_MAX_RULE_INSTRUCTIONS, rules: env.HOSTED_MAX_RULES }
+        ? {
+            instructions: env.HOSTED_MAX_RULE_INSTRUCTIONS,
+            rules: env.HOSTED_MAX_RULES,
+            jsonPathFields: env.HOSTED_MAX_RULE_JSONPATH_FIELDS,
+            jsonPathNodes: env.HOSTED_MAX_JSONPATH_NODES,
+          }
         : undefined,
     glitchtipDsn: env.GLITCHTIP_DSN,
   }));
@@ -183,12 +203,9 @@ export function loadConfig(
         "TELEGRAM_API_ID and TELEGRAM_API_HASH are ignored when WATCHDOG_MODE=hosted: hosted Watchdog offers no Telegram user sessions.",
       );
     }
-    if (
-      result.data.mode !== "hosted" &&
-      (input.HOSTED_MAX_RULE_INSTRUCTIONS !== undefined || input.HOSTED_MAX_RULES !== undefined)
-    ) {
+    if (result.data.mode !== "hosted" && hostedLimitsSet(input)) {
       warn(
-        "HOSTED_MAX_RULE_INSTRUCTIONS and HOSTED_MAX_RULES are ignored when WATCHDOG_MODE=self-hosted: a self-hosted Watchdog sets no rule limits.",
+        "HOSTED_MAX_RULE_INSTRUCTIONS, HOSTED_MAX_RULES, HOSTED_MAX_RULE_JSONPATH_FIELDS and HOSTED_MAX_JSONPATH_NODES are ignored when WATCHDOG_MODE=self-hosted: a self-hosted Watchdog sets no rule limits.",
       );
     }
     if (result.data.encryptionKey.equals(placeholderKey)) {

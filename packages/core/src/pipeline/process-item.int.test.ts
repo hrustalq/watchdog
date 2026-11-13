@@ -1987,6 +1987,54 @@ describe("processItem", () => {
       });
     });
 
+    /** An Item whose `raw` holds 12 nodes, more than the 10 the tests below allow. */
+    async function wideItem(seeded: Seeded) {
+      const [created] = await db
+        .insert(item)
+        .values({
+          ...seeded,
+          externalId: crypto.randomUUID(),
+          title: "CVE-1",
+          body: "Body",
+          raw: { items: Array.from({ length: 5 }, (_, i) => ({ n: i })) },
+        })
+        .returning();
+      return present(created).id;
+    }
+
+    const fanOutFields = [
+      { name: "first", type: "integer", jsonpath: "$.items[*].n" },
+    ] as const;
+
+    it("reads no JSONPath field on an Item over the plan's node limit, and still runs its regex field", async () => {
+      const seeded = await seed();
+      await saveRule(seeded, "wide", extractor("wide", anyTitle, [cve, ...fanOutFields]));
+      const itemId = await wideItem(seeded);
+
+      await processItem(db, itemId, { ...deps, jsonPathNodes: 10 });
+
+      expect((await fieldsOf(itemId)).map((row) => row.name)).toEqual(["cve"]);
+      const [row] = await extractLog(itemId);
+      expect(row?.message).toBe(
+        "Extractor Rule wide extracted cve; stored nothing for first: " +
+          "the Item's raw payload holds more than 10 nodes, so Watchdog didn't read it",
+      );
+      expect(row?.data).toMatchObject({ fields: ["cve"], problems: [{ name: "first" }] });
+      // The Item finishes, and the Log repeats no value from the payload.
+      expect((await reload(itemId)).processedAt).not.toBeNull();
+      expect(row?.message).not.toContain("items");
+    });
+
+    it("reads the same Item with no node limit, as a self-hosted install runs", async () => {
+      const seeded = await seed();
+      await saveRule(seeded, "wide", extractor("wide", anyTitle, [cve, ...fanOutFields]));
+      const itemId = await wideItem(seeded);
+
+      await processItem(db, itemId, deps);
+
+      expect((await fieldsOf(itemId)).map((row) => row.name).sort()).toEqual(["cve", "first"]);
+    });
+
     it("sees Categories from deterministic Classifiers and ones already on the Item", async () => {
       const seeded = await seed();
       await saveClassifier(seeded, "launches", deterministic("launches", titleContains("launch"), ["launch"]));

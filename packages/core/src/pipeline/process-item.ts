@@ -11,6 +11,11 @@ export interface ProcessItemDeps extends ActDeps {
   agent: AgentDeps;
   /** No retry follows this run, so a failed call still finishes the Item, which stays unrated. */
   lastAttempt?: boolean;
+  /**
+   * The most nodes an Item's `raw` may hold for its JSONPath fields to run, which a hosted plan sets
+   * and a self-hosted install leaves undefined (GitHub issue #111).
+   */
+  jsonPathNodes?: number;
 }
 
 /** Locks the Item's row. Undefined when it's finished, or gone: deleted while its job waited. */
@@ -48,7 +53,7 @@ async function runStages(db: Db, itemId: string, deps: ProcessItemDeps, now: () 
   const unfinished = await db.transaction(async (tx) => {
     const locked = await lockUnfinished(tx, itemId);
     if (locked === undefined) return undefined;
-    await runDeterministicExtractorRules(tx, itemId, locked);
+    await runDeterministicExtractorRules(tx, itemId, locked, deps.jsonPathNodes);
     return locked;
   });
   if (unfinished === undefined) return;
