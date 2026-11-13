@@ -292,7 +292,7 @@ Character: precise and quiet; the action is clear from the label and position, n
 
 ### Usage tables (`apps/web/src/app/usage/page.tsx`)
 - **Style:** a hairline panel of Label column heads and Data readings, right-aligned, with the name or purpose first and the Estimated cost second, so a phone sees it without scrolling. Below that width the table scrolls by itself, with the first column sticky so each reading still says whose it is. Costs stay ink, because a bill is a reading and not an alarm.
-- **A partial estimate:** "≥" marks a cost that leaves calls out, and screen readers hear "At least". The page says how many calls and why. A model with no prices shows the words "No prices", or "Set prices" as a link on the active model, whose prices can still change.
+- **A partial estimate:** "≥" marks a cost that leaves calls out, and screen readers hear "At least". The page says how many calls and why. A model with no prices shows "Set prices" as a link on the active model, whose prices change on the Model screen, or the words "No prices" on an archived one, which opens a disclosure that sets them in that cell.
 
 ### Feed row
 - **Style:** Flat on Graphite Floor, hairline between rows, Raised Graphite on hover. Layout: Title with the timestamp in Data type right-aligned; then the summary, or the excerpt until there is one, up to two lines; then the Rating chips with their Correction controls, Categories, Source and Backfill. A source glyph before the Title is still to build.
