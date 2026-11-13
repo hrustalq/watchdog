@@ -12,6 +12,7 @@ export {
   urlIpLiteral,
 } from "./egress/egress.ts";
 export { type AlertSender, deliver, type DeliverDeps, purgeSentMessages, releaseDueDeliveries, type Sender } from "./delivery/deliver.ts";
+export { localDateTime } from "./delivery/schedule-delivery.ts";
 export { type DigestDeps, dueDigests, sendDigest } from "./delivery/digest.ts";
 export { type EmailCap, sendEmailCapNotice } from "./delivery/email-cap.ts";
 export { releaseDueSourceAlerts, sendSourceAlert, type SourceAlertDeps } from "./delivery/source-alert.ts";

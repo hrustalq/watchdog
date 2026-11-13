@@ -347,12 +347,12 @@ describe("the Settings screen's alert settings", () => {
       const deliveryId = await queue(4);
       await deliver(db, deliveryId, deps);
       const held = await rowOf(deliveryId);
-      expect(await logOf(deliveryId)).toEqual(["Held until 07:00: quiet hours"]);
+      expect(await logOf(deliveryId)).toEqual(["Held until 2099-01-08 07:00 Europe/Moscow: quiet hours"]);
 
       await saveAlertSettings(db, workspaceId, quiet());
 
       expect(await rowOf(deliveryId)).toEqual(held);
-      expect(await logOf(deliveryId)).toEqual(["Held until 07:00: quiet hours"]);
+      expect(await logOf(deliveryId)).toEqual(["Held until 2099-01-08 07:00 Europe/Moscow: quiet hours"]);
     });
 
     it("leaves an alert the hosted email cap holds until the next local day, and its Log alone", async () => {
@@ -393,7 +393,9 @@ describe("the Settings screen's alert settings", () => {
         holdReason: "email-cap",
         nextAttemptAt: new Date("2099-01-08T00:00:00Z"),
       });
-      expect(await logOf(deliveryId)).toEqual(["Held until 00:00: the hosted limit of 50 mails a day"]);
+      expect(await logOf(deliveryId)).toEqual([
+        "Held until 2099-01-08 00:00 UTC: the hosted limit of 50 mails a day",
+      ]);
       expect(notices).toEqual([workspaceId]);
     });
   });

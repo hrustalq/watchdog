@@ -222,7 +222,9 @@ describe("alert email", () => {
         attempts: 0,
         nextAttemptAt: at(8, "00:00:00"),
       });
-      expect(await logOf(fiftyFirst.itemId)).toEqual(["Held until 00:00: the hosted limit of 50 mails a day"]);
+      expect(await logOf(fiftyFirst.itemId)).toEqual([
+        "Held until 2099-01-08 00:00 UTC: the hosted limit of 50 mails a day",
+      ]);
     });
 
     it.each([
@@ -413,7 +415,7 @@ describe("alert email", () => {
       expect(present(mails[50]).subject).toBe("[Watchdog] 3 alerts");
       for (const { deliveryId } of held) expect(await rowOf(deliveryId)).toMatchObject({ status: "sent" });
       expect(await logOf(present(held[0]).itemId)).toEqual([
-        "Held until 00:00: the hosted limit of 50 mails a day",
+        "Held until 2099-01-08 00:00 UTC: the hosted limit of 50 mails a day",
         "Sent to me in a group of 3",
       ]);
 

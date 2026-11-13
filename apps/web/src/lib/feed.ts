@@ -1,6 +1,7 @@
 // The Feed as the Workspace screen reads it, in its Top and Latest views (docs: Processing pipeline,
 // "Feed"). Every query is scoped to the Workspace, so another Workspace's Item id behaves like a
 // missing one.
+import { localDateTime } from "@watchdog/core";
 import {
   action,
   actionDestination,
@@ -186,14 +187,13 @@ export function isActFailure({ stage, data }: { stage: string; data: unknown }) 
 type Delivery = Pick<typeof delivery.$inferSelect, "status" | "attempts" | "nextAttemptAt" | "lastError">;
 
 /**
- * Where a Delivery stands, in words. Times are in the Workspace timezone, as the Log's "Held until"
- * says them, with the date and the zone, because a hold can run past midnight and the rest of the page
- * reads in UTC. `last_error` holds Watchdog's own sentence, never a receiver's answer or a credential.
+ * Where a Delivery stands, in words. Times are in the Workspace timezone, as the Log's "Held until" and
+ * "retrying at" say them, with the date and the zone, because a hold can run past midnight and the rest of
+ * the page reads in UTC. Both sides format them with `localDateTime`, so one retry can't read two ways.
+ * `last_error` holds Watchdog's own sentence, never a receiver's answer or a credential.
  */
 export function deliveryStatus({ status, attempts, nextAttemptAt, lastError }: Delivery, timezone: string) {
-  // Swedish writes a date and time as 2026-11-07 14:30, the shape Timestamp gives UTC.
-  const clock = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone, dateStyle: "short", timeStyle: "short" });
-  const at = (date: Date | null) => (date === null ? "a time not set" : `${clock.format(date)} ${timezone}`);
+  const at = (date: Date | null) => (date === null ? "a time not set" : localDateTime(date, timezone));
   // A sender's reason may end in a full stop already.
   const reason = (lastError ?? "no reason was recorded").replace(/\.$/, "");
   switch (status) {
