@@ -34,6 +34,11 @@ export interface CallAgentOptions<Schema extends z.ZodObject> {
   modelConfig: AgentModelConfig;
   /** Decrypts the model's API key for this call. */
   encryptionKey: Buffer;
+  /**
+   * A key from a form, for a call about settings that aren't saved: it's this call's key instead of
+   * the row's. Null sends none. Left out, the row's stored key is used, or said to be unreadable.
+   */
+  apiKeyOverride?: string | null;
   workspaceId: string;
   /** Null when the call isn't about an Item, as when compiling a rule. */
   itemId: string | null;
@@ -116,7 +121,10 @@ export async function callAgent<Schema extends z.ZodObject>(
     return { ok: false, reason: "error", message: "This model belongs to another Workspace." };
   }
 
-  const apiKey = readApiKey(modelConfig.apiKeyCiphertext, options.encryptionKey);
+  const apiKey =
+    options.apiKeyOverride === undefined
+      ? readApiKey(modelConfig.apiKeyCiphertext, options.encryptionKey)
+      : options.apiKeyOverride;
   if (apiKey === undefined) {
     return {
       ok: false,
@@ -190,9 +198,12 @@ export async function callAgent<Schema extends z.ZodObject>(
   return attempt(2, asRepair(prompt, first.message));
 }
 
-/** One small real call, so the user knows the model works. It costs a few tokens and is metered. */
+/**
+ * One small real call, so the user knows the model works. It costs a few tokens and is metered. A
+ * `modelConfig` that isn't saved yet, as when testing a form, brings its own key in `apiKeyOverride`.
+ */
 export function testModelConnection(
-  options: Pick<CallAgentOptions<z.ZodObject>, "db" | "modelConfig" | "encryptionKey" | "fetch">,
+  options: Pick<CallAgentOptions<z.ZodObject>, "db" | "modelConfig" | "encryptionKey" | "fetch" | "apiKeyOverride">,
 ) {
   return callAgent({
     ...options,

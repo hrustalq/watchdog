@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { createAgentFetch, decryptSecret, keyFingerprint } from "@watchdog/core";
-import { fakeLlm } from "@watchdog/core/testing";
+import { type FakeRequest, fakeLlm } from "@watchdog/core/testing";
 import {
   agentCall,
   and,
@@ -26,11 +26,14 @@ import {
   type ModelInput,
   type ModelProblem,
   modelFormQuery,
+  modelTestQuery,
   type PriceProblem,
   removeModel,
   saveModel,
   setArchivedPrices,
+  testCallFailure,
   testConnection,
+  testModelSettings,
   workerKeyMismatch,
 } from "./model.ts";
 
@@ -104,10 +107,14 @@ describe("the Model screen", () => {
       .where(eq(agentCall.workspaceId, workspaceId))
       .orderBy(agentCall.createdAt);
 
-  const fakeDeps = (turns: Parameters<typeof fakeLlm>[1]): ModelDeps & { requests: unknown[] } => {
+  const fakeDeps = (turns: Parameters<typeof fakeLlm>[1]): ModelDeps & { requests: FakeRequest[] } => {
     const fake = fakeLlm("openai-compatible", turns);
     return { encryptionKey, fetch: fake.fetch, requests: fake.requests };
   };
+
+  /** Every row the Workspace's calls recorded, in the order they were made. */
+  const callRows = (workspaceId: string) =>
+    db.select().from(agentCall).where(eq(agentCall.workspaceId, workspaceId)).orderBy(agentCall.createdAt);
 
   describe("saving a model", () => {
     it("stores the key encrypted, and the stored value isn't the key", async () => {
@@ -727,6 +734,147 @@ describe("the Model screen", () => {
     });
   });
 
+  describe("testing the settings in the form", () => {
+    /** The row a test wrote, which is the one that isn't the saved model. */
+    const triedRow = async (workspaceId: string, savedId: string) =>
+      present((await rows(workspaceId)).find((row) => row.id !== savedId));
+
+    it("leaves the active model and its key alone when the new address fails", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const before = await active(workspaceId);
+
+      const result = await testModelSettings(
+        db,
+        fakeDeps([{ status: 404, message: "No such model" }]),
+        workspaceId,
+        input({ baseUrl: "https://elsewhere.test/v1" }),
+      );
+
+      expect(result).toMatchObject({ outcome: "failed" });
+      // The active row is what it was, key included: nothing was archived, added or changed.
+      expect(await active(workspaceId)).toEqual(before);
+      const all = await rows(workspaceId);
+      expect(all).toHaveLength(2);
+      expect(present(all.find((row) => row.id === before.id))).toEqual(before);
+      expect((await getModel(db, encryptionKey, workspaceId))?.storedKey).toBe("set");
+    });
+
+    it("meters the call against a row that was archived from the start, and says why it failed", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const before = await active(workspaceId);
+
+      await testModelSettings(
+        db,
+        fakeDeps([{ status: 404, message: "No such model" }]),
+        workspaceId,
+        input({ baseUrl: "https://elsewhere.test/v1", modelName: "other-model" }),
+      );
+
+      const tried = await triedRow(workspaceId, before.id);
+      expect(tried).toMatchObject({
+        baseUrl: "https://elsewhere.test/v1",
+        modelName: "other-model",
+        apiKeyCiphertext: null,
+      });
+      expect(tried.archivedAt).toBeInstanceOf(Date);
+      expect(await callRows(workspaceId)).toMatchObject([
+        { purpose: "test-connection", status: "error", modelConfigId: tried.id },
+      ]);
+      await expect(testCallFailure(db, workspaceId, tried.id)).resolves.toBe(
+        "The model provider answered 404: No such model",
+      );
+      // A test of settings that were never saved isn't the saved model's failure to report.
+      await expect(lastFailedCall(db, workspaceId)).resolves.toBeUndefined();
+    });
+
+    it("sends no stored key to another origin when the field is blank", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const deps = fakeDeps([{ json: { reply: "ok" } }]);
+
+      const result = await testModelSettings(db, deps, workspaceId, input({ baseUrl: "https://elsewhere.test/v1" }));
+
+      expect(result).toMatchObject({ outcome: "ok" });
+      expect(deps.requests).toHaveLength(1);
+      expect(deps.requests[0]?.url).toContain("https://elsewhere.test/v1");
+      expect(JSON.stringify(deps.requests[0]?.headers)).not.toContain(apiKey);
+      expect(deps.requests[0]?.headers.authorization).toBeUndefined();
+    });
+
+    it("sends the key typed into the form", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const deps = fakeDeps([{ json: { reply: "ok" } }]);
+
+      await testModelSettings(db, deps, workspaceId, input({ baseUrl: "https://elsewhere.test/v1", apiKey: "sk-typed" }));
+
+      expect(deps.requests[0]?.headers.authorization).toBe("Bearer sk-typed");
+      expect(JSON.stringify(deps.requests[0]?.headers)).not.toContain(apiKey);
+    });
+
+    it("keeps the stored key for the saved provider and origin, as saving does", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const deps = fakeDeps([{ json: { reply: "ok" } }]);
+
+      // Another model name on the saved address: the key belongs to that provider and origin.
+      await testModelSettings(db, deps, workspaceId, input({ modelName: "other-model" }));
+
+      expect(deps.requests[0]?.url).toContain("https://llm.test/v1");
+      expect(deps.requests[0]?.headers.authorization).toBe(`Bearer ${apiKey}`);
+    });
+
+    it("sends no key when the box removes the stored one", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const deps = fakeDeps([{ json: { reply: "ok" } }]);
+
+      await testModelSettings(db, deps, workspaceId, input({ clearKey: true }));
+
+      expect(JSON.stringify(deps.requests[0]?.headers)).not.toContain(apiKey);
+    });
+
+    it("says the key can't be read, and makes no call, when it would have used the stored one", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { apiKey });
+      const deps = { ...fakeDeps([]), encryptionKey: Buffer.alloc(32, 9) };
+
+      const result = await testModelSettings(db, deps, workspaceId, input());
+
+      expect(result).toMatchObject({ outcome: "unreadable-key", modelConfigId: undefined });
+      expect(deps.requests).toEqual([]);
+      expect(await callRows(workspaceId)).toEqual([]);
+    });
+
+    it("refuses settings a save would refuse, without a row or a call", async () => {
+      const workspaceId = await newWorkspace();
+      const deps = fakeDeps([]);
+
+      await expect(testModelSettings(db, deps, workspaceId, input({ baseUrl: "not a url" }))).resolves.toEqual({
+        problem: "base-url",
+      });
+
+      expect(deps.requests).toEqual([]);
+      expect(await rows(workspaceId)).toEqual([]);
+      expect(await callRows(workspaceId)).toEqual([]);
+    });
+
+    it("works for a Workspace that has no model yet", async () => {
+      const workspaceId = await newWorkspace();
+      const deps = fakeDeps([{ json: { reply: "ok" } }]);
+
+      const result = await testModelSettings(db, deps, workspaceId, input({ apiKey: "sk-typed" }));
+
+      expect(result).toMatchObject({ outcome: "ok" });
+      expect(deps.requests[0]?.headers.authorization).toBe("Bearer sk-typed");
+      // A test never adds an active model: the Workspace still has none to run.
+      expect(await getModel(db, encryptionKey, workspaceId)).toBeUndefined();
+      expect((await rows(workspaceId)).map((row) => row.archivedAt !== null)).toEqual([true]);
+    });
+  });
+
   describe("the most recent failed call", () => {
     it("shows a bad key's next failed Agent call, without the key", async () => {
       const workspaceId = await newWorkspace();
@@ -864,6 +1012,40 @@ describe("the Model screen", () => {
       expect(query.get("clearKey")).toBe("1");
       expect(query.get("keyTyped")).toBe("1");
       expect(query.toString()).not.toContain(apiKey);
+    });
+  });
+
+  describe("going back to the form after a test", () => {
+    it("keeps the settings that were tested, and never the key", () => {
+      const query = modelTestQuery("failed", input({ apiKey, inputPrice: "2", structured: true }), "6f1d5a2c-5b1b-4f0e-9c11-2c1d3e4f5a6b");
+
+      expect(query.toString()).not.toContain(apiKey);
+      expect(Object.fromEntries(query)).toEqual({
+        providerType: "openai-compatible",
+        baseUrl: "https://llm.test/v1",
+        modelName: "fake-model",
+        inputPrice: "2",
+        outputPrice: "",
+        structured: "1",
+        keyTyped: "1",
+        formTest: "failed",
+        formTestId: "6f1d5a2c-5b1b-4f0e-9c11-2c1d3e4f5a6b",
+      });
+    });
+
+    it("leaves the row out when the test made no call", () => {
+      const query = modelTestQuery("unreadable-key", input());
+
+      expect(query.get("formTest")).toBe("unreadable-key");
+      expect(query.has("formTestId")).toBe(false);
+      expect(query.has("keyTyped")).toBe(false);
+    });
+
+    it("doesn't put a secret in the URL when a base URL holds one", () => {
+      const query = modelTestQuery("ok", input({ baseUrl: "https://llm.test/v1beta?key=sk-sentinel" }), undefined);
+
+      expect(query.toString()).not.toContain("sk-sentinel");
+      expect(query.get("baseUrl")).toBe("https://llm.test/v1beta");
     });
   });
 

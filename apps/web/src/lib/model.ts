@@ -74,15 +74,11 @@ const address = (url: URL) => `${url.origin}${url.pathname}`.replace(/\/+$/, "")
 /** A URL this long is safe through Caddy and Node, whose limit on all the headers is 16 KB. */
 const maxBaseUrlInUrl = 2000;
 
-/**
- * The form's URL after a refusal. The key never goes in a URL, so the form asks for it again. Nor
- * does anything else that can hold one: people paste keys into a base URL's user name or query.
- */
-export function modelFormQuery(problem: ModelProblem, input: ModelInput) {
+/** The form's values, as the URL carries them back after a submit that saved nothing. */
+function formValuesQuery(input: ModelInput) {
   const url = webUrl(input.baseUrl);
   const baseUrl = url === undefined ? "" : address(url);
   const query = new URLSearchParams({
-    error: problem,
     providerType: input.providerType,
     baseUrl: baseUrl.length > maxBaseUrlInUrl ? "" : baseUrl,
     modelName: input.modelName,
@@ -92,6 +88,28 @@ export function modelFormQuery(problem: ModelProblem, input: ModelInput) {
   if (input.structured) query.set("structured", "1");
   if (input.clearKey) query.set("clearKey", "1");
   if (input.apiKey.trim() !== "") query.set("keyTyped", "1");
+  return query;
+}
+
+/**
+ * The form's URL after a refusal. The key never goes in a URL, so the form asks for it again. Nor
+ * does anything else that can hold one: people paste keys into a base URL's user name or query.
+ */
+export function modelFormQuery(problem: ModelProblem, input: ModelInput) {
+  const query = formValuesQuery(input);
+  query.set("error", problem);
+  return query;
+}
+
+/**
+ * The form's URL after a test of what it holds: the values stay filled in, and the outcome says what
+ * that call did. `modelConfigId` names the row the call was metered against, which is where the
+ * reason for a failure is; it's left out when no call was made.
+ */
+export function modelTestQuery(outcome: TestOutcome, input: ModelInput, modelConfigId?: string) {
+  const query = formValuesQuery(input);
+  query.set("formTest", outcome);
+  if (modelConfigId !== undefined) query.set("formTestId", modelConfigId);
   return query;
 }
 
@@ -412,6 +430,13 @@ export async function lastFailedCall(db: Db, workspaceId: string) {
 export const testOutcomes = ["ok", "blocked", "failed", "unreadable-key", "no-model"] as const;
 export type TestOutcome = (typeof testOutcomes)[number];
 
+/** How a test's call went, as the page says it. `unreadable_key` reached no provider, so it made no call. */
+function testOutcome(result: Awaited<ReturnType<typeof testModelConnection>>): TestOutcome {
+  if (result.ok) return "ok";
+  if (result.reason === "unreadable_key") return "unreadable-key";
+  return result.reason === "blocked" ? "blocked" : "failed";
+}
+
 /**
  * Makes one small real call to the saved model. A call that was attempted leaves its reason on its
  * `agent_call` row, for `lastFailedCall`. An unreadable key makes no attempt, and `getModel` says so.
@@ -429,7 +454,89 @@ export async function testConnection(db: Db, deps: ModelDeps, workspaceId: strin
     encryptionKey: deps.encryptionKey,
     fetch: deps.fetch,
   });
-  if (result.ok) return "ok";
-  if (result.reason === "unreadable_key") return "unreadable-key";
-  return result.reason === "blocked" ? "blocked" : "failed";
+  return testOutcome(result);
+}
+
+/**
+ * Tests the settings in the form without saving them, so a user finds out a wrong address before it
+ * replaces the working model: that model keeps running, and neither it nor its key changes.
+ *
+ * The call is metered like any other (ADR 0008), against a row that's created already archived and
+ * with no key: it only has to say what was tried and what it cost. A key typed into the form is that
+ * call's key. The stored key goes only to the provider type and origin the saved model already has,
+ * which is when saving would keep it; anywhere else the call goes with no key, so a mistyped host
+ * never receives one. `modelConfigId` is the row to read a failure's reason from, and is undefined
+ * when no call was made.
+ */
+export async function testModelSettings(
+  db: Db,
+  deps: ModelDeps,
+  workspaceId: string,
+  input: ModelInput,
+): Promise<{ problem: ModelProblem } | { outcome: TestOutcome; modelConfigId: string | undefined }> {
+  const parsed = parseModel(input);
+  if (parsed.problem !== undefined) return { problem: parsed.problem };
+  const { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice } = parsed;
+
+  const saved = await db.query.modelConfig.findFirst({
+    where: and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)),
+  });
+  // As saving keeps the key: only the saved provider type and origin, and only while the box is unticked.
+  const sameDestination =
+    saved?.providerType === provider && new URL(saved.baseUrl).origin === new URL(baseUrl).origin;
+  const keepsStoredKey = apiKey === "" && !input.clearKey && sameDestination;
+
+  const stored = keepsStoredKey ? readApiKey(saved.apiKeyCiphertext, deps.encryptionKey) : null;
+  // The screen already says to enter the key again, and a call made without it would say less.
+  if (stored === undefined) return { outcome: "unreadable-key", modelConfigId: undefined };
+  const callKey = apiKey === "" ? stored : apiKey;
+
+  const [tested] = await db
+    .insert(modelConfig)
+    .values({
+      workspaceId,
+      providerType: provider,
+      baseUrl,
+      modelName,
+      supportsStructuredOutput: input.structured,
+      inputPricePerMillion: inputPrice,
+      outputPricePerMillion: outputPrice,
+      // Archived from the start, as the plan for this test says: it never takes over from the saved
+      // model, and an archived row forgets a key anyway.
+      archivedAt: sql`now()`,
+    })
+    .returning();
+  if (tested === undefined) throw new Error("A test's settings were not written");
+
+  const result = await testModelConnection({
+    db,
+    modelConfig: tested,
+    encryptionKey: deps.encryptionKey,
+    fetch: deps.fetch,
+    apiKeyOverride: callKey,
+  });
+  return { outcome: testOutcome(result), modelConfigId: tested.id };
+}
+
+/**
+ * Why the call a test of unsaved settings made failed, as the form says it. Undefined for an attempt
+ * that got an answer, and for an id that isn't this Workspace's model.
+ */
+export async function testCallFailure(db: Db, workspaceId: string, modelConfigId: string) {
+  // Postgres refuses a malformed uuid with an error rather than matching nothing.
+  if (!isUuid(modelConfigId)) return undefined;
+  const [failed] = await db
+    .select({ reason: agentCall.errorMessage })
+    .from(agentCall)
+    .where(
+      and(
+        eq(agentCall.workspaceId, workspaceId),
+        eq(agentCall.modelConfigId, modelConfigId),
+        eq(agentCall.purpose, "test-connection"),
+        isNotNull(agentCall.errorMessage),
+      ),
+    )
+    .orderBy(desc(agentCall.createdAt))
+    .limit(1);
+  return failed?.reason ?? undefined;
 }

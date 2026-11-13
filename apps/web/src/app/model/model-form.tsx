@@ -1,7 +1,7 @@
 import { dataBox, field, fieldError, label as labelClass } from "@/components/field-classes";
 import { type ModelProblem, modelProblemMessage, providerTypes, type StoredKey } from "@/lib/model";
-import { SubmitButton } from "../sign-in/submit-button";
 import { saveModelAction } from "./actions";
+import { ModelFormActions } from "./form-actions";
 
 export interface ModelFormValues {
   providerType: string;
@@ -235,9 +235,7 @@ export function ModelForm({
         ))}
       </div>
 
-      <SubmitButton pendingLabel="Saving…" className="sm:w-auto sm:self-start">
-        Save model
-      </SubmitButton>
+      <ModelFormActions />
     </form>
   );
 }

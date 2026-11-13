@@ -8,6 +8,7 @@ const working: FormOpenState = {
   refused: false,
   keyLeftBehind: false,
   unreadableKeyTest: false,
+  tested: false,
 };
 
 describe("formOpens", () => {
@@ -33,5 +34,9 @@ describe("formOpens", () => {
 
   it("opens when the test found the key unreadable", () => {
     expect(formOpens({ ...working, unreadableKeyTest: true })).toBe(true);
+  });
+
+  it("opens after a test of what the form held, which carries the values and the outcome", () => {
+    expect(formOpens({ ...working, tested: true })).toBe(true);
   });
 });

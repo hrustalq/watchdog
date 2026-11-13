@@ -15,7 +15,14 @@ export interface FormOpenState {
   keyLeftBehind: boolean;
   /** The test that just ran found the saved key unreadable. */
   unreadableKeyTest: boolean;
+  /** The form was tested, so it carries the outcome and the values that were tried. */
+  tested: boolean;
 }
 
 export const formOpens = (state: FormOpenState) =>
-  !state.hasModel || state.refused || state.unreadableKey || state.keyLeftBehind || state.unreadableKeyTest;
+  !state.hasModel ||
+  state.refused ||
+  state.unreadableKey ||
+  state.keyLeftBehind ||
+  state.unreadableKeyTest ||
+  state.tested;
