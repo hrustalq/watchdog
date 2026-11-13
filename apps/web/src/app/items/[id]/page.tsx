@@ -8,6 +8,7 @@ import { deliveryStatus, isActFailure, itemActions, itemWithLog, manualRunIn } f
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { RatingControls } from "../../correct-rating";
+import { Refresher } from "../../refresher";
 import { kindLabel, modelLink } from "../../rules/words";
 import { Notice } from "../../sign-in/notice";
 import { SubmitButton } from "../../sign-in/submit-button";
@@ -89,6 +90,11 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
 
   return (
     <article className="flex flex-col gap-8">
+      {/* While the pipeline still has the Item, what it adds — a Rating, a summary, Categories, a
+          field, a Log row — arrives without a reload. A refresh keeps the scroll position, the focus
+          and an open run's notice, and waits while a form is saving. Once `processed_at` is set there
+          is nothing left to wait for, so the page stops asking. */}
+      {found.processedAt === null ? <Refresher watchFor={waitingFor} /> : null}
       <header className="flex flex-col gap-3">
         <h1 className="text-headline break-words">{found.title ?? "Untitled Item"}</h1>
         {found.url === null ? null : (
@@ -215,6 +221,14 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
 
 const inlineLink =
   "rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+
+/**
+ * How long Item detail waits on the pipeline. A job that is still alive expires after ten minutes, and
+ * the queue retries it three times with backoff, so half an hour covers a slow one. An Item that stays
+ * unprocessed for good — captured before `processed_at` existed, or whose worker died on its last
+ * attempt — has nothing more coming, so the page stops asking instead of polling forever.
+ */
+const waitingFor = 30 * 60_000;
 
 const readingText = "max-w-[70ch] text-base leading-[1.6] break-words whitespace-pre-line";
 
