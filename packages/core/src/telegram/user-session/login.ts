@@ -86,9 +86,23 @@ export async function runLogin(db: Db, deps: SessionDeps, loginId: string, signa
   if (login.lost) return fail(loginLost);
 
   // Kept apart from the steps, so a slow call to Telegram doesn't look like a dead worker.
-  const beat = () => db.update(telegramLogin).set({ heartbeatAt: sql`now()` }).where(mine).catch(() => undefined);
+  const beat = async () => {
+    await db
+      .update(telegramLogin)
+      .set({ heartbeatAt: sql`now()` })
+      .where(mine)
+      .catch(() => undefined);
+  };
+  // Every beat still writing, so the finally can wait for them. One that landed after a caller saw the
+  // job resolve would leave a login no worker holds looking held for another 10 seconds.
+  const writing = new Set<Promise<void>>();
+  const beatSoon = () => {
+    const beatWriting = beat();
+    writing.add(beatWriting);
+    void beatWriting.finally(() => writing.delete(beatWriting));
+  };
   await beat();
-  const beating = setInterval(() => void beat(), deps.tickMs ?? 1000);
+  const beating = setInterval(beatSoon, deps.tickMs ?? 1000);
 
   /** Answers a refused step on the row. True when the refusal ends the login. */
   const refuse = async (error: unknown) => {
@@ -147,6 +161,9 @@ export async function runLogin(db: Db, deps: SessionDeps, loginId: string, signa
     }
   } finally {
     clearInterval(beating);
+    // A beat whose write is already in flight would make the row fresh after whoever awaited the job
+    // has looked at it, so the last beat is part of the job's end.
+    await Promise.all(writing);
     await client.destroy();
   }
 }

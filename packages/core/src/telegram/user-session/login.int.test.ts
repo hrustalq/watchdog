@@ -190,7 +190,10 @@ describe("a Telegram user session", () => {
     await until("code");
     stopping.abort();
     await job;
-    await db.update(telegramLogin).set({ heartbeatAt: new Date(Date.now() - 11_000) });
+    // Thirty seconds back, measured on the database's clock that `stale` compares on, so neither a slow
+    // tick nor skew between the two clocks can leave the row looking held. The job awaits its last beat
+    // before it resolves, so nothing writes a fresh one after this.
+    await db.update(telegramLogin).set({ heartbeatAt: sql`now() - interval '30 seconds'` });
 
     expect(await loginState(db, workspaceId)).toEqual({ step: "failed", phone, refusal: loginLost });
   });
