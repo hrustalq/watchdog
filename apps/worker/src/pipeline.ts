@@ -1,7 +1,8 @@
-// Runs each captured Item through the pipeline in its own job (docs: Processing pipeline, "Stages").
-import { processItem, type ProcessItemDeps, processItemQueue } from "@watchdog/core";
+// Runs each captured Item through the pipeline in its own job (docs: Processing pipeline, "Stages";
+// Agent and LLM integration, "Limits").
+import { agentItemQueue, processItem, type ProcessItemDeps, processItemQueue } from "@watchdog/core";
 import type { Db } from "@watchdog/db";
-import type { PgBoss } from "pg-boss";
+import type { JobWithMetadata, PgBoss } from "pg-boss";
 import { deliveryEnqueuer } from "./delivery.ts";
 
 // Retries and concurrency: docs, Agent and LLM integration, "Limits". A job makes up to two calls of
@@ -16,30 +17,49 @@ const queueOptions = {
   retentionSeconds: 90 * 24 * 60 * 60,
 };
 
+// Four Agent jobs for the whole worker, two of them per Workspace. A model that never answers then
+// costs two of the four, and another Workspace's Items keep moving (GitHub issue #99). The limit is
+// `localGroupConcurrency`: pg-boss's global `groupConcurrency` counts a group's active jobs at claim
+// time, so four pollers claiming at once each see none and a group reached four; the local count
+// restores the excess before its handler starts, which held a group to two in the measurement.
+const agentLimits = { localConcurrency: 4, localGroupConcurrency: 2 };
+
+// A separate pool, so an Item that can't reach the Agent never waits for one that can.
+const plainLimits = { localConcurrency: 2 };
+
 /** createQueue leaves an existing queue as it was, so an upgraded install needs updateQueue too. */
 export async function createPipelineQueue(boss: PgBoss) {
-  await boss.createQueue(processItemQueue, queueOptions);
-  await boss.updateQueue(processItemQueue, queueOptions);
+  for (const name of [processItemQueue, agentItemQueue]) {
+    await boss.createQueue(name, queueOptions);
+    await boss.updateQueue(name, queueOptions);
+  }
 }
 
 /** Call before anything can capture: queueing a job fails on a queue that doesn't exist. */
 export async function startPipeline(db: Db, boss: PgBoss, agent: ProcessItemDeps["agent"]) {
   await createPipelineQueue(boss);
-  const enqueueDeliveries = deliveryEnqueuer(boss);
+  const deps: ProcessItemDeps = { agent, enqueueDeliveries: deliveryEnqueuer(boss) };
+
+  const work = async ([job]: JobWithMetadata<{ itemId: string }>[]) => {
+    if (job === undefined) return;
+    const { itemId } = job.data;
+    try {
+      await processItem(db, itemId, { ...deps, lastAttempt: job.retryCount >= job.retryLimit });
+    } catch (error) {
+      console.error(`Processing Item ${itemId} failed:`, error);
+      throw error;
+    }
+  };
 
   // Naming the first type argument stops inference, so the options' type has to be named too.
-  await boss.work<{ itemId: string }, unknown, { localConcurrency: 4; includeMetadata: true }>(
+  await boss.work<{ itemId: string }, unknown, typeof agentLimits & { includeMetadata: true }>(
+    agentItemQueue,
+    { ...agentLimits, includeMetadata: true },
+    work,
+  );
+  await boss.work<{ itemId: string }, unknown, typeof plainLimits & { includeMetadata: true }>(
     processItemQueue,
-    { localConcurrency: 4, includeMetadata: true },
-    async ([job]) => {
-      if (job === undefined) return;
-      const { itemId } = job.data;
-      try {
-        await processItem(db, itemId, { agent, enqueueDeliveries, lastAttempt: job.retryCount >= job.retryLimit });
-      } catch (error) {
-        console.error(`Processing Item ${itemId} failed:`, error);
-        throw error;
-      }
-    },
+    { ...plainLimits, includeMetadata: true },
+    work,
   );
 }
