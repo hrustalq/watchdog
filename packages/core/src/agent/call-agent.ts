@@ -62,6 +62,18 @@ const maxInteger = 2_147_483_647;
 const storableTokens = (count: number | undefined) =>
   count !== undefined && Number.isInteger(count) && count >= 0 && count <= maxInteger ? count : null;
 
+/**
+ * A call keeps the prices its model has now, so a later change leaves its cost as it was. Both or
+ * neither: half a price can't make an estimate, and the Usage screen reads a call without both.
+ */
+const storedPrices = (modelConfig: AgentModelConfig) =>
+  modelConfig.inputPricePerMillion === null || modelConfig.outputPricePerMillion === null
+    ? { inputPricePerMillion: null, outputPricePerMillion: null }
+    : {
+        inputPricePerMillion: modelConfig.inputPricePerMillion,
+        outputPricePerMillion: modelConfig.outputPricePerMillion,
+      };
+
 /** Postgres refuses a NUL and half a surrogate pair, and anything a model or provider writes can hold either. */
 export const storableText = (text: string) => text.replaceAll("\0", "").toWellFormed();
 
@@ -165,6 +177,7 @@ export async function callAgent<Schema extends z.ZodObject>(
       attempt: number,
       inputTokens: storableTokens(usage?.inputTokens),
       outputTokens: storableTokens(usage?.outputTokens),
+      ...storedPrices(modelConfig),
       latencyMs: Math.round(performance.now() - started),
       status: result.ok ? "ok" : rowStatus[result.reason],
       errorMessage: result.ok ? null : storableMessage(result.message),
