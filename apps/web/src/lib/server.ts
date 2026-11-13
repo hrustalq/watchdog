@@ -84,7 +84,7 @@ function start() {
       return botName;
     },
     /**
-     * A pg-boss client that only sends, for the webhook inbox's process-item jobs. It runs no jobs,
+     * A pg-boss client that only sends, for the webhook inbox's pipeline jobs. It runs no jobs,
      * no maintenance and no migrations, which are the worker's. Started on first use; a failed start
      * is tried again on the next.
      */

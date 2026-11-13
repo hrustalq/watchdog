@@ -1,5 +1,5 @@
 // What happens to an Item after capture (docs: Processing pipeline, "Stages"). The worker's
-// process-item queue calls this once per captured Item.
+// process-item queues call this once per captured Item.
 import { type Db, eq, item, source, type Tx } from "@watchdog/db";
 import { type ActDeps, finishItem } from "./act.ts";
 import { type AgentDeps, runAgentClassifiers, runDeterministicClassifiers } from "./classify.ts";

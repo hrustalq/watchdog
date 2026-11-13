@@ -1,4 +1,4 @@
-import { itemEnqueuer, pollSource, processItemQueue } from "@watchdog/core";
+import { agentItemQueue, itemEnqueuer, pollSource, processItemQueue } from "@watchdog/core";
 import { fakeLlm } from "@watchdog/core/testing";
 import {
   action,
@@ -11,6 +11,7 @@ import {
   delivery,
   destination,
   eq,
+  inArray,
   item,
   itemCategory,
   itemLog,
@@ -100,12 +101,13 @@ describe("pipeline", () => {
   const itemIdsOf = async (sourceId: string) =>
     (await db.select({ id: item.id }).from(item).where(eq(item.sourceId, sourceId))).map((row) => row.id);
 
-  /** The Item id in each job on the queue, for these Items. */
+  /** The Item id in each job on either queue, for these Items. */
   const jobsFor = async (itemIds: string[]) =>
     (
       await db.$client.query<{ itemId: string }>(
-        "select data->>'itemId' as \"itemId\" from pgboss.job where name = $1 and data->>'itemId' = any($2)",
-        [processItemQueue, itemIds],
+        `select data->>'itemId' as "itemId" from pgboss.job
+         where name = any($1) and data->>'itemId' = any($2)`,
+        [[processItemQueue, agentItemQueue], itemIds],
       )
     ).rows.map((row) => row.itemId);
 
@@ -226,7 +228,7 @@ describe("pipeline", () => {
 
   describe("with a model", () => {
     /** A Workspace of its own, so the other tests' Items stay out of the model's way. */
-    async function modelWorkspace() {
+    async function modelWorkspace(baseUrl = "https://llm.test/v1") {
       const id = crypto.randomUUID();
       await db.insert(user).values({ id, name: "Owner", email: `${id}@example.com` });
       const [ws] = await db.insert(workspace).values({ name: "Models", ownerUserId: id }).returning();
@@ -234,7 +236,7 @@ describe("pipeline", () => {
       await db.insert(modelConfig).values({
         workspaceId: ownId,
         providerType: "openai-compatible",
-        baseUrl: "https://llm.test/v1",
+        baseUrl,
         modelName: "fake-model",
       });
       await db.insert(classifier).values({
@@ -253,54 +255,266 @@ describe("pipeline", () => {
           schedule: "*/15 * * * *",
         })
         .returning();
-      return present(created).id;
+      return { workspaceId: ownId, sourceId: present(created).id };
     }
 
-    it("runs at most 4 Agent jobs at once", async () => {
-      // Each of the 6 Items makes two calls, and with jobs side by side either can come next, so one
-      // answer has to fit both.
-      const answer = {
-        categories: ["lead"],
-        summary: "A summary",
-        reasoning: "Because",
-        severity: 2,
-        importance: 3,
-      };
-      const fake = fakeLlm("openai-compatible", Array.from({ length: 12 }, () => ({ json: answer })));
+    /** A Workspace with no model, so nothing its Items do can reach the Agent. */
+    async function plainWorkspace() {
+      const id = crypto.randomUUID();
+      await db.insert(user).values({ id, name: "Owner", email: `${id}@example.com` });
+      const [ws] = await db.insert(workspace).values({ name: "Plain", ownerUserId: id }).returning();
+      const ownId = present(ws).id;
+      await db.insert(classifier).values({
+        workspaceId: ownId,
+        name: "launches",
+        kind: "deterministic",
+        definition: {
+          classifier: "launches",
+          when: { field: "title", op: "contains", value: "launch" },
+          assign: ["plain"],
+        },
+      });
+      const [created] = await db
+        .insert(source)
+        .values({
+          workspaceId: ownId,
+          type: "rss",
+          name: "Feed",
+          config: { url: `https://feeds.test/${crypto.randomUUID()}.rss` },
+          schedule: "*/15 * * * *",
+        })
+        .returning();
+      return { workspaceId: ownId, sourceId: present(created).id };
+    }
+
+    /**
+     * A model whose calls to the hosts `holding` picks wait until the test releases them, counting what
+     * runs at once: per host, and in total. The rest answer at once.
+     */
+    function holdingModel(fake: ReturnType<typeof fakeLlm>, holding: (host: string) => boolean) {
       const held: (() => void)[] = [];
-      let running = 0;
-      let most = 0;
-      modelFetch = async (input, init) => {
-        most = Math.max(most, ++running);
-        await new Promise<void>((resolve) => held.push(resolve));
-        running--;
+      const running = new Map<string, number>();
+      const most = new Map<string, number>();
+      let total = 0;
+      let mostTotal = 0;
+      const hostOf = (input: unknown) => new URL(String(input)).host;
+      const fetch: ReturnType<typeof fakeLlm>["fetch"] = async (input, init) => {
+        if (!holding(hostOf(input))) return fake.fetch(input, init);
+        const host = hostOf(input);
+        total += 1;
+        mostTotal = Math.max(mostTotal, total);
+        const here = (running.get(host) ?? 0) + 1;
+        running.set(host, here);
+        most.set(host, Math.max(most.get(host) ?? 0, here));
+        await new Promise<void>((resolve) => {
+          held.push(() => {
+            total -= 1;
+            running.set(host, (running.get(host) ?? 1) - 1);
+            resolve();
+          });
+        });
         return fake.fetch(input, init);
       };
-      const sourceId = await modelWorkspace();
+      return {
+        fetch,
+        total: () => total,
+        mostTotal: () => mostTotal,
+        mostIn: (host: string) => most.get(host) ?? 0,
+        /**
+         * Releases what waits, until every Item of these Sources is finished: a job left running would
+         * reach the next test's model.
+         */
+        async settle(sourceIds: string[]) {
+          await vi.waitFor(
+            async () => {
+              for (const release of held.splice(0)) release();
+              const rows = await db.select().from(item).where(inArray(item.sourceId, sourceIds));
+              expect(rows.filter((row) => row.processedAt === null)).toHaveLength(0);
+            },
+            { timeout: 60_000 },
+          );
+        },
+        release: () => {
+          for (const release of held.splice(0)) release();
+        },
+      };
+    }
 
-      await pollSource(db, sourceId, answering(["a", "b", "c", "d", "e", "f"]));
-      await vi.waitFor(() => {
-        expect(running).toBe(4);
-      }, { timeout: 30_000 });
-      // Longer than pg-boss's 2 second poll, so a fifth job would have started by now.
-      await new Promise((resolve) => setTimeout(resolve, 2_500));
-      expect(running).toBe(4);
+    /** An answer that fits both of an Item's calls. */
+    const answer = {
+      categories: ["lead"],
+      summary: "A summary",
+      reasoning: "Because",
+      severity: 2,
+      importance: 3,
+    };
 
-      const itemIds = await itemIdsOf(sourceId);
+    const fakeModel = (turns: number) =>
+      fakeLlm("openai-compatible", Array.from({ length: turns }, () => ({ json: answer })));
+
+    it("queues an Item whose Workspace has a model on the Agent queue, in that Workspace's group", async () => {
+      modelFetch = fakeModel(4).fetch;
+      const modelled = await modelWorkspace();
+      const plain = await plainWorkspace();
+
+      await pollSource(db, modelled.sourceId, answering(["one"]));
+      await pollSource(db, plain.sourceId, answering(["one"]));
+      const modelledItem = present((await itemIdsOf(modelled.sourceId))[0]);
+      const plainItem = present((await itemIdsOf(plain.sourceId))[0]);
+
+      const jobFor = async (itemId: string) =>
+        (
+          await db.$client.query<{ name: string; groupId: string | null }>(
+            `select name, group_id as "groupId" from pgboss.job where data->>'itemId' = $1`,
+            [itemId],
+          )
+        ).rows;
+      expect(await jobFor(modelledItem)).toEqual([{ name: agentItemQueue, groupId: modelled.workspaceId }]);
+      expect(await jobFor(plainItem)).toEqual([{ name: processItemQueue, groupId: null }]);
+
+      // Both finish here, so neither leaves a job that would reach a later test's model.
       await vi.waitFor(
         async () => {
-          for (const release of held.splice(0)) release();
-          const rows = await db.select().from(item).where(eq(item.sourceId, sourceId));
-          expect(rows.filter((row) => row.processedAt !== null)).toHaveLength(itemIds.length);
+          for (const id of [modelledItem, plainItem]) {
+            const found = await db.query.item.findFirst({ where: eq(item.id, id) });
+            expect(found?.processedAt).not.toBeNull();
+          }
         },
         { timeout: 30_000 },
       );
-      expect(most).toBe(4);
+    });
+
+    it("runs at most 2 Agent jobs at once in one Workspace", async () => {
+      const model = holdingModel(fakeModel(24), () => true);
+      modelFetch = model.fetch;
+      const { sourceId } = await modelWorkspace("https://one.test/v1");
+
+      try {
+        await pollSource(db, sourceId, answering(["a", "b", "c", "d", "e", "f"]));
+        await vi.waitFor(
+          () => {
+            expect(model.total()).toBe(2);
+          },
+          { timeout: 30_000 },
+        );
+        // Longer than pg-boss's 2 second poll, so a third job would have started by now.
+        await new Promise((resolve) => setTimeout(resolve, 2_500));
+        expect(model.total()).toBe(2);
+
+        await model.settle([sourceId]);
+      } finally {
+        model.release();
+      }
+      expect(model.mostIn("one.test")).toBe(2);
+    });
+
+    it("runs 4 Agent jobs at once across Workspaces", async () => {
+      const model = holdingModel(fakeModel(32), () => true);
+      modelFetch = model.fetch;
+      const one = await modelWorkspace("https://one.test/v1");
+      const two = await modelWorkspace("https://two.test/v1");
+
+      try {
+        await pollSource(db, one.sourceId, answering(["a", "b", "c", "d"]));
+        await pollSource(db, two.sourceId, answering(["a", "b", "c", "d"]));
+
+        await vi.waitFor(
+          () => {
+            expect(model.total()).toBe(4);
+          },
+          { timeout: 30_000 },
+        );
+        await new Promise((resolve) => setTimeout(resolve, 2_500));
+        expect(model.total()).toBe(4);
+
+        await model.settle([one.sourceId, two.sourceId]);
+      } finally {
+        model.release();
+      }
+      expect(model.mostTotal()).toBe(4);
+      expect(model.mostIn("one.test")).toBe(2);
+      expect(model.mostIn("two.test")).toBe(2);
+    });
+
+    it("rates another Workspace's Item while one model hangs", async () => {
+      const model = holdingModel(fakeModel(24), (host) => host === "hang.test");
+      modelFetch = model.fetch;
+      const hung = await modelWorkspace("https://hang.test/v1");
+      const moving = await modelWorkspace("https://moving.test/v1");
+
+      try {
+        await pollSource(db, hung.sourceId, answering(["a", "b", "c", "d", "e", "f"]));
+        await vi.waitFor(
+          () => {
+            expect(model.total()).toBe(2);
+          },
+          { timeout: 30_000 },
+        );
+
+        await pollSource(db, moving.sourceId, answering(["one"]));
+        const movingItem = present((await itemIdsOf(moving.sourceId))[0]);
+        const rated = await vi.waitFor(
+          async () => {
+            const found = await db.query.item.findFirst({ where: eq(item.id, movingItem) });
+            expect(found?.ratedAt).not.toBeNull();
+            return found;
+          },
+          { timeout: 15_000 },
+        );
+        expect(rated).toMatchObject({ severity: 2, importance: 3 });
+
+        // The hung Workspace's calls still hold their two slots, and its Items are still waiting.
+        expect(model.total()).toBe(2);
+        const waiting = await db.select().from(item).where(eq(item.sourceId, hung.sourceId));
+        expect(waiting.filter((row) => row.processedAt === null)).toHaveLength(6);
+
+        await model.settle([hung.sourceId]);
+      } finally {
+        model.release();
+      }
+    });
+
+    it("processes an Item that can't reach the Agent while every Agent slot is full", async () => {
+      const model = holdingModel(fakeModel(24), () => true);
+      modelFetch = model.fetch;
+      const one = await modelWorkspace("https://one.test/v1");
+      const two = await modelWorkspace("https://two.test/v1");
+      const plain = await plainWorkspace();
+
+      try {
+        await pollSource(db, one.sourceId, answering(["a", "b"]));
+        await pollSource(db, two.sourceId, answering(["a", "b"]));
+        await vi.waitFor(
+          () => {
+            expect(model.total()).toBe(4);
+          },
+          { timeout: 30_000 },
+        );
+
+        await pollSource(db, plain.sourceId, answering(["one"]));
+        const plainItem = present((await itemIdsOf(plain.sourceId))[0]);
+        await vi.waitFor(
+          async () => {
+            const found = await db.query.item.findFirst({ where: eq(item.id, plainItem) });
+            expect(found?.processedAt).not.toBeNull();
+          },
+          { timeout: 15_000 },
+        );
+        expect(await db.select().from(itemCategory).where(eq(itemCategory.itemId, plainItem))).toMatchObject([
+          { category: "plain" },
+        ]);
+        // The four Agent calls still hold every Agent slot.
+        expect(model.total()).toBe(4);
+
+        await model.settle([one.sourceId, two.sourceId]);
+      } finally {
+        model.release();
+      }
     });
 
     it("retries a job whose call failed, with the failure in the Log and the Item visible", async () => {
       modelFetch = fakeLlm("openai-compatible", [{ status: 500, message: "Down\0" }]).fetch;
-      const sourceId = await modelWorkspace();
+      const { sourceId } = await modelWorkspace();
 
       await pollSource(db, sourceId, answering(["one"]));
       const itemId = present((await itemIdsOf(sourceId))[0]);
@@ -309,7 +523,7 @@ describe("pipeline", () => {
         async () => {
           const { rows } = await db.$client.query<{ state: string }>(
             "select state from pgboss.job where name = $1 and data->>'itemId' = $2",
-            [processItemQueue, itemId],
+            [agentItemQueue, itemId],
           );
           expect(rows[0]?.state).toBe("retry");
         },
@@ -328,11 +542,11 @@ describe("pipeline", () => {
 
     it("finishes the Item when its job has no retries left", async () => {
       modelFetch = fakeLlm("openai-compatible", [{ status: 500 }]).fetch;
-      const sourceId = await modelWorkspace();
+      const { sourceId } = await modelWorkspace();
       await pollSource(db, sourceId, { ...answering(["one"]), enqueueItems: () => Promise.resolve() });
       const itemId = present((await itemIdsOf(sourceId))[0]);
 
-      await boss.send(processItemQueue, { itemId }, { retryLimit: 0 });
+      await boss.send(agentItemQueue, { itemId }, { retryLimit: 0 });
 
       await vi.waitFor(
         async () => {
@@ -343,16 +557,20 @@ describe("pipeline", () => {
       );
     });
 
-    it("gives the queue the Agent's retries and time, on an upgraded install too", async () => {
-      await boss.updateQueue(processItemQueue, { expireInSeconds: 120, retryLimit: 1 });
+    it("gives both queues the Agent's retries and time, on an upgraded install too", async () => {
+      for (const queue of [processItemQueue, agentItemQueue]) {
+        await boss.updateQueue(queue, { expireInSeconds: 120, retryLimit: 1 });
+      }
 
       await createPipelineQueue(boss);
 
-      expect(await boss.getQueue(processItemQueue)).toMatchObject({
-        expireInSeconds: 600,
-        retryLimit: 3,
-        retryBackoff: true,
-      });
+      for (const queue of [processItemQueue, agentItemQueue]) {
+        expect(await boss.getQueue(queue)).toMatchObject({
+          expireInSeconds: 600,
+          retryLimit: 3,
+          retryBackoff: true,
+        });
+      }
     });
   });
 });
