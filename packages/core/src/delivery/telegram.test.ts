@@ -401,6 +401,35 @@ describe("createTelegramSender", () => {
 
       expect(telegram.requests).toHaveLength(2);
     });
+
+    it("gives each send fetched beside another its own place in the chat's queue", () => {
+      const telegram = fakeTelegram();
+      const bot = sender(telegram);
+
+      // Three Deliveries fetched in one batch, before any of them has sent: the first can go, and the
+      // two beside it are told their own places rather than each finding the chat free.
+      const first = bot.deferTurn?.(chat(), null);
+      const second = bot.deferTurn?.(chat(), null);
+      const third = bot.deferTurn?.(chat(), null);
+
+      expect(first).toBeUndefined();
+      expect(second).toBeGreaterThanOrEqual(1000);
+      expect(third).toBeGreaterThan(Number(second));
+      expect(telegram.requests).toHaveLength(0);
+    });
+
+    it("lets a send take the place it was given, waiting out the one before it", async () => {
+      const telegram = fakeTelegram();
+      const bot = sender(telegram);
+      await bot.send(chat(), message);
+
+      // The Delivery was queued for the turn after that send, and the job comes back at it.
+      expect(bot.deferTurn?.(chat(), new Date())).toBeUndefined();
+      await bot.send(chat(), message, undefined, { deferTurn: true });
+
+      const [first, second] = telegram.requests;
+      expect(Number(second?.at) - Number(first?.at)).toBeGreaterThanOrEqual(1000);
+    });
   });
 
   it("sends a Source Health alert as its lines: the state, the last error, the Sources screen", async () => {

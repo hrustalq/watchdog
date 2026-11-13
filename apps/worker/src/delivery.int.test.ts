@@ -683,6 +683,77 @@ describe("the deliver queue", () => {
     expect(await logOf(itemId)).toEqual(["Sent to ops-chat"]);
   }, 180_000);
 
+  it("walks a burst of 50 to one chat within the five seconds a Delivery behind it has", async () => {
+    const { deliveryId, itemId } = await seed();
+    const first = present(await rowOf(deliveryId));
+    const seeded = present(await db.query.item.findFirst({ where: eq(item.id, itemId) }));
+    await db
+      .update(workspace)
+      .set({ burstWindowSeconds: 0, alertsPerHour: 1000 })
+      .where(eq(workspace.id, seeded.workspaceId));
+    await db
+      .update(destination)
+      .set({ secretCiphertext: encryptSecret(burstChat, encryptionKey) })
+      .where(eq(destination.id, first.destinationId));
+    const others = await db
+      .insert(item)
+      .values(
+        Array.from({ length: 49 }, (_, index) => ({
+          workspaceId: seeded.workspaceId,
+          sourceId: seeded.sourceId,
+          externalId: `burst-${String(index)}`,
+          title: `Burst ${String(index)}`,
+          body: "An entry.",
+          raw: {},
+        })),
+      )
+      .returning({ id: item.id });
+    const burst = await db
+      .insert(delivery)
+      .values(others.map(({ id }) => ({ actionId: first.actionId, itemId: id, destinationId: first.destinationId })))
+      .returning({ id: delivery.id });
+    const ids = [deliveryId, ...burst.map(({ id }) => id)];
+
+    // The real sender, so the 49 wait for the chat's turn rather than sending at once.
+    worker = new PgBoss({ connectionString: postgres.url, schedule: false, supervise: false });
+    await worker.start();
+    const quiet = { send: () => Promise.resolve() };
+    await startDelivery(db, worker, {
+      senders: {
+        telegram: createTelegramSender(botToken, {
+          fetch: () => Promise.resolve(Response.json({ ok: true, result: {} })),
+          encryptionKey,
+        }),
+        email: quiet,
+        webhook: { send: () => Promise.reject(new Error("These tests send no webhooks")) },
+      },
+      appUrl: "https://watchdog.test",
+      secret: "a-better-auth-secret-of-at-least-32-chars",
+    });
+
+    const queuedAt = Date.now();
+    await db.transaction((tx) => deliveryEnqueuer(boss)(tx, ids));
+
+    // Every one of the 50 waits in the queue for its turn, and none holds a slot to do it. Fetched a job a
+    // poll, the fifty took five polls, and a loaded runner turned that into the eight seconds a Delivery
+    // queued behind them waited.
+    const walked = async () =>
+      (
+        await db.$client.query<{ waiting: string; active: string }>(
+          `select count(*) filter (where not (delivery.status = 'sent'
+             or (delivery.status = 'queued' and delivery.next_attempt_at is not null))) as waiting,
+           (select count(*) from pgboss.job where name = $2 and state = 'active') as active
+           from delivery where delivery.id = any($1::uuid[])`,
+          [ids, deliverQueue],
+        )
+      ).rows.at(0);
+    await vi.waitFor(async () => {
+      expect(await walked()).toEqual({ waiting: "0", active: "0" });
+    }, waitLong);
+
+    expect(Date.now() - queuedAt).toBeLessThan(5_000);
+  }, 60_000);
+
   it("sends a new Source Health alert from the sweep, once", async () => {
     const ownerId = crypto.randomUUID();
     await db.insert(user).values({ id: ownerId, name: "Owner", email: `${ownerId}@example.com` });

@@ -15,7 +15,7 @@ import {
   type SourceAlertDeps,
 } from "@watchdog/core";
 import { type Db, sql } from "@watchdog/db";
-import { fromDrizzle, type PgBoss } from "pg-boss";
+import { fromDrizzle, type JobResult, type PgBoss } from "pg-boss";
 
 export const deliverQueue = "deliver";
 const sweepQueue = "deliver-sweep";
@@ -135,22 +135,37 @@ export async function startDelivery(
   const retryDelivery: DeliverDeps["retryDelivery"] = async (tx, deliveryId, at) => {
     await boss.insert(deliverQueue, [{ data: { deliveryId }, startAfter: at }], { db: fromDrizzle(tx, sql) });
   };
-  // A Delivery waiting for its chat's turn goes back in the queue for that turn, a second or so away, and
-  // each worker fetches one job per poll: at pg-boss's default two seconds the 50 behind a burst would wait
-  // that much apiece, and a turn would come a second or two late. Half a second is the fastest it allows.
+  // A Delivery waiting for its chat's turn goes back in the queue for that turn, a second or so away. Half
+  // a second is the fastest poll pg-boss allows, and at its default of two the turn behind one comes a
+  // second or two late.
+  //
+  // A poll takes ten jobs at a time, so one job at a time walked a burst of 50 in five polls: the Delivery
+  // queued behind them waited the whole walk, which a loaded runner turned into eight seconds. A full batch
+  // is fetched again at once instead, so a backlog drains at the database's pace rather than a batch a poll.
+  // Two workers keep a batch whose send stalls, as a slow mail does, from stopping the queue behind it, and
+  // each job is settled on its own, so a failure still retries the one job it belongs to.
   await boss.work<{ deliveryId: string }>(
     deliverQueue,
-    { localConcurrency: 10, pollingIntervalSeconds: 0.5 },
-    async ([job]) => {
-      if (job === undefined) return;
-      const { deliveryId } = job.data;
-      try {
-        await deliver(db, deliveryId, { ...deps, retryDelivery, ...(sendCapNotice && { emailCap: capNoticeQueuer(boss) }) });
-      } catch (error) {
-        console.error(`Sending Delivery ${deliveryId} failed:`, error);
-        throw error;
-      }
+    {
+      batchSize: 10,
+      localConcurrency: 2,
+      burstWhenBatchFull: true,
+      perJobResults: true,
+      pollingIntervalSeconds: 0.5,
     },
+    async (jobs) =>
+      Promise.all(
+        jobs.map(async (job): Promise<JobResult> => {
+          const { deliveryId } = job.data;
+          try {
+            await deliver(db, deliveryId, { ...deps, retryDelivery, ...(sendCapNotice && { emailCap: capNoticeQueuer(boss) }) });
+            return { id: job.id, status: "completed" };
+          } catch (error) {
+            console.error(`Sending Delivery ${deliveryId} failed:`, error);
+            return { id: job.id, status: "failed", output: error };
+          }
+        }),
+      ),
   );
 
   // A Source Health alert is sent like a Delivery, so its queue has the same options.
