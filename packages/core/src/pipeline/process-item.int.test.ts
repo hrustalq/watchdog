@@ -532,6 +532,13 @@ describe("processItem", () => {
         const [row] = await classifyLog(itemId);
         expect(row?.message).toMatch(/^The classify call failed: /);
         expect(row?.data).toEqual({ reason: "invalid_output" });
+        // The validator's symbols and field paths mean nothing to a user, so the Log says the cause in
+        // plain words, and the meter row keeps the detail the repair prompt and the bill were about.
+        expect(row?.message).toBe(
+          "The classify call failed: the model's answer didn't match the shape Watchdog asked for",
+        );
+        const [firstCall] = await callsOf(itemId);
+        expect(firstCall?.errorMessage).toContain("Invalid");
         const after = await reload(itemId);
         expect(after).toMatchObject({ classifiedAt: null, severity: null, importance: null });
       });
@@ -1267,6 +1274,15 @@ describe("processItem", () => {
         { reason: "error" },
       ]);
       for (const { message } of log) expect(message).toMatch(/^The extract-and-rate call failed: /);
+      // An invalid answer's row names the cause, not the validator's own output, which the meter keeps.
+      expect(log[1]?.message).toBe(
+        "The extract-and-rate call failed: the model's answer didn't match the shape Watchdog asked for",
+      );
+      const invalidCalls = await callsOf(itemId, "extract-rate");
+      expect(invalidCalls.filter(({ status }) => status === "invalid_output").map(({ errorMessage }) => errorMessage)).toEqual([
+        expect.stringContaining("at severity"),
+        expect.stringContaining("at severity"),
+      ]);
 
       // It finished, so a later run does nothing.
       await processItem(db, itemId, deps);

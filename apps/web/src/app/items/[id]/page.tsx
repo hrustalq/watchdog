@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { Button } from "@/components/ui/button";
-import { deliveryStatus, isActFailure, itemActions, itemWithLog, manualRunIn } from "@/lib/feed";
+import { deliveryStatus, isCallFailure, isFailureRow, itemActions, itemWithLog, manualRunIn } from "@/lib/feed";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { RatingControls } from "../../correct-rating";
@@ -203,18 +203,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
             <li key={row.id} className="flex flex-col gap-x-4 px-3 py-2 sm:flex-row">
               <Timestamp at={row.at} seconds className="shrink-0 text-muted-foreground" />
               <span className="shrink-0 sm:w-16">{row.stage}</span>
-              {/* A model's validation failure runs over several lines. */}
-              {isActFailure(row) ? (
-                <span className="flex min-w-0 items-start gap-2 text-alarm">
-                  <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm ${filledLamp}`} />
-                  <span className="min-w-0 break-words whitespace-pre-line">
-                    <span className="sr-only">Failure: </span>
-                    {row.message}
-                  </span>
-                </span>
-              ) : (
-                <span className="min-w-0 break-words whitespace-pre-line">{row.message}</span>
-              )}
+              <LogMessage row={row} />
             </li>
           ))}
         </ol>
@@ -225,6 +214,34 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
 
 const inlineLink =
   "rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+
+/**
+ * One Log row's words. A failure carries a lamp of its own and says so in the accessibility tree, so it
+ * reads as a failure without colour, and a failed model call links to the screen that can fix it. A
+ * model's own message can run over several lines, and one holding HTML stays text.
+ */
+function LogMessage({ row }: { row: { stage: string; data: unknown; message: string } }) {
+  if (!isFailureRow(row)) {
+    return <span className="min-w-0 break-words whitespace-pre-line">{row.message}</span>;
+  }
+  return (
+    <span className="flex min-w-0 items-start gap-2 text-alarm">
+      <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm ${filledLamp}`} />
+      <span className="min-w-0 break-words whitespace-pre-line">
+        <span className="sr-only">Failure: </span>
+        {row.message}
+        {isCallFailure(row) ? (
+          <>
+            {" "}
+            <Link href={modelLink} className={inlineLink}>
+              Check the model
+            </Link>
+          </>
+        ) : null}
+      </span>
+    </span>
+  );
+}
 
 /**
  * How long Item detail waits on the pipeline. A job that is still alive expires after ten minutes, and

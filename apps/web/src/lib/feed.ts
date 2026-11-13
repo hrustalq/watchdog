@@ -184,6 +184,27 @@ export function isActFailure({ stage, data }: { stage: string; data: unknown }) 
   return "retryAt" in data || ("final" in data && data.final === true);
 }
 
+/** Whether a row's data holds a key, whatever shape the row was written with. */
+const holds = (data: unknown, key: string) => typeof data === "object" && data !== null && Object.hasOwn(data, key);
+
+/**
+ * Whether a Log row records a failure, so the page can say so rather than leave it to colour. A stage
+ * writes its call's `reason`, a failed manual run writes `failed`, and `deliver` marks a failed send with
+ * the next retry or as the last attempt. A row already in the Log carries the same keys, so an old
+ * failure reads as one too.
+ */
+export function isFailureRow({ stage, data }: { stage: string; data: unknown }) {
+  return isActFailure({ stage, data }) || holds(data, "reason") || holds(data, "failed");
+}
+
+/**
+ * Whether a failed row is a model call's, which the Model screen can fix, rather than a send's: the call's
+ * reason is in the row, and a Delivery's row carries a reason of its own, so a send never counts.
+ */
+export function isCallFailure(row: { stage: string; data: unknown }) {
+  return !isActFailure(row) && holds(row.data, "reason");
+}
+
 type Delivery = Pick<typeof delivery.$inferSelect, "status" | "attempts" | "nextAttemptAt" | "lastError">;
 
 /**

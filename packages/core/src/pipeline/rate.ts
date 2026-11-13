@@ -10,6 +10,7 @@ import { fieldKey, ratingSchema, ratingTask } from "../agent/rating.ts";
 import { type ConditionItem, evaluateCondition } from "../rules/condition.ts";
 import { type AgentExtractorRule, agentExtractorRuleSchema } from "../rules/schema.ts";
 import { type ActDeps, finishItem } from "./act.ts";
+import { callFailureInLog } from "./call-failure.ts";
 import { type AgentDeps, modelFor } from "./classify.ts";
 import { categoriesOf, logSkippedRule, storeExtraction, toExtraction } from "./extract.ts";
 import { logOnce, rulesFor } from "./rules-for-item.ts";
@@ -146,15 +147,15 @@ export async function runExtractAndRate(
     }),
   });
   if (!result.ok) {
-    // Each failure gets its own row. The job's error reaches pg-boss, which stores it as JSONB.
-    const message = storableMessage(result.message);
+    // The Log names the cause in plain words, while the call's full detail stays in its meter row and
+    // reaches pg-boss as the job's error. Each failure gets its own row.
     await db.insert(itemLog).values({
       itemId,
       stage: "rate",
-      message: `The extract-and-rate call failed: ${message}`,
+      message: `The extract-and-rate call failed: ${callFailureInLog(result)}`,
       data: { reason: result.reason },
     });
-    return { ...result, message };
+    return { ...result, message: storableMessage(result.message) };
   }
   await finishItem(db, itemId, now, act, (tx) => storeAnswer(tx, target, rules, result.output, now));
   return undefined;

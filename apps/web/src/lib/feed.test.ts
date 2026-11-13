@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deliveryStatus, isActFailure, manualRunIn, parseCursor } from "./feed.ts";
+import { deliveryStatus, isActFailure, isCallFailure, isFailureRow, manualRunIn, parseCursor } from "./feed.ts";
 
 const id = "0b6f2a4e-8c1d-4f3a-9e2b-7d5c6a1f0e9d";
 
@@ -115,5 +115,40 @@ describe("isActFailure", () => {
     expect(isActFailure(row("act", { heldUntil: "2026-11-07T13:30:00.000Z" }))).toBe(false);
     expect(isActFailure(row("rate", { final: true }))).toBe(false);
     expect(isActFailure(row("act", null))).toBe(false);
+  });
+});
+
+describe("isFailureRow", () => {
+  const row = (stage: string, data: unknown) => ({ stage, data });
+
+  it("is true for a failed call, a failed manual run and a failed send", () => {
+    expect(isFailureRow(row("rate", { reason: "invalid_output" }))).toBe(true);
+    expect(isFailureRow(row("classify", { reason: "error" }))).toBe(true);
+    expect(isFailureRow(row("extract", { extractor: "pricing", manual: true, failed: true }))).toBe(true);
+    expect(isFailureRow(row("act", { attempt: 1, retryAt: "2026-11-07T13:30:00.000Z" }))).toBe(true);
+    // A Digest that went to one Destination and failed at another says so with `reason` alone.
+    expect(isFailureRow(row("act", { digest: "failed", reason: "the receiver answered 500", final: true }))).toBe(true);
+  });
+
+  it("is false for a row that worked, a row with no data, and data that isn't an object", () => {
+    expect(isFailureRow(row("rate", { severity: 4, importance: 3 }))).toBe(false);
+    expect(isFailureRow(row("capture", {}))).toBe(false);
+    expect(isFailureRow(row("rate", null))).toBe(false);
+    expect(isFailureRow(row("rate", undefined))).toBe(false);
+    expect(isFailureRow(row("act", { digest: "sent" }))).toBe(false);
+  });
+});
+
+describe("isCallFailure", () => {
+  const row = (stage: string, data: unknown) => ({ stage, data });
+
+  it("is true only for a failed model call, which the Model screen fixes", () => {
+    expect(isCallFailure(row("rate", { reason: "invalid_output" }))).toBe(true);
+    expect(isCallFailure(row("classify", { reason: "unreadable_key" }))).toBe(true);
+    expect(isCallFailure(row("extract", { manual: true, failed: true, reason: "invalid_output" }))).toBe(true);
+    expect(isCallFailure(row("extract", { manual: true, failed: true }))).toBe(false);
+    expect(isCallFailure(row("act", { attempt: 1, retryAt: "2026-11-07T13:30:00.000Z" }))).toBe(false);
+    expect(isCallFailure(row("act", { digest: "failed", reason: "the receiver answered 500", final: true }))).toBe(false);
+    expect(isCallFailure(row("rate", {}))).toBe(false);
   });
 });
