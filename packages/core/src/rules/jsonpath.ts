@@ -22,6 +22,38 @@ const maxDescendantSegments = 1;
 /** The most values a field can hold. */
 export const maxFieldValues = 1000;
 
+/**
+ * Whether a path can fan out: one with a descendant segment (`..`), a wildcard (`*`), a selector list
+ * (`,`) or a filter (`?`) visits many nodes for each one it starts from, while a path of only names
+ * and indexes reads a fixed route. Counted in the text, as the caps above are, so a name holding one
+ * of those characters counts too: that can only refuse a rule, never let a costly one through.
+ */
+export function jsonPathFansOut(path: string): boolean {
+  return path.includes("..") || path.includes("*") || path.includes(",") || path.includes("?");
+}
+
+/**
+ * How many nodes `raw` holds, counting the root and every value inside an array or an object. Cost
+ * follows this count rather than bytes, since a long string in one node costs little. It walks
+ * without recursion, so a deeply nested payload can't overflow the stack, and stops one past `limit`,
+ * so refusing a 10 MB payload costs no more than a payload at the limit.
+ */
+export function jsonPathNodeCount(raw: unknown, limit = Number.POSITIVE_INFINITY): number {
+  let nodes = 0;
+  const pending: unknown[] = [raw];
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (++nodes > limit) return nodes;
+    if (Array.isArray(node)) {
+      // Pushed one at a time: a spread of a large array can exceed the argument limit.
+      for (const child of node) pending.push(child);
+    } else if (typeof node === "object" && node !== null) {
+      for (const child of Object.values(node)) pending.push(child);
+    }
+  }
+  return nodes;
+}
+
 const count = (text: string, part: string) => text.split(part).length - 1;
 
 /** Why a rule can't read a field with this JSONPath, or undefined when it can. */

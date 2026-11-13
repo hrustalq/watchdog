@@ -35,10 +35,23 @@ export async function createPipelineQueue(boss: PgBoss) {
   }
 }
 
-/** Call before anything can capture: queueing a job fails on a queue that doesn't exist. */
-export async function startPipeline(db: Db, boss: PgBoss, agent: ProcessItemDeps["agent"]) {
+/**
+ * Call before anything can capture: queueing a job fails on a queue that doesn't exist.
+ * `jsonPathNodes` is the hosted plan's node limit for an Item's JSONPath fields, and a self-hosted
+ * install leaves it undefined.
+ */
+export async function startPipeline(
+  db: Db,
+  boss: PgBoss,
+  agent: ProcessItemDeps["agent"],
+  jsonPathNodes?: number,
+) {
   await createPipelineQueue(boss);
-  const deps: ProcessItemDeps = { agent, enqueueDeliveries: deliveryEnqueuer(boss) };
+  const deps: ProcessItemDeps = {
+    agent,
+    enqueueDeliveries: deliveryEnqueuer(boss),
+    ...(jsonPathNodes !== undefined && { jsonPathNodes }),
+  };
 
   const work = async ([job]: JobWithMetadata<{ itemId: string }>[]) => {
     if (job === undefined) return;

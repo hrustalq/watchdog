@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { jsonPathError, jsonPathValues } from "./jsonpath.ts";
+import { jsonPathError, jsonPathFansOut, jsonPathNodeCount, jsonPathValues } from "./jsonpath.ts";
 
 describe("jsonPathValues", () => {
   const raw = {
@@ -108,5 +108,42 @@ describe("jsonPathError", () => {
   it("refuses a path over the length cap", () => {
     expect(jsonPathError(`$${".a".repeat(499)}`)).toBeUndefined();
     expect(jsonPathError(`$${".a".repeat(500)}`)).toContain("1000");
+  });
+});
+
+describe("jsonPathFansOut", () => {
+  it.each(["$.dc.creators[0]", "$.items[12].title", "$", "$['a b'].c"])(
+    "doesn't count a path of only names and indexes: %s",
+    (path) => {
+      expect(jsonPathFansOut(path)).toBe(false);
+    },
+  );
+
+  it.each(["$..name", "$.items[*].name", "$.a[0,1]", "$[?@.rank == 2].name", "$..[*,*]"])(
+    "counts a path that can fan out: %s",
+    (path) => {
+      expect(jsonPathFansOut(path)).toBe(true);
+    },
+  );
+});
+
+describe("jsonPathNodeCount", () => {
+  it("counts the root and every value inside an array or an object", () => {
+    expect(jsonPathNodeCount(null)).toBe(1);
+    expect(jsonPathNodeCount({ a: 1, b: [2, 3] })).toBe(5);
+    expect(jsonPathNodeCount([{}, []])).toBe(3);
+  });
+
+  // A 10 MB payload would otherwise cost a full walk to find out it's over the limit.
+  it("stops one past the limit it's given", () => {
+    const wide = { a: Array.from({ length: 5000 }, (_, i) => i) };
+    expect(jsonPathNodeCount(wide, 100)).toBe(101);
+    expect(jsonPathNodeCount(wide)).toBe(5002);
+  });
+
+  it("counts a payload nested too deeply to walk with jsonPathValues", () => {
+    let deep: unknown = "x";
+    for (let i = 0; i < 500; i++) deep = [deep];
+    expect(jsonPathNodeCount(deep)).toBe(501);
   });
 });

@@ -42,7 +42,7 @@ import {
 
 const unique = () => crypto.randomUUID();
 /** The hosted plan's per-Workspace rule limits (docs: Business model and licensing). */
-const hostedLimits = { instructions: 5_000, rules: 100 };
+const hostedLimits = { instructions: 5_000, rules: 100, jsonPathFields: 50, jsonPathNodes: 50_000 };
 const containing = (text: string): unknown => expect.stringContaining(text);
 /** These Workspaces have no model, so the pipeline makes no Agent call. */
 const pipelineDeps = {
@@ -1074,6 +1074,16 @@ describe("Rules", () => {
         () => `    - { field: title, op: matches, value: "[a-z]{1,499}[bc]" }`,
       ).join("\n")}\nassign: [x]\n`;
 
+    /**
+     * An Extractor Rule with `count` JSONPath fields reading `path`. `prefix` keeps two rules' field
+     * names apart, since one Workspace can't declare a field name twice.
+     */
+    const jsonPathRule = (count: number, path: string, prefix: string, name = unique()) =>
+      `extractor: ${name}\nwhen: { field: title, op: exists }\nfields:\n${Array.from(
+        { length: count },
+        (_, i) => `  - name: ${prefix}${String(i)}\n    type: string\n    jsonpath: ${path}`,
+      ).join("\n")}\n`;
+
     it("accepts 5,000 instructions and refuses a rule that would take it to 6,000", async () => {
       const workspaceId = await ownWorkspace();
       expect(
@@ -1125,6 +1135,66 @@ describe("Rules", () => {
       const workspaceId = await ownWorkspace();
       expect(
         await saveRule(db, workspaceId, null, classifierOf(6), "self-hosted", undefined),
+      ).toHaveProperty("saved");
+    });
+
+    it("accepts 50 JSONPath fields that can fan out and refuses the one that would make 51", async () => {
+      const workspaceId = await ownWorkspace();
+      expect(await saveRule(db, workspaceId, null, jsonPathRule(50, "$..name", "a"), "hosted", hostedLimits)).toHaveProperty(
+        "saved",
+      );
+
+      const refused = await saveRule(
+        db,
+        workspaceId,
+        null,
+        jsonPathRule(1, "$.items[*].name", "b"),
+        "hosted",
+        hostedLimits,
+      );
+      const [problem] = "problems" in refused ? refused.problems : [];
+      expect(problem?.path).toBe("");
+      expect(problem?.message).toContain("50 JSONPath fields");
+      expect(problem?.message).toContain("would use 51");
+    });
+
+    it("doesn't count a path of only names and indexes", async () => {
+      const workspaceId = await ownWorkspace();
+      expect(await saveRule(db, workspaceId, null, jsonPathRule(50, "$..name", "a"), "hosted", hostedLimits)).toHaveProperty(
+        "saved",
+      );
+      expect(
+        await saveRule(db, workspaceId, null, jsonPathRule(50, "$.items[0].name", "b"), "hosted", hostedLimits),
+      ).toHaveProperty("saved");
+    });
+
+    it("frees a disabled rule's JSONPath fields, and checks an enable like a save", async () => {
+      const workspaceId = await ownWorkspace();
+      const { id: big } = await saved(workspaceId, jsonPathRule(50, "$..name", "a"));
+      expect(
+        await saveRule(db, workspaceId, null, jsonPathRule(1, "$..name", "b"), "hosted", hostedLimits),
+      ).toHaveProperty("problems");
+
+      expect((await setRuleEnabled(db, workspaceId, "extractor", big, false, hostedLimits)).enabled).toBe(true);
+      const { id: small } = await saved(workspaceId, jsonPathRule(1, "$..name", "b"));
+
+      // Enabling the big one again would leave 51 of the 50 allowed.
+      const again = await setRuleEnabled(db, workspaceId, "extractor", big, true, hostedLimits);
+      expect(again.enabled).toBe(false);
+      expect(again.problems[0]?.message).toContain("would use 51");
+
+      // With the small one's share gone, the big one fits again.
+      await setRuleEnabled(db, workspaceId, "extractor", small, false, hostedLimits);
+      expect((await setRuleEnabled(db, workspaceId, "extractor", big, true, hostedLimits)).enabled).toBe(true);
+    });
+
+    it("accepts 100 JSONPath fields that fan out on self-hosted, which sets no limit", async () => {
+      const workspaceId = await ownWorkspace();
+      expect(
+        await saveRule(db, workspaceId, null, jsonPathRule(50, "$..name", "a"), "self-hosted", undefined),
+      ).toHaveProperty("saved");
+      expect(
+        await saveRule(db, workspaceId, null, jsonPathRule(50, "$..name", "b"), "self-hosted", undefined),
       ).toHaveProperty("saved");
     });
 

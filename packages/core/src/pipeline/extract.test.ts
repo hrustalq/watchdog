@@ -142,6 +142,36 @@ describe("extractFields with a JSONPath", () => {
   });
 });
 
+describe("extractFields over a hosted plan's node limit", () => {
+  it("stores nothing for a JSONPath field and still runs the regex fields of the same rule", () => {
+    const fields: Field[] = [
+      { name: "author", type: "string", jsonpath: "$..author" },
+      { name: "cve", type: "string", from: "title", regex: "(CVE-\\d+)" },
+      { name: "tag", type: "string", jsonpath: "$.tags[0]" },
+    ];
+    const refusal = "the Item's raw payload holds more than 50,000 nodes, so Watchdog didn't read it";
+    expect(extractFields(fields, item({ title: "CVE-1", raw: { tags: ["a"] } }), refusal)).toEqual({
+      values: [{ name: "cve", value: "CVE-1" }],
+      empty: [],
+      problems: [
+        { name: "author", reason: refusal },
+        { name: "tag", reason: refusal },
+      ],
+    });
+  });
+
+  it("reads the same fields when no limit is set, as a self-hosted install runs", () => {
+    const fields: Field[] = [
+      { name: "author", type: "string", jsonpath: "$..author" },
+      { name: "tag", type: "string", jsonpath: "$.tags[0]" },
+    ];
+    expect(extractFields(fields, item({ raw: { author: "Ada", tags: ["a"] } })).values).toEqual([
+      { name: "author", value: "Ada" },
+      { name: "tag", value: "a" },
+    ]);
+  });
+});
+
 describe("extractFields' conversions", () => {
   const read = (type: "string" | "integer" | "string-array" | "integer-array", value: unknown) =>
     extractOne({ type, jsonpath: "$.v" }, item({ raw: { v: value } }));
