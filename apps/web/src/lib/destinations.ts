@@ -132,14 +132,26 @@ async function sendConfirmation(
 
   // After the mail, so one that fails leaves the link already in someone's inbox working.
   const tokenHash = hashOf(token);
-  await db
-    .insert(destinationConfirmation)
-    .values({ tokenHash, destinationId, expiresAt: linkLifetime })
-    .onConflictDoUpdate({
-      target: destinationConfirmation.destinationId,
-      set: { tokenHash, expiresAt: linkLifetime },
-    });
-  return "sent";
+  return db.transaction(async (tx) => {
+    // The Destination's row before the confirmation's, the order removing a Destination takes them through
+    // the cascade, so the two can't deadlock. Key share, because this changes no key: a send's no-key update
+    // runs alongside it, and a remove's update waits. A Destination removed while the mail went leaves no
+    // link to keep, and the insert's foreign key would refuse it.
+    const [target] = await tx
+      .select({ id: destination.id })
+      .from(destination)
+      .where(eq(destination.id, destinationId))
+      .for("key share");
+    if (target === undefined) return "sent";
+    await tx
+      .insert(destinationConfirmation)
+      .values({ tokenHash, destinationId, expiresAt: linkLifetime })
+      .onConflictDoUpdate({
+        target: destinationConfirmation.destinationId,
+        set: { tokenHash, expiresAt: linkLifetime },
+      });
+    return "sent";
+  });
 }
 
 /**
@@ -203,16 +215,32 @@ export async function confirmationAddress(db: Db, token: string) {
 
 /**
  * Spends a confirmation token and confirms its Destination. The token alone is the proof, because the
- * person who owns the address may have no account. False when it's unknown, used or expired.
+ * person who owns the address may have no account. False when it's unknown, used or expired, and when
+ * the Destination was removed as the token was spent.
  */
 export function confirmDestination(db: Db, token: string) {
+  const tokenHash = hashOf(token);
+  const live = and(eq(destinationConfirmation.tokenHash, tokenHash), gt(destinationConfirmation.expiresAt, sql`now()`));
   return db.transaction(async (tx) => {
-    const [spent] = await tx
-      .delete(destinationConfirmation)
-      .where(and(eq(destinationConfirmation.tokenHash, hashOf(token)), gt(destinationConfirmation.expiresAt, sql`now()`)))
-      .returning({ destinationId: destinationConfirmation.destinationId });
-    if (spent === undefined) return false;
-    await tx.update(destination).set({ confirmedAt: sql`now()` }).where(eq(destination.id, spent.destinationId));
+    // Which Destination it's for, read without locking the token, so a remove can take the Destination
+    // first. Then the Destination's row before the token's, the order removing a Destination takes them
+    // through the cascade, so the two can't deadlock. A remove that got there first leaves nothing to
+    // confirm: its row is gone, and the token with it.
+    const [waiting] = await tx
+      .select({ destinationId: destinationConfirmation.destinationId })
+      .from(destinationConfirmation)
+      .where(live);
+    if (waiting === undefined) return false;
+    const [target] = await tx
+      .select({ id: destination.id })
+      .from(destination)
+      .where(eq(destination.id, waiting.destinationId))
+      .for("update");
+    if (target === undefined) return false;
+    // Spent, and only if this is still the live token: sending the link again replaces it.
+    const spent = await tx.delete(destinationConfirmation).where(live).returning({ tokenHash: destinationConfirmation.tokenHash });
+    if (spent.length === 0) return false;
+    await tx.update(destination).set({ confirmedAt: sql`now()` }).where(eq(destination.id, target.id));
     return true;
   });
 }

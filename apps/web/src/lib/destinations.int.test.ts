@@ -225,6 +225,27 @@ describe("Destinations", () => {
       expect(await confirmationAddress(db, "not-a-token")).toBeUndefined();
     });
 
+    it("takes the Destination before the confirmation, so it can't deadlock with removing the Destination", async () => {
+      const added = await addEmail();
+      const token = lastToken();
+      const remove = await db.$client.connect();
+      try {
+        // What removeDestination does: the Destination's row, then the confirmation's through the cascade.
+        await remove.query("begin");
+        await remove.query("select 1 from destination where id = $1 for update", [added.destination.id]);
+        const confirming = confirmDestination(db, token);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        await remove.query("set local lock_timeout = '2s'");
+        await remove.query("delete from destination where id = $1", [added.destination.id]);
+        await remove.query("commit");
+
+        expect(await confirming).toBe(false);
+        expect(await stateOf(added.destination.id)).toBeUndefined();
+      } finally {
+        remove.release();
+      }
+    });
+
     it("confirms once: a used link does nothing", async () => {
       await addEmail();
       const token = lastToken();
@@ -283,6 +304,27 @@ describe("Destinations", () => {
       expect(await addEmailDestination(db, deps, ours, owner, { name, address: "b@example.com" })).toEqual({
         problem: "duplicate-name",
       });
+    });
+
+    it("keeps no link, and reports the send, when the Destination is removed as its mail goes", async () => {
+      const added = await addEmail();
+      await minutePasses();
+      const removing: DestinationDeps = {
+        ...deps,
+        mailer: {
+          send: async (message) => {
+            sent.push(message);
+            await removeDestination(db, ours, added.destination.id);
+          },
+        },
+      };
+
+      // The insert's foreign key would refuse a link for a Destination that is gone.
+      expect(await sendConfirmationAgain(db, removing, ours, added.destination.id)).toBe("sent");
+      expect(
+        await db.select().from(destinationConfirmation).where(eq(destinationConfirmation.destinationId, added.destination.id)),
+      ).toEqual([]);
+      expect(await confirmDestination(db, lastToken())).toBe(false);
     });
 
     it("keeps the Destination when the mail fails, and the link can be sent again at once", async () => {
