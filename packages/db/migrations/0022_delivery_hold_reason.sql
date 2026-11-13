@@ -1,0 +1,2 @@
+ALTER TABLE "delivery" ADD COLUMN "hold_reason" text;--> statement-breakpoint
+ALTER TABLE "delivery" ADD CONSTRAINT "delivery_hold_reason_check" CHECK ("delivery"."hold_reason" is null or "delivery"."hold_reason" in ('quiet-hours', 'rate-limit', 'burst-window', 'email-cap'));

@@ -78,6 +78,12 @@ export const delivery = pgTable(
     attempts: integer("attempts").notNull().default(0),
     /** When a held or grouped Delivery goes, or a failed attempt is retried. */
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+    /**
+     * Why it waits, while it's held or grouped (docs: Actions and delivery, "Deliveries"). A Settings save
+     * that changes a setting makes the rows it held due again, and reads this to leave the email cap's
+     * alone, because the cap isn't a setting and a release would only hold the row again.
+     */
+    holdReason: text("hold_reason", { enum: ["quiet-hours", "rate-limit", "burst-window", "email-cap"] }),
     /** The Grouped alert it waits for or went out in. The rows of one share it. */
     groupId: uuid("group_id"),
     /** When a hold ended, from which its 24 hours of retries run. Without a hold, they run from created_at. */
@@ -88,6 +94,10 @@ export const delivery = pgTable(
   },
   (table) => [
     check("delivery_status_check", sql`${table.status} in ('queued', 'held', 'grouped', 'sent', 'failed')`),
+    check(
+      "delivery_hold_reason_check",
+      sql`${table.holdReason} is null or ${table.holdReason} in ('quiet-hours', 'rate-limit', 'burst-window', 'email-cap')`,
+    ),
     unique("delivery_action_id_item_id_destination_id_key").on(table.actionId, table.itemId, table.destinationId),
     // The queue: what is due to a Destination and when, for grouping.
     index("delivery_destination_id_status_next_attempt_at_idx").on(

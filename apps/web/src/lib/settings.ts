@@ -1,7 +1,22 @@
 // The Workspace's alert settings, as the Settings screen changes them (docs: Actions and delivery,
 // "Grouping and rate limits", "Quiet hours" and "Workspace timezone"). Delivery reads them each time it
 // decides, so a save applies to the next decision.
-import { and, type Db, destination, eq, healthAlertDestination, inArray, isNotNull, workspace } from "@watchdog/db";
+import {
+  and,
+  type Db,
+  delivery,
+  destination,
+  eq,
+  healthAlertDestination,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  sql,
+  type Tx,
+  workspace,
+} from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
 /**
@@ -97,7 +112,7 @@ export function parseAlertSettings(
   };
 }
 
-export async function loadAlertSettings(db: Db, workspaceId: string): Promise<AlertSettings> {
+export async function loadAlertSettings(db: Db | Tx, workspaceId: string): Promise<AlertSettings> {
   const [row] = await db
     .select({
       timezone: workspace.timezone,
@@ -117,8 +132,58 @@ export async function loadAlertSettings(db: Db, workspaceId: string): Promise<Al
 export async function saveAlertSettings(db: Db, workspaceId: string, form: AlertSettingsForm) {
   const parsed = parseAlertSettings(form);
   if ("errors" in parsed) return parsed;
-  await db.update(workspace).set(parsed.values).where(eq(workspace.id, workspaceId));
+  await db.transaction(async (tx) => {
+    const before = await loadAlertSettings(tx, workspaceId);
+    await tx.update(workspace).set(parsed.values).where(eq(workspace.id, workspaceId));
+    // In the transaction that saves it, so a sweep that runs meanwhile can't read the new settings beside
+    // the old hold times and leave a row waiting for a time the settings no longer name.
+    if (changesHolds(before, parsed.values)) await releaseHeldDeliveries(tx, workspaceId);
+  });
   return { saved: true as const };
+}
+
+/** A quiet hours time to the minute, as the form posts it and the user set it. Postgres reads it back with seconds. */
+const toTheMinute = (value: string | null) => (value === null ? null : value.slice(0, 5));
+
+/**
+ * Whether a save changes a setting a hold is timed by: quiet hours, the Severity 5 bypass, the rate limit,
+ * the burst window or the timezone. A tight or loose change both count, because either may move the hold's
+ * time, and the row is only made due: `deliver` holds it again at the right time if it still has to wait.
+ */
+export function changesHolds(before: AlertSettings, after: AlertSettings) {
+  return (
+    before.timezone !== after.timezone ||
+    toTheMinute(before.quietHoursStart) !== toTheMinute(after.quietHoursStart) ||
+    toTheMinute(before.quietHoursEnd) !== toTheMinute(after.quietHoursEnd) ||
+    before.severity5BypassesQuietHours !== after.severity5BypassesQuietHours ||
+    before.alertsPerHour !== after.alertsPerHour ||
+    before.burstWindowSeconds !== after.burstWindowSeconds
+  );
+}
+
+/**
+ * Makes the Workspace's held and grouped Deliveries due, so the worker's next sweep queues them and
+ * `deliver` checks each against the settings as saved (docs: Actions and delivery, "Deliveries").
+ *
+ * A row the hosted email cap holds keeps its time: the cap isn't a setting, so nothing a save changes can
+ * let the row go before the next local day. Releasing it would only hold it again at the same time, with a
+ * second "Held until" row in its Log.
+ */
+async function releaseHeldDeliveries(tx: Tx, workspaceId: string) {
+  const itsDestinations = tx
+    .select({ id: destination.id })
+    .from(destination)
+    .where(eq(destination.workspaceId, workspaceId));
+  await tx
+    .update(delivery)
+    .set({ nextAttemptAt: sql`now()` })
+    .where(
+      and(
+        inArray(delivery.status, ["held", "grouped"]),
+        inArray(delivery.destinationId, itsDestinations),
+        or(isNull(delivery.holdReason), ne(delivery.holdReason, "email-cap")),
+      ),
+    );
 }
 
 /** Quiet hours in words, as the user set them. */
