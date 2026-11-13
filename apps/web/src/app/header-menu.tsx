@@ -45,7 +45,7 @@ function closeWhenLeft(menu: HTMLDetailsElement) {
 export function HeaderMenu({ children }: { children: ReactNode }) {
   return (
     <details ref={closeWhenLeft} className="group">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg border border-transparent px-3 text-sm font-medium outline-none select-none group-open:before:fixed group-open:before:inset-0 group-open:before:z-10 group-open:before:cursor-default hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg border border-transparent px-3 text-sm font-medium outline-hidden select-none group-open:before:fixed group-open:before:inset-0 group-open:before:z-10 group-open:before:cursor-default hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
         Menu
       </summary>
       <div className="absolute top-full right-4 z-10 mt-1 flex w-40 max-w-[calc(100vw-2rem)] flex-col rounded-lg border bg-popover p-1 shadow-md [&>a]:justify-start">

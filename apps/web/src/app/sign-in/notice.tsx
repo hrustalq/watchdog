@@ -20,7 +20,7 @@ export function Notice({
   useEffect(() => ref.current?.focus(), []);
   // Focusable only from code, and it isn't interactive, so it shows no focus ring.
   return (
-    <p ref={ref} role={role} tabIndex={-1} className={cn("outline-none", className)}>
+    <p ref={ref} role={role} tabIndex={-1} className={cn("outline-hidden", className)}>
       {children}
     </p>
   );

@@ -30,7 +30,7 @@ export default function ItemPage({ params, searchParams }: PageProps<"/items/[id
       <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
         <Link
           href="/"
-          className="inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
         >
           Feed
         </Link>
@@ -105,7 +105,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
           <a
             href={found.url}
             rel="noreferrer"
-            className="self-start rounded-sm font-mono text-[0.8125rem] break-all text-muted-foreground underline underline-offset-4 outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
+            className="self-start rounded-sm font-mono text-[0.8125rem] break-all text-muted-foreground underline underline-offset-4 outline-hidden hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/60"
           >
             {found.url}
           </a>
@@ -213,7 +213,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
 }
 
 const inlineLink =
-  "rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+  "rounded-sm text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60";
 
 /**
  * One Log row's words. A failure carries a lamp of its own and says so in the accessibility tree, so it
@@ -290,7 +290,7 @@ function RunRule({
         <p className="text-sm font-medium break-words">
           <Link
             href={`/rules/extractor/${rule.id}`}
-            className="rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+            className="rounded-sm underline-offset-4 outline-hidden hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
           >
             {rule.name}
           </Link>
@@ -372,7 +372,7 @@ function ActionsSection({
               <p className="text-sm font-medium break-words">
                 <Link
                   href={`/rules/action/${row.id}`}
-                  className="rounded-sm underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+                  className="rounded-sm underline-offset-4 outline-hidden hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
                 >
                   {row.name}
                 </Link>

@@ -24,7 +24,7 @@ export const metadata: Metadata = { title: "Usage · Watchdog" };
 export const instant = false;
 
 const textLink =
-  "inline-flex min-h-6 items-center rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+  "inline-flex min-h-6 items-center rounded-sm text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60";
 const notes = "flex max-w-[70ch] flex-col gap-1 text-sm text-muted-foreground";
 const noPrices = "No prices";
 
@@ -45,7 +45,7 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
       <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
         <Link
           href="/"
-          className="rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
         >
           Workspace
         </Link>
@@ -221,7 +221,7 @@ function UsageTable({
         aria-labelledby={id}
         // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- so a keyboard can scroll it
         tabIndex={0}
-        className="overflow-x-auto rounded-lg border outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30"
+        className="overflow-x-auto rounded-lg border outline-hidden focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/60"
       >
         <table className="w-full min-w-xl text-sm">
           <thead className="border-b text-xs tracking-[0.01em] text-muted-foreground">

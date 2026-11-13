@@ -29,7 +29,7 @@ function feedHref(latest: boolean, edit: boolean, before?: string) {
 
 /** The way back from an older page. Underlined, since a phone has no hover to reveal a ghost button. */
 const backLink =
-  "self-start inline-flex min-h-6 items-center rounded-sm text-sm font-medium text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30";
+  "self-start inline-flex min-h-6 items-center rounded-sm text-sm font-medium text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60";
 
 export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
   const [{ user, workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
@@ -177,7 +177,7 @@ function FeedCaption({ latest, fallback, hasModel }: { latest: boolean; fallback
       Showing Latest order, because Top ranks rated Items and this Workspace has no model.{" "}
       <Link
         href={modelLink}
-        className="rounded-sm text-foreground underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+        className="rounded-sm text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60"
       >
         Add a model to rate new Items
       </Link>
@@ -245,7 +245,7 @@ function FeedList({ items, edit }: { items: FeedItem[]; edit: boolean }) {
                     ? `rating-${row.id}-severity rating-${row.id}-importance`
                     : `rating-${row.id}`
                 }
-                className="rounded-sm outline-none after:absolute after:inset-0 focus-visible:after:ring-3 focus-visible:after:ring-inset focus-visible:after:ring-ring/30"
+                className="rounded-sm outline-hidden after:absolute after:inset-0 focus-visible:after:ring-3 focus-visible:after:ring-inset focus-visible:after:ring-ring/60"
               >
                 {row.title ?? "Untitled Item"}
               </Link>
@@ -281,7 +281,7 @@ function FeedList({ items, edit }: { items: FeedItem[]; edit: boolean }) {
               // An unrated Item takes both axes at once, which needs more room than a row has.
               <Link
                 href={`/items/${row.id}#rating`}
-                className="relative inline-flex min-h-6 items-center rounded-sm underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30"
+                className="relative inline-flex min-h-6 items-center rounded-sm underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60"
               >
                 Rate<span className="sr-only"> {row.title ?? "Untitled Item"}</span>
               </Link>

@@ -44,7 +44,7 @@ async function Setup({ searchParams }: Pick<PageProps<"/setup">, "searchParams">
         </div>
         <Link
           href="/sign-in"
-          className="inline-flex h-8 items-center self-start rounded-sm text-sm font-medium underline-offset-4 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="inline-flex h-8 items-center self-start rounded-sm text-sm font-medium underline-offset-4 outline-hidden hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
         >
           Go to sign-in
         </Link>

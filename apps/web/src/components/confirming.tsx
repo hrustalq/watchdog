@@ -19,7 +19,7 @@ export function Confirming({
 }) {
   return (
     <details className="group">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg border border-transparent px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg border border-transparent px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
         <span className="group-open:hidden">{opener}</span>
         <span className="hidden group-open:inline">Keep it</span>
         <span className="sr-only"> {name}</span>

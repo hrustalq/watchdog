@@ -35,7 +35,7 @@ export default function SourcesPage({ searchParams }: PageProps<"/sources">) {
       <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
         <Link
           href="/"
-          className="inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
         >
           Workspace
         </Link>
@@ -385,11 +385,12 @@ function TelegramLinkPanel({
 function RemoveSource({ id, name }: { id: string; name: string }) {
   return (
     <details className="group shrink-0 sm:max-w-64">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
         <span className="group-open:hidden">Remove</span>
         <span className="hidden group-open:inline">Keep it</span>
       </summary>
-      <div className="mt-2 flex flex-col gap-3 rounded-lg bg-muted p-3">
+      {/* Card, not muted: Alarm Red on the muted well leaves its text under 4.5:1. DESIGN.md → Buttons. */}
+      <div className="mt-2 flex flex-col gap-3 rounded-lg bg-card p-3">
         <p className="text-sm">
           Removing {name} also deletes every Item it captured, and their Logs, from the Feed. This
           can&apos;t be undone.
@@ -430,7 +431,7 @@ function ReplaceToken({
   const inputId = `token-${id}`;
   return (
     <details open={outcome !== undefined} className="group shrink-0 sm:max-w-72">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-none select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
         <span className="group-open:hidden">
           Replace token<span className="sr-only"> for {name}</span>
         </span>

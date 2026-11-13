@@ -162,7 +162,7 @@ function Editor({
           <p className="rounded-lg bg-muted px-3 py-2 text-sm">
             This Agent-backed rule stays disabled until this Workspace has a model. You can still save
             it.{" "}
-            <Link href={modelLink} className="rounded-sm underline underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/30">
+            <Link href={modelLink} className="rounded-sm underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60">
               Set up a model
             </Link>
           </p>
@@ -217,7 +217,7 @@ function Editor({
 
       <div className="flex flex-col gap-3 border-t pt-4">
         {problems.length === 0 ? null : (
-          <div role="alert" tabIndex={-1} className="flex flex-col gap-1 outline-none">
+          <div role="alert" tabIndex={-1} className="flex flex-col gap-1 outline-hidden">
             <p className={fieldError}>
               Not saved. {problems.length === 1 ? "1 problem needs" : `${String(problems.length)} problems need`} fixing
               {view === "form" ? " first." : ", listed above."}
@@ -259,7 +259,7 @@ function ViewButton({
       aria-pressed={selected}
       onClick={selected ? undefined : onClick}
       className={cn(
-        "h-7 rounded-md px-3 text-sm font-medium transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/30",
+        "h-7 rounded-md px-3 text-sm font-medium transition-colors outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60",
         selected ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
       )}
     >

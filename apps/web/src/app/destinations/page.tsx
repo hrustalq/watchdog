@@ -75,7 +75,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
       <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
         <Link
           href="/"
-          className="rounded-sm text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/30"
+          className="rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
         >
           Workspace
         </Link>
@@ -562,7 +562,7 @@ function AddForm({ title, open, children }: { title: string; open: boolean; chil
   return (
     // Display stays the summary's own, because flex would take away the marker that says it opens.
     <details name="add-destination" open={open}>
-      <summary className="cursor-pointer rounded-lg border border-transparent px-4 py-3 text-sm font-medium outline-hidden select-none hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:ring-inset">
+      <summary className="cursor-pointer rounded-lg border border-transparent px-4 py-3 text-sm font-medium outline-hidden select-none hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/60 focus-visible:ring-inset">
         {title}
       </summary>
       <div className="p-4 pt-2">{children}</div>
