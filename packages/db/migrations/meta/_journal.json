@@ -162,6 +162,13 @@
       "when": 1794565721555,
       "tag": "0022_delivery_hold_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794573459634,
+      "tag": "0023_mentions_dedup_key_case",
+      "breakpoints": true
     }
   ]
 }
