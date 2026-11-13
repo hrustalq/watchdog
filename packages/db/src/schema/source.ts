@@ -63,7 +63,7 @@ export const source = pgTable(
     dedupKey: text("dedup_key").generatedAlwaysAs(sql`case "type"
       when 'rss' then "config"->>'url'
       when 'github' then case "config"->>'kind'
-        when 'mentions' then 'mentions:' || coalesce("config"->>'within', '') || ':' || btrim("config"->>'term')
+        when 'mentions' then 'mentions:' || coalesce("config"->>'within', '') || ':' || lower(btrim("config"->>'term'))
         else lower(("config"->>'kind') || ':' || ("config"->>'repo')) end
       when 'website' then ("config"->>'url') || ' ' || btrim(coalesce("config"->>'region', ''))
       when 'telegram' then "config"->>'chatId'

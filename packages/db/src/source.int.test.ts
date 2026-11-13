@@ -2,7 +2,7 @@ import { eq, lte, sql } from "drizzle-orm";
 import { beforeAll, describe, expect, it } from "vitest";
 import { closeDb, createDb, type Db } from "./client.ts";
 import { migrate } from "./migrate.ts";
-import { destination, healthAlertDestination, source } from "./schema/index.ts";
+import { destination, healthAlertDestination, item, source } from "./schema/index.ts";
 import { migrateFirst, startPostgres, type TestPostgres } from "./testing/postgres.ts";
 import { only, twoWorkspaces } from "./testing/seed.ts";
 
@@ -77,6 +77,11 @@ describe("source", () => {
       { ...scheduled, type: "github", config: { kind: "mentions", term: "watchdog", within: "org:acme" } },
       { ...scheduled, type: "github", config: { kind: "mentions", term: " watchdog ", within: "org:acme" } },
     );
+    // GitHub search ignores case, so a term in another case is the same search.
+    await twice(
+      { ...scheduled, type: "github", config: { kind: "mentions", term: "Hydration Mismatch", within: "repo:acme/widget" } },
+      { ...scheduled, type: "github", config: { kind: "mentions", term: "hydration mismatch", within: "repo:acme/widget" } },
+    );
     await db.insert(source).values({ ...scheduled, type: "github", config: { kind: "mentions", term: "watchdog" } });
 
     const page = { url: "https://example.com/pricing", ignore: [], render: "static" as const };
@@ -100,6 +105,23 @@ describe("source", () => {
       { ...unscheduled, type: "webhook", config: {} },
       { ...unscheduled, type: "webhook", config: {} },
     ]);
+  });
+
+  it("keys a mentions Source's term in lower case, storing it as the user typed it", async () => {
+    const [a = ""] = await twoWorkspaces(db);
+    const scheduled = { workspaceId: a, type: "github" as const, name: "Case", schedule: "*/15 * * * *" };
+
+    const saved = only(
+      await db
+        .insert(source)
+        .values({ ...scheduled, config: { kind: "mentions", term: "Hydration Mismatch", within: "repo:acme/widget" } })
+        .returning(),
+    );
+
+    expect(saved).toMatchObject({
+      config: { kind: "mentions", term: "Hydration Mismatch", within: "repo:acme/widget" },
+      dedupKey: "mentions:repo:acme/widget:hydration mismatch",
+    });
   });
 
   it("requires a schedule of Schedule Sources only", async () => {
@@ -216,6 +238,56 @@ describe("source", () => {
         { name: "Never polled", lastSuccessAt: null },
         { name: "Polled", lastSuccessAt: new Date("2026-11-09T10:00:00Z") },
       ]);
+    } finally {
+      await closeDb(upgraded);
+    }
+  }, 60_000);
+
+  it("applies migration 0023 to a database with mentions Sources, keeping the oldest of a search now keyed in lower case", async () => {
+    await db.execute(sql`create database at_0022`);
+    const url = new URL(postgres.url);
+    url.pathname = "/at_0022";
+    await migrateFirst(url.href, 23);
+    const old = createDb(url.href);
+    try {
+      // Raw SQL: the Drizzle table has columns a database at 0022 doesn't.
+      await old.execute(sql`insert into "user" (id, name, email) values ('a', 'A', 'a@example.com')`);
+      await old.execute(sql`
+        with ws as (insert into workspace (name, owner_user_id) values ('A', 'a') returning id)
+        insert into source (workspace_id, type, name, config, schedule, created_at)
+        select id, 'github', name, jsonb_build_object('kind', 'mentions', 'term', term), '*/15 * * * *', added::timestamptz
+        from ws, (values ('Older', 'Hydration Mismatch', '2026-11-10T10:00:00Z'),
+                         ('Newer', 'hydration mismatch', '2026-11-11T10:00:00Z'),
+                         ('Other', 'hydration', '2026-11-10T10:00:00Z')) as searches (name, term, added)`);
+      // A newer copy captured the same Items as the older one, and they go with it.
+      await old.execute(sql`
+        insert into item (workspace_id, source_id, external_id, body, raw)
+        select workspace_id, id, 'https://github.com/acme/widgets/issues/1', 'Same result', '{}'
+        from source where name = 'Newer'`);
+    } finally {
+      await closeDb(old);
+    }
+
+    await migrate(url.href);
+
+    const upgraded = createDb(url.href);
+    try {
+      const rows = await upgraded
+        .select({ workspaceId: source.workspaceId, name: source.name, config: source.config, dedupKey: source.dedupKey })
+        .from(source)
+        .orderBy(source.name);
+      expect(rows.map((row) => row.name)).toEqual(["Older", "Other"]);
+      expect(rows.map((row) => row.dedupKey)).toEqual(["mentions::hydration mismatch", "mentions::hydration"]);
+      // The term is still stored as the user typed it.
+      expect(rows[0]?.config).toEqual({ kind: "mentions", term: "Hydration Mismatch" });
+      expect(await upgraded.select({ id: item.id }).from(item)).toEqual([]);
+
+      // The unique index survives the expression change, and a term in another case is refused.
+      const workspaceId = rows[0]?.workspaceId ?? "";
+      const again = { workspaceId, type: "github" as const, name: "Again", schedule: "*/15 * * * *" };
+      await expect(
+        upgraded.insert(source).values({ ...again, config: { kind: "mentions", term: "HYDRATION MISMATCH" } }),
+      ).rejects.toMatchObject(refusal(keyed));
     } finally {
       await closeDb(upgraded);
     }

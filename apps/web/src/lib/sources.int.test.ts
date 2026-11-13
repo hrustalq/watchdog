@@ -645,6 +645,29 @@ describe("Sources", () => {
       );
     });
 
+    it("refuses a term the Workspace already searches for in another case, naming that Source", async () => {
+      // GitHub search ignores case, so “HYDRATION Mismatch” is the search the test above watched as
+      // “hydration mismatch” in vercel/next.js.
+      expect(await mentions(signedIn, "  HYDRATION Mismatch ", "Vercel/Next.js")).toEqual({ problem: "duplicate" });
+      const values = { type: "github-mentions" as const, url: "", repo: "", term: "HYDRATION Mismatch", within: "vercel/next.js" };
+      const watching = await watchedSourceName(db, signedIn, values);
+      expect(watching).toBe("hydration mismatch in vercel/next.js");
+      expect(problemMessage("duplicate", { ...values, status: "", mode: "hosted", source: watching })).toBe(
+        "This Workspace already searches GitHub for “HYDRATION Mismatch” as the Source “hydration mismatch in vercel/next.js”.",
+      );
+    });
+
+    it("stores the term as the user typed it, keying it in lower case", async () => {
+      const row = await saved(await mentions(signedIn, "Watchdog Mentions", "vercel"));
+
+      expect(row).toMatchObject({
+        name: "Watchdog Mentions in vercel",
+        config: { kind: "mentions", term: "Watchdog Mentions", within: "org:vercel" },
+        dedupKey: "mentions:org:vercel:watchdog mentions",
+      });
+      expect(await mentions(signedIn, "watchdog mentions", "vercel")).toEqual({ problem: "duplicate" });
+    });
+
     it("refuses the same repo's issues again, in any case", async () => {
       await issues(signedIn, "nodejs/node");
       expect(await issues(signedIn, "NodeJS/Node")).toEqual({ problem: "duplicate" });
