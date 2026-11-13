@@ -225,14 +225,21 @@ describe("a Telegram user session", () => {
 
   it("keeps its heartbeat while Telegram is slow to answer", async () => {
     const { promise: answered, resolve: answer } = Promise.withResolvers<undefined>();
+    let asked = false;
     telegram.respondWith("auth.sendCode", async () => {
+      asked = true;
       await answered;
       return createStub("auth.sentCode", { type: createStub("auth.sentCodeTypeApp", { length: 5 }), phoneCodeHash });
     });
     const { job } = await login();
-    await vi.waitFor(async () => {
-      expect((await db.select().from(telegramLogin))[0]).toBeDefined();
-    });
+    // The job reads its row, and writes its first heartbeat, before it asks Telegram for a code.
+    // Moving the heartbeat back any sooner would race that read, which would rightly end the login.
+    await vi.waitFor(
+      () => {
+        if (!asked) throw new Error("the job hasn't asked Telegram for a code yet");
+      },
+      { timeout: 5_000, interval: 10 },
+    );
     await db.update(telegramLogin).set({ heartbeatAt: new Date(Date.now() - 11_000) });
     await vi.waitFor(async () => {
       expect(await loginState(db, workspaceId)).toMatchObject({ step: "starting" });
