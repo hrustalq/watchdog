@@ -18,7 +18,8 @@ import { cn } from "@/lib/utils";
 import { FieldError } from "../destinations/field-error";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
-import { saveHealthAlertsAction, saveSettingsAction, setSignup } from "./actions";
+import { saveHealthAlertsAction, setSignup } from "./actions";
+import { SettingsForm } from "./settings-form";
 import { ZoneSuggestion } from "./zone-suggestion";
 
 export const metadata: Metadata = { title: "Settings · Watchdog" };
@@ -88,11 +89,6 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
       <main className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8">
         <h1 className="text-headline">Settings</h1>
 
-        {params.saved === "1" && refused === undefined ? (
-          <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
-            Settings saved. The next alert follows them.
-          </Notice>
-        ) : null}
         {params.saved === "health" ? (
           <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
             Source Health alerts saved. The next one follows them.
@@ -108,7 +104,11 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
 
         {/* A new key for each redirect remounts the fields, so with JavaScript too the first one to fix takes
             focus, its message is announced, and a saved form starts from what's saved. */}
-        <form key={JSON.stringify(params)} action={saveSettingsAction} className="flex flex-col gap-6">
+        <SettingsForm
+          key={JSON.stringify(params)}
+          initial={values}
+          justSaved={params.saved === "1" && refused === undefined}
+        >
           <div className="flex flex-col divide-y rounded-lg border">
             <section aria-labelledby="timezone-heading" className="flex flex-col gap-4 p-4">
               <div className="flex flex-col gap-1">
@@ -269,16 +269,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
               </div>
             </section>
           </div>
-
-          <div className="flex flex-col gap-3">
-            <p className="text-sm text-muted-foreground">
-              A saved change applies to the next alert, including ones already waiting.
-            </p>
-            <SubmitButton pendingLabel="Saving…" className="sm:w-auto sm:self-start">
-              Save settings
-            </SubmitButton>
-          </div>
-        </form>
+        </SettingsForm>
 
         <HealthAlertsSection workspaceId={workspace.id} email={user.email} />
 
