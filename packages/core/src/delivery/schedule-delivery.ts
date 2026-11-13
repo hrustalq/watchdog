@@ -1,6 +1,6 @@
 // Whether an alert can go now (docs: Actions and delivery, "Grouping and rate limits" and "Quiet hours").
 // Decided when it's due to send, from the settings as they are then (ADR 0028).
-import { CronExpressionParser } from "cron-parser";
+import { wallClockAt, wallInstantAtOrAfter } from "../timezone.ts";
 
 export interface AlertSettings {
   /** An IANA name, in which quiet hours are read. */
@@ -19,6 +19,9 @@ export type DeliveryDecision =
   | { kind: "group"; until: Date };
 
 const hourMs = 60 * 60 * 1000;
+const minuteMs = 60 * 1000;
+const secondMs = 1000;
+const dayMs = 24 * hourMs;
 
 /** A wall clock in a timezone, to the minute or to the second. */
 export function localTime(date: Date, timezone: string, withSeconds = false) {
@@ -38,13 +41,16 @@ function quietHoursEnd(settings: AlertSettings, now: Date) {
   const time = localTime(now, timezone, true);
   const inside = start < end ? time >= start && time < end : start > end && (time >= start || time < end);
   if (!inside) return undefined;
-  const [hours, minutes, seconds] = end.slice(0, 8).split(":");
-  return CronExpressionParser.parse(`${String(seconds)} ${String(minutes)} ${String(hours)} * * *`, {
-    currentDate: now,
-    tz: timezone,
-  })
-    .next()
-    .toDate();
+  const [hours = "0", minutes = "0", seconds = "0"] = end.split(":");
+  // The end on the local day it falls: today's while it is still ahead, otherwise tomorrow's. It is read
+  // as a wall clock and found as an instant by offset, because cron-parser skips a day when the clocks
+  // move past it (docs: the cron-parser gotcha page).
+  const wall = wallClockAt(now.getTime(), timezone);
+  const midnight = Math.floor(wall / dayMs) * dayMs;
+  const endOfDay = midnight + Number(hours) * hourMs + Number(minutes) * minuteMs + Number(seconds) * secondMs;
+  const endWall = wall < endOfDay ? endOfDay : endOfDay + dayMs;
+  // A reading the clocks skip ends quiet hours when they land past it, and one they repeat at its first.
+  return new Date(wallInstantAtOrAfter(endWall, timezone, now.getTime()));
 }
 
 /**
