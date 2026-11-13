@@ -622,10 +622,34 @@ describe("the deliver queue", () => {
       secret: "a-better-auth-secret-of-at-least-32-chars",
     });
 
-    const queuedAt = Date.now();
-    await db.transaction((tx) => deliveryEnqueuer(boss)(tx, ids));
+    const burstIds = ids.slice(0, -1);
+    const elsewhereId = present(ids.at(-1));
+    await db.transaction((tx) => deliveryEnqueuer(boss)(tx, burstIds));
 
-    // 50 messages a second apart is a minute of real time, which is what the limit costs.
+    // The burst settles into waiting for its chat's turns: no job of it is in flight, and each Delivery whose
+    // turn hasn't come is queued for it. Held in slots instead, as they were before, this never settles.
+    const activeJobs = async () =>
+      (
+        await db.$client.query<{ count: string }>(
+          "select count(*) as count from pgboss.job where name = $1 and state = 'active'",
+          [deliverQueue],
+        )
+      ).rows.at(0)?.count;
+    await vi.waitFor(async () => {
+      const waiting = (await Promise.all(burstIds.map(rowOf))).filter((row) => row?.status !== "sent");
+      expect(waiting.map((row) => ({ status: row?.status, due: row?.nextAttemptAt !== null }))).toEqual(
+        waiting.map(() => ({ status: "queued", due: true })),
+      );
+      expect(await activeJobs()).toBe("0");
+    }, waitLong);
+    // Still most of a minute of them to go, so the burst is waiting when the other chat's message comes.
+    expect((await Promise.all(burstIds.map(rowOf))).filter((row) => row?.status === "queued").length).toBeGreaterThan(
+      30,
+    );
+
+    const elsewhereQueuedAt = Date.now();
+    await db.transaction((tx) => deliveryEnqueuer(boss)(tx, [elsewhereId]));
+
     await vi.waitFor(
       async () => {
         const rows = await Promise.all(ids.map(rowOf));
@@ -634,10 +658,9 @@ describe("the deliver queue", () => {
       { timeout: 150_000, interval: 1_000 },
     );
 
-    // The other chat's alert was behind the burst's first messages, and still went within 5 seconds.
+    // The other chat's alert was queued after the 50, and went within 5 seconds while they still waited.
     const elsewhereAt = present(arrivals.find(({ chatId }) => chatId === otherChat)).at;
-    expect(arrivals.findIndex(({ chatId }) => chatId === otherChat)).toBeGreaterThan(0);
-    expect(elsewhereAt - queuedAt).toBeLessThan(5_000);
+    expect(elsewhereAt - elsewhereQueuedAt).toBeLessThan(5_000);
 
     // The 50 reached that chat no faster than one a second, and waiting for a turn was no attempt of
     // theirs: each went once, on its own, with one Log row saying so.
