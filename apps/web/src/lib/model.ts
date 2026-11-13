@@ -180,6 +180,7 @@ export async function saveModel(
         .update(modelConfig)
         .set({ ...settings, ...keyChange(newCiphertext, input.clearKey) })
         .where(eq(modelConfig.id, current.id));
+      await fillCallPrices(tx, current.id, settings);
       return { keyLeftBehind: false };
     }
 
@@ -199,6 +200,30 @@ export async function saveModel(
     const hadKey = (current?.apiKeyCiphertext ?? null) !== null;
     return { keyLeftBehind: !input.clearKey && hadKey && newCiphertext === null && carried === null };
   });
+}
+
+/**
+ * Gives the calls that recorded no prices this model's prices, so a user who sets them after the
+ * Agent has already run still gets an estimate for what ran. A call that recorded a price keeps it:
+ * that is what it cost. Half a price can't make an estimate, so this waits for both.
+ */
+async function fillCallPrices(
+  db: Pick<Tx, "update">,
+  modelConfigId: string,
+  prices: { inputPricePerMillion: number | null; outputPricePerMillion: number | null },
+) {
+  const { inputPricePerMillion, outputPricePerMillion } = prices;
+  if (inputPricePerMillion === null || outputPricePerMillion === null) return;
+  await db
+    .update(agentCall)
+    .set({ inputPricePerMillion, outputPricePerMillion })
+    .where(
+      and(
+        eq(agentCall.modelConfigId, modelConfigId),
+        isNull(agentCall.inputPricePerMillion),
+        isNull(agentCall.outputPricePerMillion),
+      ),
+    );
 }
 
 /** An archived row only has to say what ran, so it forgets the key. False when there's no model. */

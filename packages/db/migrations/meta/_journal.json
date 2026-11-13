@@ -169,6 +169,13 @@
       "when": 1794573459634,
       "tag": "0023_mentions_dedup_key_case",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794602827388,
+      "tag": "0024_agent_call_prices",
+      "breakpoints": true
     }
   ]
 }

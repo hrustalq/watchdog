@@ -93,7 +93,13 @@ describe("callAgent", () => {
   /** A new Workspace with an Item and a model of this family. */
   async function seed(
     providerType: ProviderType,
-    overrides: { baseUrl?: string; structured?: boolean; ciphertext?: string | null } = {},
+    overrides: {
+      baseUrl?: string;
+      structured?: boolean;
+      ciphertext?: string | null;
+      inputPricePerMillion?: number | null;
+      outputPricePerMillion?: number | null;
+    } = {},
   ) {
     const id = crypto.randomUUID();
     await db.insert(user).values({ id, name: "Owner", email: `${id}@example.com` });
@@ -130,6 +136,8 @@ describe("callAgent", () => {
         apiKeyCiphertext:
           overrides.ciphertext === undefined ? encryptSecret(apiKey, encryptionKey) : overrides.ciphertext,
         supportsStructuredOutput: overrides.structured ?? false,
+        inputPricePerMillion: overrides.inputPricePerMillion ?? null,
+        outputPricePerMillion: overrides.outputPricePerMillion ?? null,
       })
       .returning();
     return { workspaceId, itemId: present(captured).id, modelConfig: present(model) };
@@ -468,6 +476,34 @@ describe("callAgent", () => {
     });
 
     expect(await rows(seeded)).toMatchObject([{ itemId: null, purpose: "compile-rule", status: "ok" }]);
+  });
+
+  describe("the prices a call records", () => {
+    it("are the model's at the moment of the call, so changing them later leaves it alone", async () => {
+      const seeded = await seed("openai-compatible", { inputPricePerMillion: 2, outputPricePerMillion: 10 });
+      const fake = fakeLlm("openai-compatible", [{ json: valid, usage: { inputTokens: 21, outputTokens: 8 } }]);
+
+      await expect(call(seeded, fake.fetch)).resolves.toEqual({ ok: true, output: valid });
+
+      expect(await rows(seeded)).toMatchObject([
+        { attempt: 1, inputPricePerMillion: 2, outputPricePerMillion: 10 },
+      ]);
+    });
+
+    // Half a price can't make an estimate, so a call records none rather than a misleading half.
+    it.each([
+      [2, null],
+      [null, 10],
+      [null, null],
+    ])("are both null when the model has %s and %s", async (inputPricePerMillion, outputPricePerMillion) => {
+      const seeded = await seed("openai-compatible", { inputPricePerMillion, outputPricePerMillion });
+
+      await call(seeded, fakeLlm("openai-compatible", [{ json: valid }]).fetch);
+
+      expect(await rows(seeded)).toMatchObject([
+        { inputPricePerMillion: null, outputPricePerMillion: null },
+      ]);
+    });
   });
 
   describe("the failure a meter row keeps", () => {

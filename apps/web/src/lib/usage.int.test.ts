@@ -48,6 +48,30 @@ describe("the Usage screen", () => {
 
   type Model = Awaited<ReturnType<typeof newModel>>;
 
+  const saveKey = Buffer.alloc(32, 7);
+
+  const save = async (workspaceId: string, prices: { inputPrice: string; outputPrice: string }) => {
+    const result = await saveModel(db, saveKey, workspaceId, {
+      providerType: "openai-compatible",
+      baseUrl: "https://llm.test/v1",
+      modelName: "fake-model",
+      apiKey: "",
+      clearKey: false,
+      structured: false,
+      ...prices,
+    });
+    if ("problem" in result) throw new Error(`Expected a save, got ${result.problem}`);
+  };
+
+  /** The active model as the table holds it now, prices included. */
+  const modelRow = async (workspaceId: string) =>
+    present(
+      await db.query.modelConfig.findFirst({
+        where: (m, { and, eq, isNull }) => and(eq(m.workspaceId, workspaceId), isNull(m.archivedAt)),
+      }),
+    );
+
+  // A call keeps the prices its model has at the time, as `callAgent` records them.
   const call = (model: Model, values: Partial<typeof agentCall.$inferInsert> = {}) =>
     db.insert(agentCall).values({
       workspaceId: model.workspaceId,
@@ -56,6 +80,8 @@ describe("the Usage screen", () => {
       attempt: 1,
       inputTokens: 100,
       outputTokens: 10,
+      inputPricePerMillion: model.inputPricePerMillion,
+      outputPricePerMillion: model.outputPricePerMillion,
       latencyMs: 5,
       status: "ok",
       createdAt: inMonth,
@@ -383,6 +409,54 @@ describe("the Usage screen", () => {
       expect(purposes.find((row) => row.purpose === "extract-rate")).toMatchObject({ unpricedCalls: 1 });
       expect(purposes.find((row) => row.purpose === "extract-rate")?.cost).toBeCloseTo(2.5, 10);
       expect(purposes.find((row) => row.purpose === "classify")).toMatchObject({ cost: null, unpricedCalls: 1 });
+    });
+
+    it("keeps a closed month's estimate when the price changes, and prices a later call at the new one", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { inputPrice: "2", outputPrice: "10" });
+      await call(await modelRow(workspaceId), { inputTokens: 1_000_000, outputTokens: 0 });
+      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeCloseTo(2, 10);
+
+      await save(workspaceId, { inputPrice: "4", outputPrice: "20" });
+      await call(await modelRow(workspaceId), {
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        createdAt: new Date("2026-11-02T12:00:00.000Z"),
+      });
+
+      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeCloseTo(2, 10);
+      expect((await usageForMonth(db, workspaceId, "2026-11")).total.cost).toBeCloseTo(4, 10);
+    });
+
+    it("leaves an earlier estimate in place when a price is cleared", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { inputPrice: "2", outputPrice: "10" });
+      await call(await modelRow(workspaceId), { inputTokens: 1_000_000, outputTokens: 100_000 });
+      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeCloseTo(3, 10);
+
+      await save(workspaceId, { inputPrice: "", outputPrice: "" });
+
+      const { total } = await usageForMonth(db, workspaceId, month);
+      expect(total).toMatchObject({ calls: 1, unpricedCalls: 0 });
+      expect(total.cost).toBeCloseTo(3, 10);
+    });
+
+    it("prices a call that recorded none once both are set, and never moves a recorded one", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { inputPrice: "", outputPrice: "" });
+      await call(await modelRow(workspaceId), { inputTokens: 1_000_000, outputTokens: 0 });
+
+      await save(workspaceId, { inputPrice: "3", outputPrice: "" });
+      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeNull();
+
+      await save(workspaceId, { inputPrice: "3", outputPrice: "5" });
+      await call(await modelRow(workspaceId), { inputTokens: 0, outputTokens: 1_000_000 });
+      const bothPriced = await usageForMonth(db, workspaceId, month);
+      expect(bothPriced.total).toMatchObject({ calls: 2, unpricedCalls: 0 });
+      expect(bothPriced.total.cost).toBeCloseTo(8, 10);
+
+      await save(workspaceId, { inputPrice: "60", outputPrice: "100" });
+      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeCloseTo(8, 10);
     });
   });
 

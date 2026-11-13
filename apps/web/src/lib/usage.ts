@@ -47,7 +47,7 @@ export interface UsageTally {
    * appear after every wrong key.
    */
   withoutTokens: number;
-  /** Calls on a model without both prices, whose cost `cost` can't include. */
+  /** Calls that recorded no prices, whose cost `cost` can't include. */
   unpricedCalls: number;
   /** What the priced calls cost. Null when none of them were. */
   cost: number | null;
@@ -83,6 +83,18 @@ const count = (filter: SQL) => sql<number>`count(*) filter (where ${filter})`.ma
 const sum = (column: typeof agentCall.inputTokens | typeof agentCall.outputTokens) => sql<number>`coalesce(sum(${column}), 0)`.mapWith(Number);
 
 /**
+ * What the calls cost at the prices each one recorded, added up. A call that recorded no prices
+ * adds nothing, and `unpricedCalls` counts it, so the row can say its cost leaves calls out.
+ */
+const cost = sql<number>`coalesce(sum(
+  case
+    when ${agentCall.inputPricePerMillion} is null or ${agentCall.outputPricePerMillion} is null then 0
+    else (coalesce(${agentCall.inputTokens}, 0) * ${agentCall.inputPricePerMillion}
+      + coalesce(${agentCall.outputTokens}, 0) * ${agentCall.outputPricePerMillion}) / 1000000
+  end
+), 0)`.mapWith(Number);
+
+/**
  * A month's usage per model, one line per provider type, base URL and model name, so a model
  * removed and added back is one line, and per purpose. `firstMonth` is the Workspace's earliest
  * month with a call, or undefined when it has never made one.
@@ -96,8 +108,6 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
         modelName: modelConfig.modelName,
         baseUrl: modelConfig.baseUrl,
         archived: sql<boolean>`${modelConfig.archivedAt} is not null`,
-        inputPrice: modelConfig.inputPricePerMillion,
-        outputPrice: modelConfig.outputPricePerMillion,
         purpose: agentCall.purpose,
         calls: sql<number>`count(*)`.mapWith(Number),
         failed: count(sql`${agentCall.status} <> 'ok'`),
@@ -106,6 +116,10 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
         withoutTokens: count(
           sql`${agentCall.status} <> 'error' and (${agentCall.inputTokens} is null or ${agentCall.outputTokens} is null)`,
         ),
+        unpricedCalls: count(
+          sql`${agentCall.inputPricePerMillion} is null or ${agentCall.outputPricePerMillion} is null`,
+        ),
+        cost,
       })
       .from(agentCall)
       .innerJoin(modelConfig, eq(agentCall.modelConfigId, modelConfig.id))
@@ -125,15 +139,9 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
       .limit(1),
   ]);
 
-  const rows = counted.map((row) =>
-    row.inputPrice === null || row.outputPrice === null
-      ? { ...row, unpricedCalls: row.calls, cost: null }
-      : {
-          ...row,
-          unpricedCalls: 0,
-          cost: (row.inputTokens * row.inputPrice + row.outputTokens * row.outputPrice) / 1_000_000,
-        },
-  );
+  // A month whose calls all recorded a price has a figure. One where none did has no estimate at
+  // all, and one where some did is a floor, which `isFloor` says.
+  const rows = counted.map((row) => (row.unpricedCalls === row.calls ? { ...row, cost: null } : row));
   const nothing: UsageTally = {
     calls: 0,
     failed: 0,
