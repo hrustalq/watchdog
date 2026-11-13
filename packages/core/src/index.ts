@@ -17,6 +17,7 @@ export { type DigestDeps, dueDigests, sendDigest } from "./delivery/digest.ts";
 export { type EmailCap, sendEmailCapNotice } from "./delivery/email-cap.ts";
 export { releaseDueSourceAlerts, sendSourceAlert, type SourceAlertDeps } from "./delivery/source-alert.ts";
 export { emailDestinationConfig } from "./delivery/email.ts";
+export { createTelegramSender } from "./delivery/telegram.ts";
 export { createSenders } from "./delivery/senders.ts";
 export { sendTestAlert, type TestAlertDeps, type TestAlertResult } from "./delivery/test-alert.ts";
 export { botUsername, runBot } from "./telegram/bot-runner.ts";

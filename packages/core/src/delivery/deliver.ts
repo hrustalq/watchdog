@@ -40,11 +40,16 @@ export interface Sender<Message = AlertMessage | GroupedAlert> {
    * Rejects when the message didn't go, with a reason the user can read in the Log. Any error is retried
    * with the backoff, unless it's a FinalSendError or a RetryAfterSendError. `onChatMoved` gets a
    * Telegram chat's new id, encrypted, when its group became a supergroup, before the send there.
+   *
+   * `options.deferTurn` says the caller will send again rather than hold on: a Destination whose turn is
+   * further off than a moment rejects with a NotYetSendError instead of waiting for it. Only the worker's
+   * Delivery queue asks for that, so a queued send holds no slot while it waits.
    */
   send: (
     destination: Destination,
     message: Message,
     onChatMoved?: (secretCiphertext: string) => Promise<void>,
+    options?: { deferTurn?: boolean },
   ) => Promise<void>;
 }
 
@@ -67,6 +72,20 @@ export class RetryAfterSendError extends Error {
 }
 
 /**
+ * The send didn't go because the Destination's turn is a while off. Not a failed attempt: the job goes
+ * again at that turn, so the Delivery's attempts, the Log and the Destination stay as they were.
+ */
+export class NotYetSendError extends Error {
+  override name = "NotYetSendError";
+  /** The turn the sender took, in ms from when it said so, which a send then finds free. */
+  readonly waitMs: number;
+  constructor(waitMs: number) {
+    super(`The Destination's turn is ${String(waitMs)} ms away`);
+    this.waitMs = waitMs;
+  }
+}
+
+/**
  * What a failed request's error should say in the Log. undici's own message is only "fetch failed", and a
  * connection tried on several addresses has a cause with no message. Other errors, such as the egress
  * guard's, say what happened already.
@@ -82,9 +101,10 @@ export interface DeliverDeps {
   /** Where Watchdog is served, for the link to the Item. */
   appUrl: string;
   /**
-   * Queues the next attempt's job on the transaction that records this one, so a worker dying after the
-   * commit can't lose it. Choosing the time here, not through pg-boss's backoff and its jitter, is what
-   * lets the Log say when the retry is and the last one land on the 24 hour mark.
+   * Queues a job for a Delivery on the transaction that records what happened to it, so a worker dying
+   * after the commit can't lose it: the next attempt's, after a failure, or the one that goes when its
+   * Destination's turn comes. Choosing the time here, not through pg-boss's backoff and its jitter, is
+   * what lets the Log say when the retry is and the last one land on the 24 hour mark.
    */
   retryDelivery: (tx: Tx, deliveryId: string, at: Date) => Promise<void>;
   /** The hosted daily cap on alert mail. Self-hosted has none. */
@@ -251,6 +271,21 @@ async function record(
   await alsoRecord?.(tx);
 }
 
+/**
+ * Puts the Deliveries back as they were, due at `at`, with a job for then. Waiting for the Destination's
+ * turn is no attempt, so neither the Log nor the Destination hears of it. A row another job recorded
+ * meanwhile is left alone, and so queues nothing.
+ */
+async function deferDelivery(tx: Tx, row: DueDelivery, at: Date, retryDelivery: DeliverDeps["retryDelivery"]) {
+  const updated = await tx
+    .update(delivery)
+    .set({ nextAttemptAt: at })
+    .where(and(eq(delivery.id, row.id), eq(delivery.status, "queued"), eq(delivery.attempts, row.attempts)))
+    .returning({ id: delivery.id });
+  if (updated.length === 0) return;
+  await retryDelivery(tx, row.id, at);
+}
+
 /** Holds or groups the alerts that can't go now, and returns the ones that can. */
 async function applySchedule(
   tx: Tx,
@@ -367,6 +402,12 @@ async function send(
   try {
     await transmit(onChatMoved);
   } catch (error) {
+    // No attempt was made, so nothing is recorded: the job goes again when the turn comes.
+    if (error instanceof NotYetSendError) {
+      const at = new Date(now().getTime() + error.waitMs);
+      for (const row of rows) await recording((tx) => deferDelivery(tx, row, at, deps.retryDelivery));
+      return;
+    }
     const failed = now();
     const reason = failureReason(error);
     const failure = `${moved}Sending to ${target.name} failed: ${reason}`;
@@ -448,7 +489,9 @@ async function send(
  *
  * Jobs for one Destination take turns on its row, held through the send, so two can't both send an Item
  * (ADR 0028). Finding its rows sent, a waiting job ends at once, so a burst holds the queue only for one
- * send, or for one send per alert when the burst window is 0. The lock lets a new Delivery in, because
+ * send, or for one send per alert when the burst window is 0. A sender that would make it wait for its
+ * Destination's turn past a moment says when that turn is, and the job is queued for it instead: waiting
+ * takes no slot, no attempt and no Log row. The lock lets a new Delivery in, because
  * it doesn't touch the key its foreign key reads. A webhook gets one request per Item with no settings
  * to check, so it takes no lock and holds no connection through its request.
  */
@@ -517,7 +560,8 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
         deps,
         now,
         (write) => write(tx),
-        (onChatMoved) => sender.send(target, alertMessage(sending, deps.appUrl), onChatMoved),
+        (onChatMoved) =>
+          sender.send(target, alertMessage(sending, deps.appUrl), onChatMoved, { deferTurn: true }),
       );
     }
   });

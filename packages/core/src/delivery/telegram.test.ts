@@ -3,7 +3,7 @@ import { z } from "zod";
 import { EgressLimitError } from "../egress/egress.ts";
 import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
-import { type Destination, FinalSendError, RetryAfterSendError } from "./deliver.ts";
+import { type Destination, FinalSendError, NotYetSendError, RetryAfterSendError } from "./deliver.ts";
 import { groupedAlert } from "./group.ts";
 import { sourceAlertContent } from "./source-alert-content.ts";
 import { createTelegramSender } from "./telegram.ts";
@@ -80,6 +80,12 @@ async function failureOf(send: Promise<void>) {
     if (error instanceof Error) return error;
   }
   throw new Error("Expected the send to fail");
+}
+
+/** The not-yet a send rejects with, which the test expects. */
+function notYetOf(error: Error): NotYetSendError {
+  if (error instanceof NotYetSendError) return error;
+  throw new Error(`Expected a not-yet send, got ${error.name}`);
 }
 
 /** What Telegram answers when it refuses a request. */
@@ -359,6 +365,41 @@ describe("createTelegramSender", () => {
 
       const [first, second] = telegram.requests;
       expect(Number(second?.at) - Number(first?.at)).toBeLessThan(500);
+    });
+
+    it("says when a chat's turn is, taking it for then, when the caller can resend", async () => {
+      const telegram = fakeTelegram();
+      const bot = sender(telegram);
+      await bot.send(chat(), message);
+
+      const failure = notYetOf(
+        await failureOf(bot.send(chat(), message, undefined, { deferTurn: true })),
+      );
+
+      // A second, as one chat takes, and the turn is taken, so a send then waits for nothing.
+      expect(failure.waitMs).toBeGreaterThanOrEqual(1000);
+      expect(failure.waitMs).toBeLessThan(1500);
+      expect(telegram.requests).toHaveLength(1);
+
+      await new Promise((resolve) => setTimeout(resolve, failure.waitMs));
+      await bot.send(chat(), message, undefined, { deferTurn: true });
+
+      // The turn it booked, not a second one taken behind it.
+      const [first, second] = telegram.requests;
+      expect(Number(second?.at) - Number(first?.at)).toBeGreaterThanOrEqual(1000);
+      expect(Number(second?.at) - Number(first?.at)).toBeLessThan(2000);
+    });
+
+    it("keeps a bot-wide turn that is a moment away, rather than make the caller resend", async () => {
+      const telegram = fakeTelegram();
+      const bot = sender(telegram);
+
+      await Promise.all([
+        bot.send(chat("1"), message, undefined, { deferTurn: true }),
+        bot.send(chat("2"), message, undefined, { deferTurn: true }),
+      ]);
+
+      expect(telegram.requests).toHaveLength(2);
     });
   });
 

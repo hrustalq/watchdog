@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { createEgressFetch } from "../egress/egress.ts";
 import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
-import { type AlertSender, FinalSendError, RetryAfterSendError, unreachable } from "./deliver.ts";
+import { type AlertSender, FinalSendError, NotYetSendError, RetryAfterSendError, unreachable } from "./deliver.ts";
 import { groupedAlertText } from "./group.ts";
 import { sourceAlertText } from "./source-alert-content.ts";
 
@@ -14,6 +14,8 @@ const maxLength = 4096;
 // because a request reaches Telegram a little later than it's let go, and not always equally later.
 const chatGapMs = 1050;
 const botGapMs = 35;
+/** The longest wait a send takes on itself: past it, a caller that can reschedule is told when the turn is. */
+const momentMs = 250;
 
 export const botApiUrl = (botToken: string, method: string) => `https://api.telegram.org/bot${botToken}/${method}`;
 
@@ -46,26 +48,43 @@ function alertText({ title, source, rating, summary, link, why }: AlertMessage) 
 }
 
 /**
- * Waits for a chat's turn. One worker sends alerts, so these limits can be kept in memory. The web app's
- * test alerts have a limiter of their own, so a test within a second of an alert to the same chat can get
- * a 429, which only that test or one attempt of the alert pays for.
+ * Takes a send's turn and says how long it is away. One worker sends alerts, so these limits can be kept in
+ * memory. The web app's test alerts have a limiter of their own, so a test within a second of an alert to
+ * the same chat can get a 429, which only that test or one attempt of the alert pays for.
+ *
+ * A turn is taken at the moment the message goes, so the gap that follows it is kept from a real send. A
+ * caller that can send again takes no turn: it is told when its place in the chat's queue comes up, and its
+ * job goes then, so nothing waits here on its behalf.
  */
 function floodLimiter() {
   let botFreeAt = 0;
   const chatFreeAt = new Map<string, number>();
-  return async (chatId: string) => {
-    for (;;) {
-      const now = Date.now();
-      const freeAt = Math.max(botFreeAt, chatFreeAt.get(chatId) ?? 0);
-      if (freeAt <= now) {
-        botFreeAt = now + botGapMs;
-        // A chat whose second has passed needs no entry, which keeps this to the last second's chats.
-        for (const [chat, at] of chatFreeAt) if (at <= now) chatFreeAt.delete(chat);
-        chatFreeAt.set(chatId, now + chatGapMs);
-        return;
+  /** When each chat's queued sends have had their turns: a rescheduled send's place among them. */
+  const chatQueuedAt = new Map<string, number>();
+
+  /** The wait until the chat's turn, which it takes when that is 0, or the one its caller resends for. */
+  return (chatId: string, deferTurn: boolean) => {
+    const now = Date.now();
+    // A chat whose second has passed needs no entry, which keeps these to the last second's chats.
+    for (const [chat, at] of chatFreeAt) if (at <= now) chatFreeAt.delete(chat);
+    for (const [chat, at] of chatQueuedAt) if (at <= now) chatQueuedAt.delete(chat);
+
+    const freeAt = Math.max(botFreeAt, chatFreeAt.get(chatId) ?? 0);
+    const queuedAt = chatQueuedAt.get(chatId) ?? 0;
+    if (freeAt > now) {
+      if (freeAt - now > momentMs && deferTurn) {
+        // Behind the sends already queued for this chat, which come a gap apart rather than in a crowd.
+        const at = Math.max(freeAt, queuedAt);
+        chatQueuedAt.set(chatId, at + chatGapMs);
+        throw new NotYetSendError(at - now);
       }
-      await sleep(freeAt - now);
+      return freeAt - now;
     }
+
+    botFreeAt = now + botGapMs;
+    chatFreeAt.set(chatId, now + chatGapMs);
+    chatQueuedAt.set(chatId, Math.max(queuedAt, now + chatGapMs));
+    return 0;
   };
 }
 
@@ -86,9 +105,15 @@ export function createTelegramSender(
   const url = botApiUrl(botToken, "sendMessage");
   const nextTurn = floodLimiter();
 
-  /** Undefined when the message went, or else Telegram's refusal. */
-  const post = async (chatId: string, text: string) => {
-    await nextTurn(chatId);
+  /**
+   * Undefined when the message went, or else Telegram's refusal. The wait for the chat's turn happens here,
+   * so the gap is kept from the moment the message goes. A job whose turn is further off than a moment is
+   * told when it is instead, and goes again then.
+   */
+  const post = async (chatId: string, text: string, deferTurn: boolean) => {
+    for (let waitMs = nextTurn(chatId, deferTurn); waitMs > 0; waitMs = nextTurn(chatId, deferTurn)) {
+      await sleep(waitMs);
+    }
     const response = await deps
       .fetch(url, {
         method: "POST",
@@ -112,18 +137,19 @@ export function createTelegramSender(
   };
 
   return {
-    send: async (destination, message, onChatMoved) => {
+    send: async (destination, message, onChatMoved, options) => {
       if (destination.secretCiphertext === null) throw new Error("the Telegram chat isn't linked");
+      const deferTurn = options?.deferTurn === true;
       let text: string;
       if ("health" in message) text = sourceAlertText(message);
       else text = "lines" in message ? groupedAlertText(message, maxLength) : alertText(message);
-      let refused = await post(decryptSecret(destination.secretCiphertext, deps.encryptionKey), text);
+      let refused = await post(decryptSecret(destination.secretCiphertext, deps.encryptionKey), text, deferTurn);
       const movedTo = refused?.answer.parameters?.migrate_to_chat_id;
       // Once only, so a chat that keeps moving can't hold the send in a loop.
       if (movedTo !== undefined) {
         const chatId = String(movedTo);
         await onChatMoved?.(encryptSecret(chatId, deps.encryptionKey));
-        refused = await post(chatId, text);
+        refused = await post(chatId, text, deferTurn);
       }
       if (refused === undefined) return;
 

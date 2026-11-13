@@ -135,16 +135,23 @@ export async function startDelivery(
   const retryDelivery: DeliverDeps["retryDelivery"] = async (tx, deliveryId, at) => {
     await boss.insert(deliverQueue, [{ data: { deliveryId }, startAfter: at }], { db: fromDrizzle(tx, sql) });
   };
-  await boss.work<{ deliveryId: string }>(deliverQueue, { localConcurrency: 10 }, async ([job]) => {
-    if (job === undefined) return;
-    const { deliveryId } = job.data;
-    try {
-      await deliver(db, deliveryId, { ...deps, retryDelivery, ...(sendCapNotice && { emailCap: capNoticeQueuer(boss) }) });
-    } catch (error) {
-      console.error(`Sending Delivery ${deliveryId} failed:`, error);
-      throw error;
-    }
-  });
+  // A Delivery waiting for its chat's turn goes back in the queue for that turn, a second or so away, and
+  // each worker fetches one job per poll: at pg-boss's default two seconds the 50 behind a burst would wait
+  // that much apiece, and a turn would come a second or two late. Half a second is the fastest it allows.
+  await boss.work<{ deliveryId: string }>(
+    deliverQueue,
+    { localConcurrency: 10, pollingIntervalSeconds: 0.5 },
+    async ([job]) => {
+      if (job === undefined) return;
+      const { deliveryId } = job.data;
+      try {
+        await deliver(db, deliveryId, { ...deps, retryDelivery, ...(sendCapNotice && { emailCap: capNoticeQueuer(boss) }) });
+      } catch (error) {
+        console.error(`Sending Delivery ${deliveryId} failed:`, error);
+        throw error;
+      }
+    },
+  );
 
   // A Source Health alert is sent like a Delivery, so its queue has the same options.
   await boss.createQueue(sourceAlertQueue, queueOptions);

@@ -1,3 +1,4 @@
+import { createTelegramSender, encryptSecret } from "@watchdog/core";
 import type { AlertSender } from "@watchdog/core";
 import {
   action,
@@ -39,6 +40,22 @@ function present<T>(value: T | undefined): T {
 }
 
 const waitLong = { timeout: 30_000, interval: 100 };
+
+/** Two chats and a bot, for the test that measures the flood limit through the real sender. */
+const botToken = "123456:token";
+const encryptionKey = Buffer.alloc(32, 7);
+const burstChat = "-100200";
+const otherChat = "-100300";
+
+/** The chat a request was for, which the test expects its body to hold. */
+function chatIdOf(body: unknown) {
+  if (typeof body !== "string") throw new Error("Expected a JSON request body");
+  const parsed: unknown = JSON.parse(body);
+  if (typeof parsed === "object" && parsed !== null && "chat_id" in parsed && typeof parsed.chat_id === "string") {
+    return parsed.chat_id;
+  }
+  throw new Error("Expected a chat_id in the request body");
+}
 
 describe("the deliver queue", () => {
   let postgres: TestPostgres;
@@ -525,6 +542,123 @@ describe("the deliver queue", () => {
       expect(rows.map((row) => row?.status)).toEqual(ids.map(() => "sent"));
     });
   });
+
+  it("holds no slot while 50 Deliveries to one chat wait for its turns", async () => {
+    const { deliveryId, itemId } = await seed();
+    const first = present(await rowOf(deliveryId));
+    const seeded = present(await db.query.item.findFirst({ where: eq(item.id, itemId) }));
+    await db
+      .update(workspace)
+      .set({ burstWindowSeconds: 0, alertsPerHour: 1000 })
+      .where(eq(workspace.id, seeded.workspaceId));
+    await db
+      .update(destination)
+      .set({ secretCiphertext: encryptSecret(burstChat, encryptionKey) })
+      .where(eq(destination.id, first.destinationId));
+
+    // 49 more alerts to the same chat, each about an Item of its own, and one to another chat after them.
+    const others = await db
+      .insert(item)
+      .values(
+        Array.from({ length: 49 }, (_, index) => ({
+          workspaceId: seeded.workspaceId,
+          sourceId: seeded.sourceId,
+          externalId: `burst-${String(index)}`,
+          title: `Burst ${String(index)}`,
+          body: "An entry.",
+          raw: {},
+        })),
+      )
+      .returning({ id: item.id });
+    const [elsewhere] = await db
+      .insert(destination)
+      .values({
+        workspaceId: seeded.workspaceId,
+        type: "telegram",
+        name: "other-chat",
+        secretCiphertext: encryptSecret(otherChat, encryptionKey),
+        confirmedAt: new Date(),
+      })
+      .returning({ id: destination.id });
+    const [elsewhereItem] = await db
+      .insert(item)
+      .values({
+        workspaceId: seeded.workspaceId,
+        sourceId: seeded.sourceId,
+        externalId: "elsewhere",
+        title: "Elsewhere",
+        body: "An entry.",
+        raw: {},
+      })
+      .returning({ id: item.id });
+    const burst = await db
+      .insert(delivery)
+      .values([
+        ...others.map(({ id }) => ({ actionId: first.actionId, itemId: id, destinationId: first.destinationId })),
+        { actionId: first.actionId, itemId: present(elsewhereItem).id, destinationId: present(elsewhere).id },
+      ])
+      .returning({ id: delivery.id });
+    const ids = [deliveryId, ...burst.map(({ id }) => id)];
+
+    // The real sender, so the flood limiter this measures is the one the worker sends through.
+    const arrivals: { chatId: string; at: number }[] = [];
+    const telegram = createTelegramSender(botToken, {
+      fetch: (_input, init) => {
+        arrivals.push({ chatId: chatIdOf(init?.body), at: Date.now() });
+        return Promise.resolve(Response.json({ ok: true, result: {} }));
+      },
+      encryptionKey,
+    });
+    worker = new PgBoss({ connectionString: postgres.url, schedule: false, supervise: false });
+    await worker.start();
+    const quiet = { send: () => Promise.resolve() };
+    await startDelivery(db, worker, {
+      senders: {
+        telegram,
+        email: quiet,
+        webhook: { send: () => Promise.reject(new Error("These tests send no webhooks")) },
+      },
+      appUrl: "https://watchdog.test",
+      secret: "a-better-auth-secret-of-at-least-32-chars",
+    });
+
+    const queuedAt = Date.now();
+    await db.transaction((tx) => deliveryEnqueuer(boss)(tx, ids));
+
+    // 50 messages a second apart is a minute of real time, which is what the limit costs.
+    await vi.waitFor(
+      async () => {
+        const rows = await Promise.all(ids.map(rowOf));
+        expect(rows.map((row) => row?.status)).toEqual(ids.map(() => "sent"));
+      },
+      { timeout: 150_000, interval: 1_000 },
+    );
+
+    // The other chat's alert was behind the burst's first messages, and still went within 5 seconds.
+    const elsewhereAt = present(arrivals.find(({ chatId }) => chatId === otherChat)).at;
+    expect(arrivals.findIndex(({ chatId }) => chatId === otherChat)).toBeGreaterThan(0);
+    expect(elsewhereAt - queuedAt).toBeLessThan(5_000);
+
+    // The 50 reached that chat no faster than one a second, and waiting for a turn was no attempt of
+    // theirs: each went once, on its own, with one Log row saying so.
+    const burstTimes = arrivals
+      .filter(({ chatId }) => chatId === burstChat)
+      .map(({ at }) => at)
+      .sort((a, b) => a - b);
+    expect(burstTimes).toHaveLength(50);
+    const gapsMs = burstTimes.reduce<number[]>((gaps, at, index) => {
+      const before = burstTimes[index - 1];
+      if (before !== undefined) gaps.push(at - before);
+      return gaps;
+    }, []);
+    expect(gapsMs).toHaveLength(49);
+    expect(gapsMs.filter((gap) => gap < 1000)).toEqual([]);
+    for (const id of ids) expect(await rowOf(id)).toMatchObject({ status: "sent", attempts: 1 });
+    for (const each of [itemId, ...others.map((row) => row.id), present(elsewhereItem).id]) {
+      expect(await logOf(each)).toHaveLength(1);
+    }
+    expect(await logOf(itemId)).toEqual(["Sent to ops-chat"]);
+  }, 180_000);
 
   it("sends a new Source Health alert from the sweep, once", async () => {
     const ownerId = crypto.randomUUID();
