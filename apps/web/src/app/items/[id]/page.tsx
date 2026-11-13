@@ -5,7 +5,7 @@ import { Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { Button } from "@/components/ui/button";
 import { deliveryStatus, isCallFailure, isFailureRow, itemActions, itemWithLog, manualRunIn } from "@/lib/feed";
-import { listRules } from "@/lib/rules";
+import { knownCategories, listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
 import { RatingControls } from "../../correct-rating";
 import { Refresher } from "../../refresher";
@@ -50,10 +50,12 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
   const [{ workspace }, { id }, { run: runId }] = await Promise.all([requireWorkspace(), params, searchParams]);
   const { db } = server();
   // Another Workspace's Item is missing too, so its id says nothing about whether it exists.
-  const [found = notFound(), { extractorRules, hasModel }, fired] = await Promise.all([
+  const [found = notFound(), { extractorRules, hasModel }, fired, suggestions] = await Promise.all([
     itemWithLog(db, workspace.id, id),
     listRules(db, workspace.id),
     itemActions(db, workspace.id, id),
+    // The Categories the add box offers, which are the Workspace's, so it is read with the Item.
+    knownCategories(db, workspace.id),
   ]);
   const run = manualRunIn(found.log, runId);
 
@@ -81,7 +83,13 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
     },
     {
       term: "Categories",
-      detail: <CorrectCategories itemId={found.id} categories={found.categories.map(({ category }) => category)} />,
+      detail: (
+        <CorrectCategories
+          itemId={found.id}
+          categories={found.categories.map(({ category }) => category)}
+          suggestions={suggestions}
+        />
+      ),
     },
     { term: "Source", detail: found.source.name },
     { term: "Author", detail: found.author ?? <Missing>None given</Missing> },
