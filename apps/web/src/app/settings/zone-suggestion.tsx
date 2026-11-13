@@ -41,6 +41,8 @@ export function ZoneSuggestion({ inputId, saved }: { inputId: string; saved: str
               const input = document.getElementById(inputId);
               if (!(input instanceof HTMLInputElement)) return;
               input.value = zone;
+              // The Settings form watches input events to tell when a field differs from what's saved.
+              input.dispatchEvent(new Event("input", { bubbles: true }));
               input.focus();
               setUsed(true);
             }}

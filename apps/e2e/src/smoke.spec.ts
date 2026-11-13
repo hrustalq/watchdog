@@ -673,7 +673,18 @@ test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours ho
     await visibleField(page, "From").fill(clock(-1));
     await visibleField(page, "Until").fill(clock(1));
     await page.getByRole("button", { name: "Save settings" }).click();
-    await expect(page.getByRole("status").filter({ hasText: "Settings saved." })).toBeVisible();
+    const savedNotice = page.getByRole("status").filter({ hasText: "Settings saved." });
+    await expect(savedNotice).toBeVisible();
+
+    // The footer says the form holds edits, as Profile's does, and the saved notice steps aside.
+    const unsaved = page.locator("form strong", { hasText: "Unsaved changes." });
+    const quietHours = page.getByLabel("Hold alerts during quiet hours");
+    await quietHours.uncheck();
+    await expect(unsaved).toBeVisible();
+    await expect(savedNotice).toBeHidden();
+    await quietHours.check();
+    await expect(unsaved).toHaveCount(0);
+    await expect(savedNotice).toBeVisible();
 
     await publishEntry("second");
     await checkNow(page, feed);
