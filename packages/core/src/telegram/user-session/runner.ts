@@ -21,9 +21,13 @@ const unreadable = "The Telegram session can't read this chat. The account may h
 
 /** A Backfill reads Telegram's newest 50, which capture cuts to the Backfill's window. */
 const backfillLimit = 50;
-/** A catch-up reads back to the last message read, a page at a time, up to 1,000 messages. */
+/**
+ * A catch-up reads back to the last message read, a page at a time, until it gets there. It captures
+ * a chunk of pages at a time, oldest page first, so a gap of any size is captured without holding
+ * more than a chunk's messages, and a turn that ends mid-gap keeps the pages it captured.
+ */
 const catchUpPage = 100;
-const catchUpPages = 10;
+const catchUpChunk = 10;
 /** A list of more dialogs than this is cut, so one turn's start costs at most a few calls. */
 const dialogLimit = 500;
 
@@ -153,19 +157,35 @@ export async function runSession(db: Db, deps: RunnerDeps, sessionId: string, { 
     });
   });
 
-  /** The Backfill's newest 50, or everything after `minId`, newest first, a page at a time. */
-  const history = async (chatId: number, minId?: number) => {
-    if (minId === undefined) return waitingOutFloods(() => getHistory(client, chatId, { limit: backfillLimit }));
-    const messages: Message[] = [];
+  /** A new Source's Backfill: Telegram's newest 50, which capture cuts to the Backfill's window. */
+  const backfill = (chatId: number) => waitingOutFloods(() => getHistory(client, chatId, { limit: backfillLimit }));
+
+  /**
+   * Everything after `minId`, however much there is: pages read newest first, then a chunk of pages
+   * captured oldest first, until Telegram has nothing more. A page is one call and one capture, and
+   * the loop yields between pages, so the turn's other work and the update loop keep running as a
+   * long gap drains. Capturing oldest first means `lastId` only moves past messages already captured,
+   * so a turn that ends mid-gap reads the rest next turn instead of losing it.
+   */
+  const catchUp = async (into: Watched, chatId: number, minId: number) => {
     let offset: { id: number; date: number } | undefined;
-    for (let page = 0; page < catchUpPages; page += 1) {
-      const from = offset;
-      const got = await waitingOutFloods(() => getHistory(client, chatId, { limit: catchUpPage, minId, ...(from && { offset: from }) }));
-      messages.push(...got);
-      if (got.length < catchUpPage) break;
-      offset = got.next;
+    for (;;) {
+      const pages: Message[][] = [];
+      let read = 0;
+      let done = false;
+      while (read < catchUpChunk && !done) {
+        const from = offset;
+        const page = await waitingOutFloods(() => getHistory(client, chatId, { limit: catchUpPage, minId, ...(from && { offset: from }) }));
+        pages.push(page);
+        read += 1;
+        // A short page is the last one: Telegram has nothing older past `minId`.
+        done = page.length < catchUpPage;
+        offset = page.next;
+        await sleep(0);
+      }
+      for (const page of pages.reverse()) if (page.length > 0) await serially(() => take(into, page));
+      if (done) return;
     }
-    return messages;
   };
 
   /** A new Source's Backfill, or what came in since the last turn's newest message. */
@@ -179,7 +199,9 @@ export async function runSession(db: Db, deps: RunnerDeps, sessionId: string, { 
       // mtcute polls a supergroup's or channel's updates only once it's told the chat is open.
       const [kind, bareId] = parseMarkedPeerId(chatId);
       if (kind === "channel") await client.notifyChannelOpened(bareId);
-      await serially(async () => take(into, await history(chatId, row.backfilledAt === null ? undefined : into.lastId)));
+      // A new Source takes its Backfill; one read before catches up on every message since.
+      if (row.backfilledAt === null) await serially(async () => take(into, await backfill(chatId)));
+      else await catchUp(into, chatId, into.lastId);
       // Read again, such as after the account rejoined the chat or signed in again.
       await db.transaction((tx) => setPushSourceHealth(tx, and(eq(source.id, row.id), eq(source.health, "failing")), null));
     } catch (error) {
