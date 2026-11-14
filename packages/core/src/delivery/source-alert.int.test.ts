@@ -477,6 +477,7 @@ describe("Source Health alerts", () => {
     await db.transaction((tx) => setPushSourceHealth(tx, eq(source.id, present(second).id), lost, start));
     await deliverEvery(seeded.workspaceId, deps);
 
-    expect(sent.map(({ message }) => message.sources)).toEqual([["Release feed"], ["Second chat"]]);
+    // The sweep releases them in no order, so the messages are compared as a set.
+    expect(sent.map(({ message }) => message.sources).sort()).toEqual([["Release feed"], ["Second chat"]]);
   });
 });
