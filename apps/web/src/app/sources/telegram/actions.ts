@@ -5,6 +5,7 @@ import { requireWorkspace, server } from "@/lib/server";
 import {
   answerTelegramLogin,
   cancelTelegramLogin,
+  deleteTelegramSession,
   revokeTelegramSession,
   type SessionAccess,
   startTelegramLogin,
@@ -52,6 +53,13 @@ export async function cancelTelegramLoginAction() {
 export async function revokeTelegramSessionAction() {
   const { workspaceId, access: session } = await access();
   await revokeTelegramSession(session, workspaceId);
+  redirect(page);
+}
+
+/** Deletes a session Watchdog can no longer decrypt, which it can't log out on Telegram either. */
+export async function deleteTelegramSessionAction() {
+  const { workspaceId, access: session } = await access();
+  await deleteTelegramSession(session, workspaceId);
   redirect(page);
 }
 

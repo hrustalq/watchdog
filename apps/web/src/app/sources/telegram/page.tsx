@@ -11,6 +11,7 @@ import { SubmitButton } from "../../sign-in/submit-button";
 import {
   answerTelegramLoginAction,
   cancelTelegramLoginAction,
+  deleteTelegramSessionAction,
   revokeTelegramSessionAction,
   startTelegramLoginAction,
   watchTelegramChatAction,
@@ -101,8 +102,9 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
               since={session.createdAt}
               revoking={session.revokedAt !== null}
               stuck={session.revokeStuck}
+              unreadable={session.unreadableAt !== null}
             />
-            {session.revokedAt === null ? <ChatsPanel chats={chats} /> : null}
+            {session.revokedAt === null && session.unreadableAt === null ? <ChatsPanel chats={chats} /> : null}
           </>
         ) : (
           <LoginPanel login={login} invalid={code === "invalid-phone"} empty={code === "empty"} />
@@ -117,13 +119,38 @@ function SessionPanel({
   since,
   revoking,
   stuck,
+  unreadable,
 }: {
   account: string;
   since: Date;
   revoking: boolean;
   /** The revoke couldn't reach Telegram for a quarter of an hour and stopped trying. */
   stuck: boolean;
+  /** The encryption key changed, so Watchdog can neither read the session nor log it out. */
+  unreadable: boolean;
 }) {
+  if (unreadable) {
+    return (
+      <section aria-labelledby="session" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
+        <h2 id="session" className="text-title">
+          Watchdog can&apos;t read the session for {account}
+        </h2>
+        <Notice role="alert" className="text-sm text-alarm">
+          Watchdog&apos;s encryption key changed after the session was stored, so Watchdog can&apos;t read it any more,
+          and can&apos;t log it out on Telegram either. End it yourself in Telegram under Settings › Devices, then
+          delete it here.
+        </Notice>
+        <Confirming
+          label="Delete"
+          name={account}
+          warning="Watchdog deletes the session, and the Sources that read through it stop. Telegram keeps the session on the account until you end it in Settings › Devices."
+          action={deleteTelegramSessionAction}
+          button="Delete the session"
+          pendingLabel="Deleting…"
+        />
+      </section>
+    );
+  }
   if (revoking && stuck) {
     return (
       <section aria-labelledby="session" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
