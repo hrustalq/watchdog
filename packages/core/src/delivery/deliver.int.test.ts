@@ -369,8 +369,11 @@ describe("deliver", () => {
     expect(log).toMatchObject([
       { message: "Sending to me failed: the mail server refused this address. It won't be retried", data: { attempt: 1, final: true } },
     ]);
-    expect(JSON.stringify(log)).not.toContain("550");
-    expect(JSON.stringify(log)).not.toContain("me@example.com");
+    // What the Log says, not every string in the row: its id, its time and the ids it holds can carry the
+    // status's digits by chance, which is what made this test a coin flip.
+    const said = log.map(({ message, data }) => ({ message, data }));
+    expect(JSON.stringify(said)).not.toContain("550");
+    expect(JSON.stringify(said)).not.toContain("me@example.com");
     const shown = await db.query.destination.findFirst({ where: eq(destination.id, destinationId) });
     expect(shown).toMatchObject({ lastError: "the mail server refused this address", lastErrorAt: now });
   });
