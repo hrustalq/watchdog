@@ -6,7 +6,7 @@ import type { AlertMessage } from "./content.ts";
 import { type Destination, FinalSendError, NotYetSendError, RetryAfterSendError } from "./deliver.ts";
 import { groupedAlert } from "./group.ts";
 import { sourceAlertContent } from "./source-alert-content.ts";
-import { createTelegramSender } from "./telegram.ts";
+import { createFloodLimiter, createTelegramSender } from "./telegram.ts";
 
 const encryptionKey = Buffer.alloc(32, 7);
 const botToken = "123456:secret-token";
@@ -86,6 +86,12 @@ async function failureOf(send: Promise<void>) {
 function notYetOf(error: Error): NotYetSendError {
   if (error instanceof NotYetSendError) return error;
   throw new Error(`Expected a not-yet send, got ${error.name}`);
+}
+
+/** The retry-after a send rejects with, which the test expects. */
+function retryAfterOf(error: Error): RetryAfterSendError {
+  if (error instanceof RetryAfterSendError) return error;
+  throw new Error(`Expected a retry-after send, got ${error.name}`);
 }
 
 /** What Telegram answers when it refuses a request. */
@@ -430,6 +436,49 @@ describe("createTelegramSender", () => {
       const [first, second] = telegram.requests;
       expect(Number(second?.at) - Number(first?.at)).toBeGreaterThanOrEqual(1000);
     });
+
+    it("makes no request to a chat Telegram's flood limit paused, and says how long the wait has left (#223)", async () => {
+      const telegram = fakeTelegram(() => refusal(429, "Too Many Requests: retry after 5", { retry_after: 5 }));
+      const bot = sender(telegram);
+      expect(retryAfterOf(await failureOf(bot.send(chat(), message)))).toMatchObject({ retryAfterMs: 5000 });
+
+      const again = retryAfterOf(await failureOf(bot.send(chat(), message)));
+
+      // The second send never reached Telegram, and the time it says is the wait's, not a gap's.
+      expect(telegram.requests).toHaveLength(1);
+      expect(again.retryAfterMs).toBeGreaterThan(4_000);
+      expect(again.retryAfterMs).toBeLessThanOrEqual(5_000);
+      expect(again.message).toBe("Telegram's flood limit asked to wait 5 seconds");
+    });
+
+    it("sends to another chat while a chat waits out its 429 (#223)", async () => {
+      const answers = [
+        refusal(429, "Too Many Requests: retry after 5", { retry_after: 5 }),
+        Response.json({ ok: true, result: {} }),
+      ];
+      const telegram = fakeTelegram(() => answers.shift() ?? Response.json({ ok: true, result: {} }));
+      const bot = sender(telegram);
+      retryAfterOf(await failureOf(bot.send(chat("-100200"), message)));
+
+      await bot.send(chat("-100300"), message);
+
+      expect(telegram.requests.map(({ body }) => body.chat_id)).toEqual(["-100200", "-100300"]);
+    });
+
+    it("sends to the chat again once a 429's wait has passed (#223)", async () => {
+      const answers = [
+        refusal(429, "Too Many Requests: retry after 1", { retry_after: 1 }),
+        Response.json({ ok: true, result: {} }),
+      ];
+      const telegram = fakeTelegram(() => answers.shift() ?? Response.json({ ok: true, result: {} }));
+      const bot = sender(telegram);
+      retryAfterOf(await failureOf(bot.send(chat(), message)));
+
+      await new Promise((resolve) => setTimeout(resolve, 1_100));
+      await bot.send(chat(), message);
+
+      expect(telegram.requests).toHaveLength(2);
+    });
   });
 
   it("sends a Source Health alert as its lines: the state, the last error, the Sources screen", async () => {
@@ -448,5 +497,22 @@ describe("createTelegramSender", () => {
     const telegram = fakeTelegram();
     await sender(telegram).send(chat(), sourceAlertContent("failing", "Feed", "x".repeat(10_000), "https://watchdog.test"));
     expect(textOf(telegram)).toBe(`Source Feed is failing\n${"x".repeat(500)}\nhttps://watchdog.test/sources`);
+  });
+
+  describe("createFloodLimiter", () => {
+    it("keeps no place for a reply that can't have its turn, so the chat's alerts don't queue behind it (#223)", () => {
+      const limiter = createFloodLimiter();
+
+      // The first reply takes the chat's turn; the hundred the flood drops behind it leave nothing.
+      expect(limiter.tryTurn("-100500")).toBe(0);
+      for (let index = 0; index < 100; index += 1) {
+        expect(limiter.tryTurn("-100500")).toBeGreaterThan(250);
+      }
+
+      // The next send is a gap behind the reply that did go, not behind the hundred that didn't.
+      const waitMs = limiter.placeInQueue("-100500", null);
+      expect(waitMs).toBeGreaterThanOrEqual(1000);
+      expect(waitMs).toBeLessThan(2000);
+    });
   });
 });

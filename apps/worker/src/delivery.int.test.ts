@@ -44,8 +44,11 @@ const waitLong = { timeout: 30_000, interval: 100 };
 /** Two chats and a bot, for the test that measures the flood limit through the real sender. */
 const botToken = "123456:token";
 const encryptionKey = Buffer.alloc(32, 7);
-const burstChat = "-100200";
+/** A private chat, which has no group budget: the 20-a-minute limit has a test of its own. */
+const burstChat = "100200";
 const otherChat = "-100300";
+/** A group, whose id the Bot API gives as a negative number. */
+const groupChat = "-100400";
 
 /** The chat a request was for, which the test expects its body to hold. */
 function chatIdOf(body: unknown) {
@@ -542,6 +545,76 @@ describe("the deliver queue", () => {
       expect(rows.map((row) => row?.status)).toEqual(ids.map(() => "sent"));
     });
   });
+
+  it("sends 21 Deliveries to one group no faster than 20 a minute, and sends them all (#223)", async () => {
+    const { deliveryId, itemId } = await seed();
+    const first = present(await rowOf(deliveryId));
+    const seeded = present(await db.query.item.findFirst({ where: eq(item.id, itemId) }));
+    await db
+      .update(workspace)
+      .set({ burstWindowSeconds: 0, alertsPerHour: 1000 })
+      .where(eq(workspace.id, seeded.workspaceId));
+    await db
+      .update(destination)
+      .set({ secretCiphertext: encryptSecret(groupChat, encryptionKey) })
+      .where(eq(destination.id, first.destinationId));
+    const items = await db
+      .insert(item)
+      .values(
+        Array.from({ length: 20 }, (_, index) => ({
+          workspaceId: seeded.workspaceId,
+          sourceId: seeded.sourceId,
+          externalId: `group-${String(index)}`,
+          title: `Group ${String(index)}`,
+          body: "An entry.",
+          raw: {},
+        })),
+      )
+      .returning({ id: item.id });
+    const queued = await db
+      .insert(delivery)
+      .values(items.map(({ id }) => ({ actionId: first.actionId, itemId: id, destinationId: first.destinationId })))
+      .returning({ id: delivery.id });
+    const ids = [deliveryId, ...queued.map(({ id }) => id)];
+
+    // The real sender, so the budget this measures is the one the worker sends through.
+    const arrivals: number[] = [];
+    const telegram = createTelegramSender(botToken, {
+      fetch: (_input, init) => {
+        if (chatIdOf(init?.body) === groupChat) arrivals.push(Date.now());
+        return Promise.resolve(Response.json({ ok: true, result: {} }));
+      },
+      encryptionKey,
+    });
+    worker = new PgBoss({ connectionString: postgres.url, schedule: false, supervise: false });
+    await worker.start();
+    const quiet = { send: () => Promise.resolve() };
+    await startDelivery(db, worker, {
+      senders: {
+        telegram,
+        email: quiet,
+        webhook: { send: () => Promise.reject(new Error("These tests send no webhooks")) },
+      },
+      appUrl: "https://watchdog.test",
+      secret: "a-better-auth-secret-of-at-least-32-chars",
+    });
+
+    await db.transaction((tx) => deliveryEnqueuer(boss)(tx, ids));
+
+    await vi.waitFor(
+      async () => {
+        const rows = await Promise.all(ids.map(rowOf));
+        expect(rows.map((row) => row?.status)).toEqual(ids.map(() => "sent"));
+      },
+      { timeout: 150_000, interval: 1_000 },
+    );
+
+    // Telegram allows a bot 20 messages a minute in a group, so the 21st waits for the first to age out.
+    const sentAt = [...arrivals].sort((before, after) => before - after);
+    expect(sentAt).toHaveLength(21);
+    expect(present(sentAt.at(-1)) - present(sentAt[0])).toBeGreaterThanOrEqual(60_000);
+    for (const id of ids) expect(await rowOf(id)).toMatchObject({ status: "sent", attempts: 1 });
+  }, 180_000);
 
   it("holds no slot while 50 Deliveries to one chat wait for its turns", async () => {
     const { deliveryId, itemId } = await seed();

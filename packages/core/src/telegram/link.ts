@@ -17,6 +17,13 @@ const withoutNul = (title: string) => title.replaceAll("\0", "");
 
 const unknownCode = "That code is unknown or has expired. Get a new link in Watchdog, on the Sources or Destinations page.";
 
+/**
+ * Whether the bot's reply is about an unknown or expired code. The bot runner may drop that one when the chat
+ * is over its flood limit, because it handles one update at a time and waiting would hold up every other chat.
+ * A reply that links the chat is always sent.
+ */
+export const isUnknownLinkCodeReply = (reply: string) => reply === unknownCode;
+
 type Target = { destinationId: string } | { sourceId: string };
 
 /** A new code for the Destination or Source, which replaces any earlier one. Base64url is what a deep link can carry. */

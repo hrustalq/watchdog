@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { closeDb, createDb, type Db, destination, eq, migrate, source, telegramLinkCode, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { createFloodLimiter } from "../delivery/telegram.ts";
 import { decryptSecret } from "../secrets/secrets.ts";
 import { runBot } from "./bot-runner.ts";
 import { issueLinkCode, linkChat, linkCodeMinutes, liveLinkCode, purgeExpiredLinkCodes } from "./link.ts";
@@ -59,6 +60,7 @@ describe("linking a Telegram chat", () => {
     await runBot(
       {
         botToken: "123456:secret-token",
+        floodLimiter: createFloodLimiter(),
         linkChat: (code, bound) => linkChat(db, key, code, bound),
         intake: () => Promise.resolve(),
         pingDatabase: () => db.$client.query("select 1"),

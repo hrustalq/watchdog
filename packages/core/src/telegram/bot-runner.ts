@@ -3,7 +3,7 @@
 // (docs: Sources and ingestion, "Telegram bot intake").
 import { setTimeout as sleep } from "node:timers/promises";
 import { z } from "zod";
-import { botApiUrl, refusal } from "../delivery/telegram.ts";
+import { botApiUrl, type FloodLimiter, floodMomentMs, refusal } from "../delivery/telegram.ts";
 import { unreachable } from "../delivery/deliver.ts";
 import type { createEgressFetch } from "../egress/egress.ts";
 import { type BotUpdate, botUpdate } from "./update.ts";
@@ -73,8 +73,16 @@ export async function runBot(
   deps: {
     botToken: string;
     fetch: BotFetch;
+    /** The limits the bot's replies keep to: the worker's one for its alerts too, so both count together. */
+    floodLimiter: FloodLimiter;
     /** Spends a code on a chat, and gives the reply for the chat. */
     linkChat: (code: string, chat: BotChat) => Promise<string>;
+    /**
+     * Whether this reply may be dropped when the chat is over its flood limit, rather than waiting for its
+     * turn: the runner handles one update at a time, so waiting would hold up every other chat. A reply about
+     * an unknown or expired code is the one that may go, and a reply that linked the chat never does.
+     */
+    mayDropReply?: (reply: string) => boolean;
     /** Every update that isn't a code: messages to capture, and changes to the bot's place in a chat. */
     intake: (update: BotUpdate) => Promise<unknown>;
     /** Rejects when the database can't be reached. */
@@ -83,13 +91,23 @@ export async function runBot(
   },
   signal: AbortSignal,
 ) {
-  const { linkChat, intake, pingDatabase, retryMs = 15_000 } = deps;
+  const { linkChat, intake, pingDatabase, retryMs = 15_000, floodLimiter, mayDropReply } = deps;
   let username: string | undefined;
   let offset: number | undefined;
   let failedId: number | undefined;
   let attempts = 0;
 
-  const reply = async (chatId: number, text: string) => {
+  /**
+   * Says `text` in the chat, taking its turn in the same flood limits as the alerts. A reply that may drop is
+   * dropped when its chat or the bot needs longer than a moment, rather than waited for; any other reply waits
+   * for its turn, and neither takes a place in the chat's queue unless it sends.
+   */
+  const reply = async (chatId: number, text: string, mayDrop: boolean) => {
+    const chat = String(chatId);
+    for (let waitMs = floodLimiter.tryTurn(chat); waitMs > 0; waitMs = floodLimiter.tryTurn(chat)) {
+      if (mayDrop && waitMs > floodMomentMs) return;
+      await sleep(waitMs);
+    }
     // A chat that can't be answered, such as one that blocked the bot, must not hold up everyone else's.
     await callBot(deps, "sendMessage", { chat_id: chatId, text, link_preview_options: { is_disabled: true } }, z.unknown()).catch(
       (error: unknown) => {
@@ -109,7 +127,8 @@ export async function runBot(
 
   const link = async ({ code, chat }: NonNullable<ReturnType<typeof startOf>>) => {
     const { id, title = "Private chat", type } = chat;
-    await reply(id, await linkChat(code, { id: String(id), title, type }));
+    const answer = await linkChat(code, { id: String(id), title, type });
+    await reply(id, answer, mayDropReply?.(answer) === true);
   };
 
   // A function, because TypeScript would otherwise take `aborted` as still false inside the loop.
@@ -143,7 +162,9 @@ export async function runBot(
             `Skipped Telegram update ${String(next.update_id)} after ${String(attempts)} failed attempts: ${messageOf(error)}\n`,
           );
           // A failed link spent nothing, so the same code still works until it expires.
-          if (start !== undefined) await reply(start.chat.id, "Watchdog couldn't link this chat. Try the same link again.");
+          if (start !== undefined) {
+            await reply(start.chat.id, "Watchdog couldn't link this chat. Try the same link again.", false);
+          }
         }
         offset = next.update_id + 1;
       }
