@@ -307,6 +307,10 @@ Character: precise and quiet; the action is clear from the label and position, n
 - **Error:** Alarm Red border and halo, with an error message in Label type that names the problem and the fix.
 - **Expressions:** Classifier and extractor rule editors use Data type (MONO 1).
 
+### Failure and missing pages (`apps/web/src/app/error.tsx`, `apps/web/src/app/not-found.tsx`)
+- **Style:** one centred column over the page's whole height: a 6px signal lamp, then a Headline, a Body line capped at 70ch, and the actions under it, one row from `sm`. A page that failed to load takes the Alarm Red lamp and says that nothing was saved; Retry is the Panel Ink action and the way out is an Outline button styled on a Link. The 404 takes no lamp, because nothing failed.
+- **Behaviour:** Retry re-renders the page the boundary replaced. A form that kept its draft, as the Profile and the Rules editors do, comes back with its text, so a failed save costs a click and not the writing.
+
 ## Do's and Don'ts
 
 ### Do:
