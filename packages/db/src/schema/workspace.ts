@@ -31,6 +31,13 @@ export const workspace = pgTable(
     severity5BypassesQuietHours: boolean("severity_5_bypasses_quiet_hours").notNull().default(false),
     alertsPerHour: integer("alerts_per_hour").notNull().default(20),
     burstWindowSeconds: integer("burst_window_seconds").notNull().default(60),
+    /**
+     * How long the Workspace keeps its Items and its Log, in days (docs: Processing pipeline,
+     * "Retention"). Null is unlimited, which only a self-hosted install can choose. The defaults are
+     * the database's, so a Workspace made before retention existed keeps the same windows it had.
+     */
+    itemsRetentionDays: integer("items_retention_days").default(90),
+    logRetentionDays: integer("log_retention_days").default(30),
     /** The end of the local day whose hosted email cap notice has gone, so there's one a day. */
     emailCapNoticeUntil: timestamp("email_cap_notice_until", { withTimezone: true }),
     /**
@@ -52,5 +59,14 @@ export const workspace = pgTable(
     // At 0 every alert would be over the limit and held for good.
     check("workspace_alerts_per_hour_check", sql`${table.alertsPerHour} > 0`),
     check("workspace_burst_window_seconds_check", sql`${table.burstWindowSeconds} >= 0`),
+    // A window of 0 days would purge everything the moment it's captured; unlimited is a null.
+    check(
+      "workspace_items_retention_days_check",
+      sql`${table.itemsRetentionDays} is null or ${table.itemsRetentionDays} >= 1`,
+    ),
+    check(
+      "workspace_log_retention_days_check",
+      sql`${table.logRetentionDays} is null or ${table.logRetentionDays} >= 1`,
+    ),
   ],
 );
