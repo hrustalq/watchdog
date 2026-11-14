@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { createServer, type IncomingMessage } from "node:http";
 import { setTimeout as sleep } from "node:timers/promises";
 import { GenericContainer, type StartedTestContainer, TestContainers, Wait } from "testcontainers";
 import { beforeAll, describe, expect, it } from "vitest";
+import { z } from "zod";
 import { loadConfig } from "../config.ts";
 import { createEgressFetch } from "../egress/egress.ts";
 import { createChromiumRenderer, maxChromiumBrowsers } from "./chromium.ts";
@@ -15,6 +17,19 @@ const token = "a-test-token-of-at-least-thirty-two-characters";
 const gatewayAddress = "172.17.0.1";
 const blocked = (host: string, address = host) =>
   `Watchdog doesn't fetch ${host}: it resolves to the blocked address ${address}`;
+/**
+ * The seccomp profile compose.yaml gives the service: without it Chromium can't create the namespaces
+ * its sandbox confines a page to, and won't start with the sandbox on at all.
+ */
+const seccompProfile = readFileSync(new URL("../../../../docker/chromium/seccomp.json", import.meta.url), "utf8");
+/** One process in the service, as Chromium's sandbox left it. */
+const sandboxProcess = z.object({
+  pid: z.string(),
+  type: z.string(),
+  noSandbox: z.boolean(),
+  userNamespace: z.string(),
+  pidNamespace: z.string(),
+});
 
 /** Starts the server on a free port and returns the port. */
 async function listen(server: ReturnType<typeof createServer>) {
@@ -75,9 +90,9 @@ process.stdout.write(String(browsers));`,
   };
   /**
    * How many sessions the service is serving, read from its own socket table: one accepted connection
-   * on the browser server's port (3001, `0BB9` in hex) per render that holds a browser. This is what
-   * the limit bounds, and unlike a process it ends before the browser is gone: Playwright kills a
-   * closed browser asynchronously, so its process can outlive the render's slot for a moment.
+   * on the gate's port (3000, `0BB8` in hex) per render that holds a browser. This is what the limit
+   * bounds, and unlike a process it ends before the browser is gone: Playwright kills a closed browser
+   * asynchronously, so its process can outlive the render's slot for a moment.
    */
   const sessionsServed = async () => {
     const { output } = await chromium.exec([
@@ -95,12 +110,53 @@ for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
   for (const line of text.split("\\n").slice(1)) {
     const fields = line.trim().split(/\\s+/);
     if (fields.length < 4) continue;
-    if (fields[1].split(":")[1] === "0BB9" && fields[3] === "01") sessions += 1;
+    if (fields[1].split(":")[1] === "0BB8" && fields[3] === "01") sessions += 1;
   }
 }
 process.stdout.write(String(sessions));`,
     ]);
     return Number(output);
+  };
+  /**
+   * What the service's own process table says about the sandbox: for every Chromium process, the user
+   * and PID namespaces the kernel put it in, and whether its command line carries `--no-sandbox`.
+   * chrome://sandbox is the full browser's page, which the headless shell doesn't serve, so both layers
+   * it reports are read here instead: a renderer in namespaces of its own, and no browser launched with
+   * the sandbox off.
+   */
+  const sandboxProcesses = async () => {
+    const { output } = await chromium.exec([
+      "node",
+      "-e",
+      `const { readdirSync, readFileSync, readlinkSync } = require("node:fs");
+const processes = [];
+const link = (path) => {
+  try {
+    return readlinkSync(path);
+  } catch {
+    return "";
+  }
+};
+for (const entry of readdirSync("/proc")) {
+  if (!/^[0-9]+$/.test(entry)) continue;
+  let argv;
+  try {
+    argv = readFileSync("/proc/" + entry + "/cmdline").toString().split("\\0").filter(Boolean);
+  } catch {
+    continue;
+  }
+  if (argv.length === 0 || !argv[0].includes("chrome")) continue;
+  processes.push({
+    pid: entry,
+    type: argv.find((arg) => arg.startsWith("--type=")) || "browser",
+    noSandbox: argv.includes("--no-sandbox"),
+    userNamespace: link("/proc/" + entry + "/ns/user"),
+    pidNamespace: link("/proc/" + entry + "/ns/pid"),
+  });
+}
+process.stdout.write(JSON.stringify(processes));`,
+    ]);
+    return z.array(sandboxProcess).parse(JSON.parse(output));
   };
   let renderer: ReturnType<typeof createChromiumRenderer>;
   let fetch: ReturnType<typeof createEgressFetch>;
@@ -170,8 +226,11 @@ fetch("/late-data").then((response) => response.text()).then((text) => {
     const image = await GenericContainer.fromDockerfile(new URL("../../../../docker/chromium", import.meta.url).pathname).build();
     chromium = await image.withEnvironment({ CHROMIUM_TOKEN: token }).withExposedPorts(3000)
       .withSharedMemorySize(1024 ** 3)
-      // The gate listens first; the browser server behind it is ready once it says so.
-      .withWaitStrategy(Wait.forLogMessage("Listening on ws://127.0.0.1:3001"))
+      // The profile compose.yaml gives the service, so a browser here starts under the same seccomp
+      // filter: without the namespaces it allows, Chromium refuses to start with its sandbox on.
+      .withSecurityOpt(`seccomp=${seccompProfile}`)
+      // The gate is up once it says so; it starts a browser a connection.
+      .withWaitStrategy(Wait.forLogMessage("Chromium gate listening on port 3000"))
       .start();
 
     const config = loadConfig(
@@ -220,6 +279,31 @@ fetch("/late-data").then((response) => response.text()).then((text) => {
     expect(asked).toEqual(["/status", "/app.js"]);
     expect(upgrades).toEqual([]);
   });
+
+  it("starts a render's browser with Chromium's sandbox on, its page in namespaces of its own", async () => {
+    released = false;
+    const rendering = renderer.render(`${site}/slow`, { timeout: 25_000 });
+    await waitFor(() => held.length === 1, "a render to hold its browser");
+    let processes: z.infer<typeof sandboxProcess>[] = [];
+    await waitFor(async () => {
+      processes = await sandboxProcesses();
+      return processes.some((process) => process.type === "--type=renderer");
+    }, "the page's renderer process");
+
+    // Playwright passes --no-sandbox to every browser it starts with the sandbox off.
+    expect(processes.filter((process) => process.noSandbox).map((process) => process.pid)).toEqual([]);
+    // A browser stays in the container's namespaces; the sandbox puts each renderer in its own user and
+    // PID namespace, which the kernel reports here as chrome://sandbox's namespace layer does.
+    const browsers = processes.filter((process) => process.type === "browser");
+    const pages = processes.filter((process) => process.type === "--type=renderer");
+    expect(browsers.length).toBeGreaterThan(0);
+    expect(pages[0]?.userNamespace).toMatch(/^user:\[\d+\]$/);
+    const container = browsers.flatMap((browser) => [browser.userNamespace, browser.pidNamespace]);
+    expect(pages.flatMap((page) => [page.userNamespace, page.pidNamespace]).filter((ns) => container.includes(ns))).toEqual([]);
+
+    releaseHold();
+    await expect(rendering).resolves.toBeDefined();
+  }, 120_000);
 
   it("follows a redirect in the guard, checking each hop, and fails a page whose redirect leads somewhere blocked", async () => {
     asked.length = 0;

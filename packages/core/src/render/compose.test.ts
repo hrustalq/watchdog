@@ -15,6 +15,9 @@ const service = z.object({
   profiles: z.array(z.string()).optional(),
   networks: z.array(z.string()).optional(),
   environment: z.record(z.string(), z.string()).optional(),
+  security_opt: z.array(z.string()).optional(),
+  privileged: z.boolean().optional(),
+  cap_add: z.array(z.string()).optional(),
 });
 const compose = z
   .object({
@@ -68,9 +71,31 @@ describe("the Chromium fallback in compose.yaml", () => {
     const dockerfile = read(`${build}/Dockerfile`);
     expect(dockerfile).toContain(`FROM mcr.microsoft.com/playwright:v${version}-`);
     expect(dockerfile).toContain(`playwright-core@${version}`);
-    // The browser server listens on loopback behind the gate, and clients can't pass launch arguments.
+    // The gate starts each browser itself, with the sandbox on, so a client can't choose launch
+    // arguments: `run-server` in unsafe mode would take them from one.
     const gate = read(`${build}/gate.mjs`);
-    expect(gate).toContain('"run-server", "--host", "127.0.0.1"');
-    expect(gate).not.toContain("--unsafe");
+    expect(gate).toMatch(/chromium\.launchServer\(\{[^}]*chromiumSandbox: true/);
+    expect(gate).not.toContain('"run-server"');
+    expect(gate).not.toContain('"--unsafe"');
+    expect(gate).not.toContain("--no-sandbox");
+  });
+
+  it("runs Chromium with its sandbox, granting the namespaces it needs and nothing wider", () => {
+    // Playwright's profile: Docker's default, with clone, setns and unshare allowed. seccomp takes the
+    // first matching rule, so the allowance is the profile's first entry, ahead of the rule that lets
+    // clone and setns through only with CAP_SYS_ADMIN.
+    const profile = z
+      .object({
+        defaultAction: z.string(),
+        syscalls: z.array(z.object({ names: z.array(z.string()), action: z.string() })),
+      })
+      .parse(JSON.parse(read("docker/chromium/seccomp.json")));
+    expect(profile.defaultAction).toBe("SCMP_ACT_ERRNO");
+    expect(profile.syscalls[0]?.action).toBe("SCMP_ACT_ALLOW");
+    expect(profile.syscalls[0]?.names).toEqual(expect.arrayContaining(["clone", "setns", "unshare"]));
+    expect(chromium?.security_opt).toEqual(["seccomp=docker/chromium/seccomp.json"]);
+    // Its container keeps every other restriction: no privileged, no added capability.
+    expect(chromium?.privileged).toBeUndefined();
+    expect(chromium?.cap_add).toBeUndefined();
   });
 });
