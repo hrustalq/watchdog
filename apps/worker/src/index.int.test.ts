@@ -39,6 +39,20 @@ afterEach(() => {
   running.clear();
 });
 
+/**
+ * How long a spawned worker may take to log that it's ready. Its boot is a cold migration run, a pg-boss
+ * start and the routers it builds: the whole file takes 19.7 s alone, and the first worker of a loaded full
+ * run was cut at 60,190 ms by the deadline it shared with every other test here (#426). So the wait has a
+ * bound of its own, and it names the worker's own output when that expires.
+ */
+const readyBudget = 120_000;
+
+/**
+ * A test here outlives the worker it starts by a minute, so the wait above is the one that reports a worker
+ * that never came up, not the test's own deadline.
+ */
+const bootBudget = readyBudget + 60_000;
+
 /** Runs the worker the way its container does, until it logs that it's ready. */
 async function startWorker(databaseUrl: string, extraEnv: Record<string, string> = {}) {
   const child = spawn(process.execPath, [path.join(import.meta.dirname, "index.ts")], {
@@ -61,11 +75,20 @@ async function startWorker(databaseUrl: string, extraEnv: Record<string, string>
   child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
   child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
   await new Promise<void>((resolve, reject) => {
+    const late = setTimeout(() => {
+      reject(new Error(`Worker didn't report ready within ${String(readyBudget / 1000)} s:\n${output}`));
+    }, readyBudget);
+    const settle = () => {
+      clearTimeout(late);
+    };
     child.stdout.on("data", () => {
-      if (output.includes("Worker ready")) resolve();
+      if (!output.includes("Worker ready")) return;
+      settle();
+      resolve();
     });
     // "close", not "exit": a process can exit before its last output has been read.
     child.once("close", () => {
+      settle();
       reject(new Error(`Worker exited before it was ready:\n${output}`));
     });
   });
@@ -131,7 +154,7 @@ describe("worker", () => {
     expect(await worker.stop()).toBe(0);
     expect(worker.output()).toContain("pg-boss stopped");
     expect(existsSync(ready)).toBe(false);
-  }, 60_000);
+  }, bootBudget);
 
   it("stops at boot on a malformed TELEGRAM_BOT_TOKEN, naming the variable and not its value", async () => {
     const start = startWorker(postgres.url, { TELEGRAM_BOT_TOKEN: "not-a-real-token" });
@@ -140,7 +163,7 @@ describe("worker", () => {
 
     expect(String(failure)).toMatch(/^Error: Worker exited before it was ready:[\s\S]*TELEGRAM_BOT_TOKEN/);
     expect(String(failure)).not.toContain("not-a-real-token");
-  }, 60_000);
+  }, bootBudget);
 
   it("doesn't re-run applied migrations when it starts again", async () => {
     const before = await databaseState(postgres.url);
@@ -149,7 +172,7 @@ describe("worker", () => {
     const worker = await startWorker(postgres.url);
     expect(await databaseState(postgres.url)).toEqual(before);
     expect(await worker.stop()).toBe(0);
-  }, 60_000);
+  }, bootBudget);
 
   it("polls a new Source at start, and lets the poll finish when stopped mid-poll", async () => {
     // A feed that answers after 3 s, so the worker is stopped while the poll is running.
@@ -203,7 +226,7 @@ describe("worker", () => {
       await closeDb(db);
       server.close();
     }
-  }, 60_000);
+  }, bootBudget);
 
   describe("processing captured Items", () => {
     let db: Db;
