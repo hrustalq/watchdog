@@ -5,9 +5,11 @@ import { loginState, sessionChats, sessionOf } from "@watchdog/core";
 import { Confirming } from "@/components/confirming";
 import { dataBox, field, fieldError, label, textLink } from "@/components/field-classes";
 import { Timestamp } from "@/components/timestamp";
+import { Button } from "@/components/ui/button";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../../sign-in/notice";
 import { SubmitButton } from "../../sign-in/submit-button";
+import { matchingChats } from "./chat-filter";
 import {
   answerTelegramLoginAction,
   cancelTelegramLoginAction,
@@ -47,6 +49,8 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
   ]);
   const code = typeof params.problem === "string" ? params.problem : "";
   const problem = problems[code];
+  // The chat filter. Read here, so the list is narrowed in the HTML and the field shows what filtered it.
+  const query = typeof params.q === "string" ? params.q.trim() : "";
   const status =
     params.done === "watching"
       ? "Watching the chat. Its messages from the last 7 days come in within a minute, then every new one."
@@ -104,7 +108,9 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
               stuck={session.revokeStuck}
               unreadable={session.unreadableAt !== null}
             />
-            {session.revokedAt === null && session.unreadableAt === null ? <ChatsPanel chats={chats} /> : null}
+            {session.revokedAt === null && session.unreadableAt === null ? (
+              <ChatsPanel chats={chats} query={query} />
+            ) : null}
           </>
         ) : (
           <LoginPanel login={login} invalid={code === "invalid-phone"} empty={code === "empty"} />
@@ -209,7 +215,7 @@ function SessionPanel({
 const kinds = { group: "Group", supergroup: "Group", channel: "Channel" };
 
 /** The account's groups and channels, each watched as a Source with one click. */
-function ChatsPanel({ chats }: { chats: Awaited<ReturnType<typeof sessionChats>> }) {
+function ChatsPanel({ chats, query }: { chats: Awaited<ReturnType<typeof sessionChats>>; query: string }) {
   return (
     <section aria-labelledby="chats" className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex flex-col gap-1">
@@ -221,12 +227,12 @@ function ChatsPanel({ chats }: { chats: Awaited<ReturnType<typeof sessionChats>>
           then takes every new one. Watchdog reads this list from Telegram once an hour.
         </p>
       </div>
-      <ChatList chats={chats} />
+      <ChatList chats={chats} query={query} />
     </section>
   );
 }
 
-function ChatList({ chats }: { chats: Awaited<ReturnType<typeof sessionChats>> }) {
+function ChatList({ chats, query }: { chats: Awaited<ReturnType<typeof sessionChats>>; query: string }) {
   if (chats === undefined) {
     return (
       <Notice role="status" className="text-sm">
@@ -239,27 +245,68 @@ function ChatList({ chats }: { chats: Awaited<ReturnType<typeof sessionChats>> }
     );
   }
   if (chats.length === 0) return <p className="text-sm text-muted-foreground">The account isn&apos;t in any groups or channels.</p>;
+  const shown = matchingChats(chats, query);
   return (
-    <ul className="flex flex-col divide-y">
-      {chats.map((chat) => (
-        <li key={chat.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2">
-          <div className="flex min-w-0 flex-col">
-            <span className="break-words">{chat.title}</span>
-            <span className="text-xs text-muted-foreground">{kinds[chat.type]}</span>
-          </div>
-          {chat.watchedAs === null ? (
-            <form action={watchTelegramChatAction}>
-              <input type="hidden" name="chat" value={chat.id} />
-              <SubmitButton variant="outline" pendingLabel="Watching…" className="sm:w-auto">
-                Watch<span className="sr-only"> {chat.title}</span>
-              </SubmitButton>
-            </form>
-          ) : (
-            <span className="text-sm text-muted-foreground">Watched as {chat.watchedAs}</span>
-          )}
-        </li>
-      ))}
-    </ul>
+    <div className="flex flex-col gap-3">
+      <ChatFilter query={query} />
+      {shown.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No chat&apos;s title contains <span className="break-words">“{query}”</span>. An empty filter lists them all.
+        </p>
+      ) : (
+        <ul className="flex flex-col divide-y">
+          {shown.map((chat) => (
+            <li key={chat.id} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-2">
+              <div className="flex min-w-0 flex-col">
+                <span className="break-words">{chat.title}</span>
+                <span className="text-xs text-muted-foreground">{kinds[chat.type]}</span>
+              </div>
+              {chat.watchedAs === null ? (
+                <form action={watchTelegramChatAction}>
+                  <input type="hidden" name="chat" value={chat.id} />
+                  <SubmitButton variant="outline" pendingLabel="Watching…" className="sm:w-auto">
+                    Watch<span className="sr-only"> {chat.title}</span>
+                  </SubmitButton>
+                </form>
+              ) : (
+                <span className="text-sm text-muted-foreground">Watched as {chat.watchedAs}</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** Narrows the list by part of a chat's title. A plain GET form, so the filter works without JavaScript. */
+function ChatFilter({ query }: { query: string }) {
+  return (
+    <form
+      method="get"
+      action="/sources/telegram"
+      role="search"
+      aria-label="Filter chats"
+      className="flex flex-wrap items-end gap-2"
+    >
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <label htmlFor="q" className={label}>
+          Filter chats by title
+        </label>
+        <input
+          id="q"
+          name="q"
+          type="search"
+          defaultValue={query}
+          autoComplete="off"
+          spellCheck={false}
+          className={field}
+        />
+      </div>
+      <Button type="submit" variant="outline" className="sm:w-auto">
+        Filter
+      </Button>
+    </form>
   );
 }
 
