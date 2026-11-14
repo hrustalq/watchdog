@@ -126,7 +126,13 @@ const summaryLine = output.match(/^Summary:\s+(\S+)\s*$/m);
 const summary = summaryLine ? readJson(path.resolve(root, summaryLine[1])) : null;
 const execution = summary && typeof summary === "object" ? summary.execution : null;
 const tasks = summary && typeof summary === "object" ? summary.tasks : null;
-if (!execution || !tasks) {
+const countedOk =
+  execution !== null &&
+  typeof execution === "object" &&
+  [execution.success, execution.failed, execution.cached, execution.attempted].every(
+    (n) => typeof n === "number",
+  );
+if (!countedOk || !tasks || typeof tasks !== "object") {
   console.error("test:gate — turbo wrote no readable run summary, so the gate can't tell whether");
   console.error("            every test task ran; leaving the run red.");
   process.exit(suite.status ?? 1);
