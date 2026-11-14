@@ -327,7 +327,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
                         Unlimited: keep everything
                       </label>
                       <p id={`${id}-unlimited-help`} className={cn(help, "pl-6")}>
-                        Nothing is ever purged. Only a self-hosted install offers this.
+                        Nothing of this is ever purged.
                       </p>
                     </div>
                   ) : null}
