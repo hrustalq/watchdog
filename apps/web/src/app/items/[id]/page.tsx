@@ -67,7 +67,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
         // A container, so the Correction scale's meaning can drop its indent when the label and the
         // level buttons can't share a line (correct-rating.tsx, `Scale`).
         <div id="rating" className="@container flex scroll-mt-4 flex-col items-start gap-2">
-          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className="flex max-w-full flex-wrap items-center gap-x-2 gap-y-1">
             <Rating severity={found.severity} importance={found.importance} />
             <a href="#log" className={inlineLink}>
               See the Log
