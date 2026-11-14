@@ -352,7 +352,7 @@ describe("pipeline", () => {
     const fakeModel = (turns: number) =>
       fakeLlm("openai-compatible", Array.from({ length: turns }, () => ({ json: answer })));
 
-    it("queues an Item whose Workspace has a model on the Agent queue, in that Workspace's group", async () => {
+    it("queues an Item whose Workspace has a model on the Agent queue", async () => {
       modelFetch = fakeModel(4).fetch;
       const modelled = await modelWorkspace();
       const plain = await plainWorkspace();
@@ -362,15 +362,17 @@ describe("pipeline", () => {
       const modelledItem = present((await itemIdsOf(modelled.sourceId))[0]);
       const plainItem = present((await itemIdsOf(plain.sourceId))[0]);
 
-      const jobFor = async (itemId: string) =>
-        (
-          await db.$client.query<{ name: string; groupId: string | null }>(
-            `select name, group_id as "groupId" from pgboss.job where data->>'itemId' = $1`,
-            [itemId],
-          )
-        ).rows;
-      expect(await jobFor(modelledItem)).toEqual([{ name: agentItemQueue, groupId: modelled.workspaceId }]);
-      expect(await jobFor(plainItem)).toEqual([{ name: processItemQueue, groupId: null }]);
+      // Which queue holds the Item, and how many jobs it took there: one, not one per attempt.
+      const queuedIn = async (itemId: string) => {
+        const found: { name: string; jobs: number }[] = [];
+        for (const name of [agentItemQueue, processItemQueue]) {
+          const jobs = await boss.findJobs<{ itemId: string }>(name, { data: { itemId } });
+          if (jobs.length > 0) found.push({ name, jobs: jobs.length });
+        }
+        return found;
+      };
+      expect(await queuedIn(modelledItem)).toEqual([{ name: agentItemQueue, jobs: 1 }]);
+      expect(await queuedIn(plainItem)).toEqual([{ name: processItemQueue, jobs: 1 }]);
 
       // Both finish here, so neither leaves a job that would reach a later test's model.
       await vi.waitFor(

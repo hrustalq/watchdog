@@ -1254,12 +1254,10 @@ describe("deliver", () => {
         expect(z.object({ lines: z.array(z.unknown()) }).parse(present(sent[0]).message).lines).toHaveLength(25);
         const rows = await db.select().from(delivery).where(eq(delivery.destinationId, seeded.destinationId));
         expect(rows.map((row) => row.status)).toEqual(Array.from({ length: 25 }, () => "sent"));
-        expect(new Set(rows.map((row) => row.groupId)).size).toBe(1);
         // A Grouped alert counts as one against the rate limit.
         expect(await db.select().from(sentMessage).where(eq(sentMessage.destinationId, seeded.destinationId))).toMatchObject([
           { workspaceId: seeded.workspaceId, type: "telegram" },
         ]);
-        expect(present(rows[0]).groupId).not.toBeNull();
         for (const { itemId } of [seeded, ...others]) {
           expect(await actLog(itemId)).toMatchObject([{ message: "Sent to ops-chat in a group of 25" }]);
         }
@@ -1285,8 +1283,6 @@ describe("deliver", () => {
         expect(new Set(waiting.map((row) => row?.nextAttemptAt?.getTime()))).toEqual(
           new Set([at("12:01:00").getTime()]),
         );
-        expect(new Set(waiting.map((row) => row?.groupId)).size).toBe(1);
-        expect(present(waiting[0]).groupId).not.toBeNull();
         expect(await actLog(present(followers[0]).itemId)).toMatchObject([
           { message: "Held until 2099-01-07 12:01 UTC: burst window" },
         ]);
@@ -1298,7 +1294,6 @@ describe("deliver", () => {
         expect(present(sent[1]).message).toMatchObject({ count: 24 });
         const finished = await rowOf(present(followers[0]).deliveryId);
         expect(finished).toMatchObject({ status: "sent" });
-        expect(finished?.groupId).not.toBeNull();
       });
 
       it("takes a closed window's alerts along when a new alert comes before the sweep does", async () => {
@@ -1332,24 +1327,20 @@ describe("deliver", () => {
         expect(await rowOf(follower.deliveryId)).toMatchObject({ status: "sent" });
       });
 
-      it("gives each message its own group id, so the rate limit counts two messages as two", async () => {
+      it("counts two Grouped alerts as two messages against the rate limit", async () => {
         const seeded = await seed();
-        const groupId = crypto.randomUUID();
         const message = [seeded, await another(seeded)];
-        await db.update(delivery).set({ groupId }).where(eq(delivery.destinationId, seeded.destinationId));
         const { deps, sent } = recording();
         await deliver(db, seeded.deliveryId, { ...deps, now: clock("12:00:00") });
 
         const later = [await another(seeded), await another(seeded)];
-        for (const { deliveryId } of later) await db.update(delivery).set({ groupId }).where(eq(delivery.id, deliveryId));
         await deliver(db, present(later[0]).deliveryId, { ...deps, now: clock("12:05:00") });
 
         expect(sent).toHaveLength(2);
+        expect(sent.map((one) => one.message)).toMatchObject([{ count: 2 }, { count: 2 }]);
         const ids = await Promise.all([...message, ...later].map(({ deliveryId }) => rowOf(deliveryId)));
         expect(ids.map((row) => row?.status)).toEqual(["sent", "sent", "sent", "sent"]);
-        expect(present(ids[0]).groupId).toBe(present(ids[1]).groupId);
-        expect(present(ids[2]).groupId).toBe(present(ids[3]).groupId);
-        expect(present(ids[0]).groupId).not.toBe(present(ids[2]).groupId);
+        expect(await db.$count(sentMessage, eq(sentMessage.destinationId, seeded.destinationId))).toBe(2);
       });
 
       it("lets sends to one webhook run at the same time", async () => {
@@ -1492,7 +1483,7 @@ describe("deliver", () => {
           expect(sent).toHaveLength(25);
           for (const { message } of sent) expect(message).toMatchObject({ why: "Severity is at least 4" });
           const rows = await allFor(seeded.destinationId);
-          expect(rows.map((row) => [row.status, row.groupId])).toEqual(rows.map(() => ["sent", null]));
+          expect(rows.map((row) => row.status)).toEqual(rows.map(() => "sent"));
           expect(await db.$count(sentMessage, eq(sentMessage.destinationId, seeded.destinationId))).toBe(25);
           for (const { itemId } of [seeded, ...others]) {
             expect(await actLog(itemId)).toMatchObject([{ message: "Sent to ops-chat" }]);
