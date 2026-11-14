@@ -369,11 +369,19 @@ describe("deliver", () => {
     expect(log).toMatchObject([
       { message: "Sending to me failed: the mail server refused this address. It won't be retried", data: { attempt: 1, final: true } },
     ]);
-    // What the Log says, not every string in the row: its id, its time and the ids it holds can carry the
-    // status's digits by chance, which is what made this test a coin flip.
-    const said = log.map(({ message, data }) => ({ message, data }));
-    expect(JSON.stringify(said)).not.toContain("550");
-    expect(JSON.stringify(said)).not.toContain("me@example.com");
+    // The sentence, and that its data holds the attempt and the ids alone: the row's own id, its time and the
+    // ids in its data can hold the status's digits by chance, which is what made searching them a coin flip.
+    const [logged] = log;
+    expect(logged?.message).not.toContain("5.1.1");
+    expect(logged?.message).not.toContain("me@example.com");
+    expect(Object.keys(logged?.data ?? {}).sort()).toEqual([
+      "actionId",
+      "attempt",
+      "destination",
+      "destinationId",
+      "final",
+    ]);
+    expect(JSON.stringify(logged?.data)).not.toContain("me@example.com");
     const shown = await db.query.destination.findFirst({ where: eq(destination.id, destinationId) });
     expect(shown).toMatchObject({ lastError: "the mail server refused this address", lastErrorAt: now });
   });
