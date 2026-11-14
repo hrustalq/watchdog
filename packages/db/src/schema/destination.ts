@@ -150,6 +150,9 @@ export const sourceAlert = pgTable(
     // The cascades when a Source or a Destination is deleted.
     index("source_alert_source_id_idx").on(table.sourceId),
     index("source_alert_destination_id_idx").on(table.destinationId),
+    // The retention sweep, which deletes a Workspace's sent and failed alerts past its Log window. It
+    // also serves the cascade when a Workspace is deleted, which had no index of its own.
+    index("source_alert_workspace_id_created_at_idx").on(table.workspaceId, table.createdAt),
     // The send, which reads an event's alerts for one recipient together.
     index("source_alert_event_id_idx").on(table.eventId),
   ],
