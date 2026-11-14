@@ -278,6 +278,14 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                         </SubmitButton>
                       </form>
                     ) : null}
+                    {row.state === "confirmed" && row.type === "telegram" ? (
+                      <form action={newTelegramLinkAction.bind(null, row.id)}>
+                        <SubmitButton variant="outline" pendingLabel="Getting…" className="w-auto">
+                          Link another chat
+                          <span className="sr-only"> for {row.name}</span>
+                        </SubmitButton>
+                      </form>
+                    ) : null}
                     {row.type === "webhook" ? (
                       <Confirming
                         label="Replace the secret"

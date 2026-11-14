@@ -470,10 +470,14 @@ export async function addTelegramDestination(db: Db, workspaceId: string, input:
   return { destination: saved, code: await issueLinkCode(db, { destinationId: saved.id }) };
 }
 
-/** A new code for a Telegram Destination still waiting for the bot. Undefined for anything else in the Workspace. */
+/**
+ * A new code for a Telegram Destination, or undefined for anything else in the Workspace. A Destination that
+ * is confirmed gets one too, so its chat can be replaced: the row stays confirmed and keeps its chat until
+ * the code is used, as when the bot was removed from that chat and every send there fails.
+ */
 export async function newTelegramLink(db: Db, workspaceId: string, destinationId: string) {
   if (!isUuid(destinationId)) return undefined;
-  const [waiting] = await db
+  const [target] = await db
     .select({ id: destination.id })
     .from(destination)
     .where(
@@ -481,10 +485,9 @@ export async function newTelegramLink(db: Db, workspaceId: string, destinationId
         eq(destination.workspaceId, workspaceId),
         eq(destination.id, destinationId),
         eq(destination.type, "telegram"),
-        isNull(destination.confirmedAt),
       ),
     );
-  return waiting && issueLinkCode(db, { destinationId: waiting.id });
+  return target && issueLinkCode(db, { destinationId: target.id });
 }
 
 /** Keeps a code in the browser that asked for it, for telegramLinkInCookie. */
@@ -492,10 +495,12 @@ export const telegramLinkCookie = "telegram-link";
 export const telegramLinkCookieValue = (destinationId: string, code: string) => `${destinationId}.${code}`;
 
 /**
- * What this browser's cookie says about a Telegram link: a code that still works for a Destination still
- * waiting, or a Destination that has been linked since. The code stays out of the URL, where history and
- * access logs would keep it, and the database only has its hash, so a cookie is what lets a reload show
- * it again without replacing it. A render can't clear the cookie, so "linked" lasts as long as the code would have.
+ * What this browser's cookie says about a Telegram link: a code that still works for a Destination, or a
+ * Destination that has been linked since. The code stays out of the URL, where history and access logs would
+ * keep it, and the database only has its hash, so a cookie is what lets a reload show it again without
+ * replacing it. A code asked for on a confirmed Destination shows the panel until it's used, which is how
+ * the chat is replaced; after that the code is spent and the Destination is linked again. A render can't
+ * clear the cookie, so "linked" lasts as long as the code would have.
  */
 export async function telegramLinkInCookie(
   db: Db,
@@ -505,11 +510,12 @@ export async function telegramLinkInCookie(
   const [destinationId, code] = (cookie ?? "").split(".");
   const row = destinations.find(({ id, type }) => id === destinationId && type === "telegram");
   if (row === undefined || code === undefined) return undefined;
+  // An unavailable one has no panel and no control, as a Destination of another type has none.
+  if (row.state !== "confirmed" && row.state !== "waiting-bot") return undefined;
   const { id, name } = row;
-  if (row.state === "confirmed") return { status: "linked", id, name } as const;
-  if (row.state !== "waiting-bot") return undefined;
   const live = await liveLinkCode(db, code);
-  return live?.destinationId === id ? ({ status: "pending", id, name, code, expiresAt: live.expiresAt } as const) : undefined;
+  if (live?.destinationId === id) return { status: "pending", id, name, code, expiresAt: live.expiresAt } as const;
+  return row.state === "confirmed" ? ({ status: "linked", id, name } as const) : undefined;
 }
 
 export type DestinationState = "ready" | "confirmed" | "waiting-confirmation" | "waiting-bot" | "unavailable";

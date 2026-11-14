@@ -24,6 +24,7 @@ import { z } from "zod";
 import { createEgressFetch } from "../egress/egress.ts";
 import type { Mailer } from "../mail/mailer.ts";
 import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
+import { issueLinkCode, linkChat } from "../telegram/link.ts";
 import { deliver, type Destination, FinalSendError, NotYetSendError, purgeSentMessages, RetryAfterSendError, type Sender } from "./deliver.ts";
 import type { AlertMessage, WebhookMessage } from "./content.ts";
 import { createEmailSender } from "./email.ts";
@@ -556,6 +557,64 @@ describe("deliver", () => {
       expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "failed", attempts: 1, nextAttemptAt: null });
       const shown = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
       expect(shown?.lastError).toMatch(/bot was removed from the chat/);
+    });
+
+    it("sends the next Delivery to the chat a new code linked, after a 403 on the old one", async () => {
+      // The bot was removed from the chat, and a new code on the Destinations screen linked another one.
+      let refused = true;
+      const { seeded, received, deps } = await linked(() =>
+        refused
+          ? Response.json(
+              { ok: false, error_code: 403, description: "Forbidden: bot was kicked from the group chat" },
+              { status: 403 },
+            )
+          : Response.json({ ok: true, result: {} }),
+      );
+      // So the alert after the relink goes at once rather than join a burst window.
+      await db.update(workspace).set({ burstWindowSeconds: 0 }).where(eq(workspace.id, seeded.workspaceId));
+      const actionBefore = await db.query.action.findFirst({ where: eq(action.id, seeded.actionId) });
+      expect(actionBefore?.definition).toMatchObject({ destinations: [seeded.destinationId] });
+
+      await deliver(db, seeded.deliveryId, deps);
+      const failing = await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) });
+      expect(failing?.lastError).toMatch(/bot was removed from the chat/);
+
+      const code = await issueLinkCode(db, { destinationId: seeded.destinationId });
+      expect(await linkChat(db, encryptionKey, code, { id: "-100999", title: "New room", type: "supergroup" })).toBe(
+        "Linked to ops-chat in Watchdog",
+      );
+      refused = false;
+      const [next] = await db
+        .insert(item)
+        .values({
+          workspaceId: seeded.workspaceId,
+          sourceId: seeded.sourceId,
+          externalId: "two",
+          title: "Another advisory",
+          body: "Another entry.",
+          raw: {},
+          severity: 5,
+          importance: 3,
+        })
+        .returning();
+      const [queued] = await db
+        .insert(delivery)
+        .values({ actionId: seeded.actionId, itemId: present(next).id, destinationId: seeded.destinationId })
+        .returning();
+      const queuedId = present(queued).id;
+
+      await deliver(db, queuedId, deps);
+
+      expect(received.map(({ chat_id }) => chat_id)).toEqual(["-100200", "-100999"]);
+      expect(await rowOf(queuedId)).toMatchObject({ status: "sent", attempts: 1, lastError: null });
+      expect(await db.query.destination.findFirst({ where: eq(destination.id, seeded.destinationId) })).toMatchObject({
+        config: { chat: "New room" },
+        lastError: null,
+        lastErrorAt: null,
+      });
+      expect(await actLog(present(next).id)).toMatchObject([{ message: "Sent to ops-chat" }]);
+      // The Action still points at the Destination, untouched, so it needed no edit.
+      expect(await db.query.action.findFirst({ where: eq(action.id, seeded.actionId) })).toEqual(actionBefore);
     });
 
     describe("a chat that moved to a supergroup", () => {

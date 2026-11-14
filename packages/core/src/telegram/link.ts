@@ -79,26 +79,31 @@ export async function linkChat(db: Db, encryptionKey: Buffer, code: string, chat
 
 /**
  * The Destination holds the chat's id, encrypted, and is confirmed. Gives the Destination's name, or
- * undefined for a code used or expired meanwhile, or for a Destination already linked, whose chat a late
- * code must not replace.
+ * undefined for a code used or expired meanwhile, or for a Destination removed meanwhile.
+ *
+ * A code can point a confirmed Destination at another chat: it's asked for on purpose on the Destinations
+ * screen, and it's how a chat the bot was removed from is replaced. So the last error goes with the chat
+ * it happened in, and the Destination keeps what Actions point at without an edit.
  */
 function linkDestination(db: Db, encryptionKey: Buffer, code: string, destinationId: string, chat: BotChat) {
   return db.transaction(async (tx) => {
     // The Destination's row before the code's, the order removing a Destination takes them through the
     // cascade, so the two can't deadlock.
     const [target] = await tx
-      .select({ name: destination.name, confirmedAt: destination.confirmedAt })
+      .select({ name: destination.name })
       .from(destination)
       .where(eq(destination.id, destinationId))
       .for("update");
     const spent = await tx.delete(telegramLinkCode).where(liveCode(code)).returning({ codeHash: telegramLinkCode.codeHash });
-    if (target?.confirmedAt !== null || spent.length === 0) return undefined;
+    if (target === undefined || spent.length === 0) return undefined;
     await tx
       .update(destination)
       .set({
         secretCiphertext: encryptSecret(chat.id, encryptionKey),
         config: { chat: withoutNul(chat.title) },
         confirmedAt: sql`now()`,
+        lastError: null,
+        lastErrorAt: null,
       })
       .where(eq(destination.id, destinationId));
     return target.name;
