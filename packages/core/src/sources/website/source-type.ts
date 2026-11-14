@@ -41,7 +41,11 @@ export const website: SourceTypeImpl = {
     const { html, finalUrl, blocked = [] }: Omit<Rendered, "title"> =
       renderer === undefined
         ? await fetchPage(url, deps)
-        : await renderer.render(url, { timeout: renderTimeout, ...(deps.signal && { signal: deps.signal }) });
+        : await renderer.render(url, {
+            timeout: renderTimeout,
+            ...(region !== undefined && { region }),
+            ...(deps.signal && { signal: deps.signal }),
+          });
     // A redirect leads to a page robots.txt hasn't been asked about. It was fetched, but isn't read.
     if (robots && finalUrl !== url) await checkRobots(finalUrl, deps);
 

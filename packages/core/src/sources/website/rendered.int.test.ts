@@ -8,12 +8,17 @@ import { GenericContainer, type StartedTestContainer, TestContainers, Wait } fro
 import { beforeAll, describe, expect, it } from "vitest";
 import { pollSource, type PollSourceDeps } from "../../pipeline/capture.ts";
 import { createObscuraRenderer } from "../../render/obscura.ts";
+import { renderTimeout } from "../../render/renderer.ts";
 
 // A website Source rendered by the real Obscura image (docs: Sources and ingestion, "Renderers"). The
 // pages come from a server in this process (docs: Testing and CI, "no live HTTP"): a status page whose
-// text only its script writes, and a page that never answers.
+// text only its script writes, a page that fills the same Region from a fetch about a second after
+// load, and a page that never answers.
 const scripted = readFileSync(new URL("./fixtures/scripted.html", import.meta.url), "utf8");
+const late = readFileSync(new URL("./fixtures/late.html", import.meta.url), "utf8");
 const token = "a-test-token-of-at-least-thirty-two-bytes";
+/** How long the late page's data takes to answer, well after its load event. */
+const lateAnswer = 1000;
 
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Expected a value");
@@ -102,6 +107,16 @@ describe("rendered website Sources", () => {
         response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(scripted);
         return;
       }
+      // The page's data, answering well after the page's load event.
+      if (request.url?.startsWith("/late-data") === true) {
+        const answer = () => response.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end("All systems operational");
+        setTimeout(answer, lateAnswer);
+        return;
+      }
+      if (request.url?.startsWith("/late") === true) {
+        response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(late);
+        return;
+      }
       response.writeHead(404).end("Not found");
     });
     const port = await listen(server);
@@ -133,7 +148,7 @@ describe("rendered website Sources", () => {
     };
   }, 180_000);
 
-  async function newSource(render: "static" | "obscura") {
+  async function newSource(render: "static" | "obscura", region?: string) {
     const [created] = await db
       .insert(source)
       .values({
@@ -141,7 +156,22 @@ describe("rendered website Sources", () => {
         type: "website",
         name: "Acme status",
         // Its own query, because a Workspace watches each page once.
-        config: { url: `${site}/status?${crypto.randomUUID()}`, ignore: [], render },
+        config: { url: `${site}/status?${crypto.randomUUID()}`, ignore: [], render, ...(region !== undefined && { region }) },
+        schedule: "*/15 * * * *",
+      })
+      .returning();
+    return present(created);
+  }
+
+  /** A Source of the page that fills its Region from a fetch answering about a second after load. */
+  async function lateSource(region?: string) {
+    const [created] = await db
+      .insert(source)
+      .values({
+        workspaceId,
+        type: "website",
+        name: "Acme status",
+        config: { url: `${site}/late?${crypto.randomUUID()}`, ignore: [], render: "obscura", ...(region !== undefined && { region }) },
         schedule: "*/15 * * * *",
       })
       .returning();
@@ -165,6 +195,49 @@ describe("rendered website Sources", () => {
     expect(plainState.lastError).toBeNull();
     expect(plainState.fetchState.text).toBe("Loading…");
   });
+
+  it("waits for a Region the page's script fills about a second after load, and reads the same text on every poll", async () => {
+    const watching = await lateSource("#status");
+
+    expect(await pollSource(db, watching.id, deps)).toEqual({ captured: 0 });
+    const first = await reload(watching.id);
+    expect(first.lastError).toBeNull();
+    expect(first.fetchState.text).toBe("All systems operational");
+
+    // A page read at its load event carries the skeleton, so a poll that saw it would capture a change.
+    expect(await pollSource(db, watching.id, deps)).toEqual({ captured: 0 });
+    expect((await reload(watching.id)).fetchState).toEqual(first.fetchState);
+  });
+
+  it("waits for the page without a Region to stand still after load, and reads the same text on every poll", async () => {
+    const watching = await lateSource();
+
+    expect(await pollSource(db, watching.id, deps)).toEqual({ captured: 0 });
+    const first = await reload(watching.id);
+    expect(first.lastError).toBeNull();
+    expect(first.fetchState.text).toContain("All systems operational");
+
+    // The same page read before its data arrives would hold only the skeleton, and capture it next time.
+    expect(await pollSource(db, watching.id, deps)).toEqual({ captured: 0 });
+    expect((await reload(watching.id)).fetchState).toEqual(first.fetchState);
+  });
+
+  it("fails a poll whose Region never appears within the render timeout, and leaves no CDP session open", async () => {
+    // The page loads at once and never adds #missing, so the wait ends with the render's deadline.
+    const watching = await lateSource("#missing");
+
+    const started = Date.now();
+    const failed = await pollSource(db, watching.id, deps);
+    const elapsed = Date.now() - started;
+    expect("error" in failed ? failed.error : "").toBe("The region #missing matched nothing on the page");
+    expect(elapsed).toBeLessThan(renderTimeout);
+    // It waited for the Region rather than failing at once, which is what reading at load would do.
+    expect(elapsed).toBeGreaterThan(20_000);
+
+    // Obscura takes one connection, so this render proves the last one was closed.
+    const free = await renderWhenFree(() => renderer.render(`${site}/status`, { timeout: 10_000 }));
+    expect(free.title).toBe("Acme status");
+  }, 120_000);
 
   it("fails a poll with a readable error while Obscura is down, and succeeds once it is back", async () => {
     const rendered = await newSource("obscura");

@@ -127,6 +127,23 @@ process.stdout.write(String(sessions));`,
       }
       if (path === "/old") return response.writeHead(302, { location: "/status" }).end();
       if (path === "/to-hidden") return response.writeHead(302, { location: `${hidden}/status` }).end();
+      // The data answers about a second after the page's load event, as a skeleton page's does.
+      if (path === "/late-data") {
+        response.writeHead(200, { "content-type": "text/plain; charset=utf-8" });
+        setTimeout(() => response.end("All systems operational"), 1000);
+        return;
+      }
+      if (path === "/late") {
+        return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Acme status</title></head>
+<body><main>Loading…</main><script>
+fetch("/late-data").then((response) => response.text()).then((text) => {
+  const status = document.createElement("div");
+  status.id = "status";
+  status.textContent = text;
+  document.body.append(status);
+});
+</script></body></html>`);
+      }
       if (path === "/slow") {
         return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Slow page</title>
 <script src="/hold.js"></script></head><body><main>Slow page</main></body></html>`);
@@ -221,6 +238,16 @@ process.stdout.write(String(sessions));`,
       blocked("host.testcontainers.internal", gatewayAddress),
     );
     expect(asked).toEqual(["/to-hidden"]);
+  });
+
+  it("waits for content the page's script fetches about a second after load, by Region and without one", async () => {
+    // The same shared wait Obscura uses, so the fallback reads a skeleton page once it is filled.
+    const [region, whole] = await Promise.all([
+      renderer.render(`${site}/late`, { timeout: 20_000, region: "#status" }),
+      renderer.render(`${site}/late`, { timeout: 20_000 }),
+    ]);
+    expect(region.html).toContain(`<div id="status">All systems operational</div>`);
+    expect(whole.html).toContain("All systems operational");
   });
 
   it("checks the page as a static fetch does, before reaching the browser", async () => {
