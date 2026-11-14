@@ -25,7 +25,7 @@ const seccompProfile = readFileSync(new URL("../../../../docker/chromium/seccomp
 /** One process in the service, as Chromium's sandbox left it. */
 const sandboxProcess = z.object({
   pid: z.string(),
-  type: z.string(),
+  args: z.number(),
   noSandbox: z.boolean(),
   userNamespace: z.string(),
   pidNamespace: z.string(),
@@ -119,10 +119,11 @@ process.stdout.write(String(sessions));`,
   };
   /**
    * What the service's own process table says about the sandbox: for every Chromium process, the user
-   * and PID namespaces the kernel put it in, and whether its command line carries `--no-sandbox`.
+   * and PID namespaces the kernel put it in, and whether its command line carries `--no-sandbox`. A
+   * browser keeps the arguments it was launched with, while each helper Chromium forks has its command
+   * line rewritten to the executable alone, which is how the browser is told apart from its helpers.
    * chrome://sandbox is the full browser's page, which the headless shell doesn't serve, so both layers
-   * it reports are read here instead: a renderer in namespaces of its own, and no browser launched with
-   * the sandbox off.
+   * it reports are read here instead: the browser's own arguments, and its helpers' namespaces.
    */
   const sandboxProcesses = async () => {
     const { output } = await chromium.exec([
@@ -148,7 +149,7 @@ for (const entry of readdirSync("/proc")) {
   if (argv.length === 0 || !argv[0].includes("chrome")) continue;
   processes.push({
     pid: entry,
-    type: argv.find((arg) => arg.startsWith("--type=")) || "browser",
+    args: argv.length,
     noSandbox: argv.includes("--no-sandbox"),
     userNamespace: link("/proc/" + entry + "/ns/user"),
     pidNamespace: link("/proc/" + entry + "/ns/pid"),
@@ -283,25 +284,34 @@ fetch("/late-data").then((response) => response.text()).then((text) => {
   it("starts a render's browser with Chromium's sandbox on, its page in namespaces of its own", async () => {
     released = false;
     const rendering = renderer.render(`${site}/slow`, { timeout: 25_000 });
-    await waitFor(() => held.length === 1, "a render to hold its browser");
-    let processes: z.infer<typeof sandboxProcess>[] = [];
-    await waitFor(async () => {
-      processes = await sandboxProcesses();
-      return processes.some((process) => process.type === "--type=renderer");
-    }, "the page's renderer process");
+    try {
+      await waitFor(() => held.length === 1, "a render to hold its browser");
+      let processes: z.infer<typeof sandboxProcess>[] = [];
+      // A browser keeps its arguments; every helper it forks has them rewritten away, and there are
+      // helpers only once the page is running in one.
+      await waitFor(async () => {
+        processes = await sandboxProcesses();
+        return processes.some((process) => process.args === 1);
+      }, "the page's helper processes");
 
-    // Playwright passes --no-sandbox to every browser it starts with the sandbox off.
-    expect(processes.filter((process) => process.noSandbox).map((process) => process.pid)).toEqual([]);
-    // A browser stays in the container's namespaces; the sandbox puts each renderer in its own user and
-    // PID namespace, which the kernel reports here as chrome://sandbox's namespace layer does.
-    const browsers = processes.filter((process) => process.type === "browser");
-    const pages = processes.filter((process) => process.type === "--type=renderer");
-    expect(browsers.length).toBeGreaterThan(0);
-    expect(pages[0]?.userNamespace).toMatch(/^user:\[\d+\]$/);
-    const container = browsers.flatMap((browser) => [browser.userNamespace, browser.pidNamespace]);
-    expect(pages.flatMap((page) => [page.userNamespace, page.pidNamespace]).filter((ns) => container.includes(ns))).toEqual([]);
-
-    releaseHold();
+      // Playwright passes --no-sandbox to every browser it starts with the sandbox off.
+      expect(processes.filter((process) => process.noSandbox).map((process) => process.pid)).toEqual([]);
+      // The browser itself stays in the container's namespaces; the sandbox gives each page a user and a
+      // PID namespace of its own, the layer chrome://sandbox reports as the namespace sandbox.
+      const browsers = processes.filter((process) => process.args > 1);
+      const helpers = processes.filter((process) => process.args === 1);
+      expect(browsers.length).toBeGreaterThan(0);
+      const containerNamespaces = browsers.flatMap((browser) => [browser.userNamespace, browser.pidNamespace]);
+      const sandboxed = helpers.filter(
+        (helper) =>
+          helper.userNamespace.startsWith("user:[") &&
+          !containerNamespaces.includes(helper.userNamespace) &&
+          !containerNamespaces.includes(helper.pidNamespace),
+      );
+      expect(sandboxed.map((helper) => helper.pid)).not.toEqual([]);
+    } finally {
+      releaseHold();
+    }
     await expect(rendering).resolves.toBeDefined();
   }, 120_000);
 
