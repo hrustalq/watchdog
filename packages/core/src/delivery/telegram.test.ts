@@ -64,6 +64,13 @@ function fakeTelegram(answer: () => Response = () => Response.json({ ok: true, r
 const sender = (telegram: ReturnType<typeof fakeTelegram>, token: string | undefined = botToken) =>
   createTelegramSender(token, { fetch: telegram.fetch, encryptionKey });
 
+/**
+ * A sender whose limiter keeps Telegram's gaps on `now`. A gap measured from the real clock also counts the
+ * time the calls before it took, so on a loaded machine the value comes back short of the gap it asserts.
+ */
+const senderOn = (telegram: ReturnType<typeof fakeTelegram>, now: () => number) =>
+  createTelegramSender(botToken, { fetch: telegram.fetch, encryptionKey, limiter: createFloodLimiter(now) });
+
 const textOf = (telegram: ReturnType<typeof fakeTelegram>) => telegram.requests[0]?.body.text ?? "";
 
 /** The value, which the test expects to be there. */
@@ -410,7 +417,9 @@ describe("createTelegramSender", () => {
 
     it("gives each send fetched beside another its own place in the chat's queue", () => {
       const telegram = fakeTelegram();
-      const bot = sender(telegram);
+      // The clock stands still, so the places it hands out are the chat's gap and the one after it.
+      const now = 1_900_000_000_000;
+      const bot = senderOn(telegram, () => now);
 
       // Three Deliveries fetched in one batch, before any of them has sent: the first can go, and the
       // two beside it are told their own places rather than each finding the chat free.
@@ -501,7 +510,9 @@ describe("createTelegramSender", () => {
 
   describe("createFloodLimiter", () => {
     it("keeps no place for a reply that can't have its turn, so the chat's alerts don't queue behind it (#223)", () => {
-      const limiter = createFloodLimiter();
+      // The clock stands still: the hundred dropped replies take no time of the gap this reads.
+      const now = 1_900_000_000_000;
+      const limiter = createFloodLimiter(() => now);
 
       // The first reply takes the chat's turn; the hundred the flood drops behind it leave nothing.
       expect(limiter.tryTurn("-100500")).toBe(0);
