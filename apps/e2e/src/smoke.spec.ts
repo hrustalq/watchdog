@@ -78,9 +78,9 @@ async function saveRule(page: Page) {
 /** On the Sources screen, adds a feed from the fixtures container (compose.smoke.yaml). */
 async function addRssSource(page: Page, path: string) {
   const url = fixtureFeed(path);
-  // The page shows a copy of the form until the streamed one replaces it, and that drops what
-  // was typed into the copy, so the server refuses the empty field. A repeat after a submit that
-  // went through says the feed is already watched, so a retry can't hide a failure.
+  // The form is in the page's first HTML, so the submit needs no JavaScript and nothing replaces what
+  // was typed. A repeat after a submit that went through says the feed is already watched, so a retry
+  // can't hide a failure.
   await expect(async () => {
     await visibleField(page, "RSS feed URL").fill(url);
     await page.getByRole("button", { name: "Add Source" }).click();
@@ -136,10 +136,9 @@ async function submitAdd(form: Locator) {
  * `render` names (`static`, `obscura` or `chromium`) where it watches a website, and leaving the page
  * on the Source's own "Source added." notice.
  *
- * A click that lands before React has hydrated the page changes nothing: the streamed form replaces the
- * copy drawn before it, and the choice and the typed values go with it. So each step is checked in the
- * form that has the choice, and a step that didn't stick is tried again. A fresh load first clears the
- * notice the Source before it left, which a retry would otherwise take for this one's.
+ * A click that lands before React has hydrated the page still posts the form, because it is in the page's
+ * first HTML, but a step that didn't stick is tried again. A fresh load first clears the notice the Source
+ * before it left, which a retry would otherwise take for this one's.
  */
 async function addSource(page: Page, type: string, fields: FormField[], render?: string) {
   await page.goto(new URL("/sources", page.url()).href);
@@ -847,6 +846,50 @@ test("every Source type still in M4 delivers an Item", async ({ page }) => {
     await openFeedItem(page, status);
     await expect(original).toContainText("+ Partial outage in eu-west");
     await expect(original, "a Static read ran the page's script").not.toContainText("Rendered text:");
+  });
+});
+
+// The Sources screen reads its list without Suspense, so every row, with its Check now, Remove and Get a
+// new link forms, is in the first HTML. A row streamed into a Suspense boundary is in the HTML too, but
+// in a hidden div that only React's script swaps in (docs: A form streamed in behind Suspense needs
+// JavaScript to appear), so this fails if the screen goes back to streaming its list. It runs before the
+// rate limit test below, which uses up the sign-in bucket.
+test("the Sources screen lists each Source and runs its forms without JavaScript", async ({ page, browser }) => {
+  test.setTimeout(240_000);
+  await signInAgain(page);
+
+  const context = await browser.newContext({
+    javaScriptEnabled: false,
+    storageState: await page.context().storageState(),
+  });
+  const noScript = await context.newPage();
+
+  await test.step("the Source's row, with its Health and last success, is on the first load", async () => {
+    await noScript.goto(new URL("/sources", page.url()).href);
+    const row = sourceRow(noScript, "Platform status");
+    await expect(row, "a row behind a Suspense placeholder isn't in the page a browser reads").toBeVisible();
+    // The words are the chip's own, so this is the chip and not a colour.
+    await expect(row.getByText("Health: ok", { exact: true })).toBeVisible();
+    await expect(row.getByText(/Last success/)).toBeVisible();
+    await expect(row).toContainText(fixturePage("status"));
+  });
+
+  await test.step("Check now makes the Schedule Source due", async () => {
+    const row = sourceRow(noScript, "Platform status");
+    await row.getByRole("button", { name: /^Check now/ }).click();
+    await expect(row.getByRole("status").filter({ hasText: "A poll is due" })).toBeVisible({ timeout: 10_000 });
+    await expect(row.getByRole("status").filter({ hasText: "A poll is due" })).toHaveCount(0, untilPolled);
+  });
+
+  await test.step("Remove asks for confirmation and removes the Source", async () => {
+    const row = sourceRow(noScript, "Platform status");
+    await row.getByText("Remove", { exact: true }).click();
+    await row.getByRole("button", { name: /^Remove Source and its Items/ }).click();
+    await expect(
+      noScript.getByRole("heading", { name: "Platform status", level: 3 }),
+      "the Source is still on the screen after Remove",
+    ).toHaveCount(0);
+    await context.close();
   });
 });
 
