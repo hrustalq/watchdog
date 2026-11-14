@@ -12,6 +12,7 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
+    "test:gate": "node scripts/test-gate.mjs",
     "smoke": "pnpm --filter @watchdog/e2e smoke",
     "prepare": "husky || true"
   },
