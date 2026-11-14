@@ -1,5 +1,5 @@
 // Telegram user session logins, revokes and runners, self-hosted only (ADR 0014, ADR 0032).
-import { telegramLoginQueue, telegramRevokeQueue } from "@watchdog/core";
+import { type RevokeJob, telegramLoginQueue, telegramRevokeQueue } from "@watchdog/core";
 import type { PgBoss } from "pg-boss";
 
 type Run = (id: string, signal: AbortSignal) => Promise<void>;
@@ -28,7 +28,7 @@ export async function startTelegramSessions(
   boss: PgBoss,
   run: {
     login: Run;
-    revoke: (id: string) => Promise<void>;
+    revoke: (job: RevokeJob) => Promise<void>;
     /** One turn of a session's runner, until the signal ends or `until`, when the turn's job expires. */
     session: (id: string, signal: AbortSignal, until: Date) => Promise<void>;
     /** The sessions a turn may start for: not revoked, and not waiting out a FLOOD_WAIT. */
@@ -43,8 +43,8 @@ export async function startTelegramSessions(
   await boss.work<{ id: string }>(telegramLoginQueue, { localConcurrency: 5 }, async ([job]) => {
     if (job !== undefined) await run.login(job.data.id, AbortSignal.any([job.signal, stopping.signal]));
   });
-  await boss.work<{ id: string }>(telegramRevokeQueue, async ([job]) => {
-    if (job !== undefined) await run.revoke(job.data.id);
+  await boss.work<RevokeJob>(telegramRevokeQueue, async ([job]) => {
+    if (job !== undefined) await run.revoke(job.data);
   });
   await boss.createQueue(sessionQueue, runnerQueue);
   // Its policy can't change after creation, so only the rest is updated.

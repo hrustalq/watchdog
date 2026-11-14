@@ -29,39 +29,57 @@ import {
   session,
   source,
   sourceAlert,
+  sql,
   telegramLogin,
   telegramSession,
   user,
   workspace,
 } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
-import type { PgBoss } from "pg-boss";
-import { beforeAll, describe, expect, it } from "vitest";
+import { telegramRevokeQueue } from "@watchdog/core";
+import { PgBoss } from "pg-boss";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { setupTokenValid, setupUrl } from "./instance.ts";
-import { afterDeletion, type BeforeDelete, deleteWorkspace } from "./workspace-deletion.ts";
+import { afterDeletion, type BeforeDelete, deleteWorkspace, logoutTelegramSession } from "./workspace-deletion.ts";
 
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Expected a value");
   return value;
 }
 
-/** Nothing here queues a job: #314 is the first pre-delete step to need one. */
-function boss(): Promise<PgBoss> {
-  return Promise.reject(new Error("Nothing queues a job for a deleted Workspace yet"));
-}
-
 describe("deleting a Workspace", () => {
   let db: Db;
+  let boss: PgBoss;
 
   beforeAll(async () => {
     const postgres = await startPostgres();
     await migrate(postgres.url);
     db = createDb(postgres.url);
+    // The web app only sends jobs; nothing works them here, so a test reads what it queued.
+    boss = new PgBoss(postgres.url);
+    await boss.start();
+    await boss.createQueue(telegramRevokeQueue);
     return async () => {
+      await boss.stop({ timeout: 1_000 });
       await closeDb(db);
       await postgres.stop();
     };
   }, 120_000);
+
+  /** What the delete queued for the worker: the encrypted session of a Workspace that just went. */
+  const queued = async () =>
+    (
+      await db.execute<{ data: { secretCiphertext: string } }>(
+        sql`select data from pgboss.job where name = ${telegramRevokeQueue}`,
+      )
+    ).rows.map((row) => row.data);
+
+  /** The queue the web app sends on: here nothing works it, so a test reads what the delete queued. */
+  const sender = () => Promise.resolve(boss);
+
+  beforeEach(async () => {
+    await db.execute(sql`delete from pgboss.job where name = ${telegramRevokeQueue}`);
+  });
 
   /** A Workspace with a row in every table that belongs to one, and the ids the counts read by. */
   async function seed() {
@@ -261,13 +279,57 @@ describe("deleting a Workspace", () => {
     const outcome = await deleteWorkspace(
       db,
       { workspace: ids.workspace, typedName: "Morning coffee" },
-      { encryptionKey: Buffer.alloc(32), boss, beforeDelete },
+      { encryptionKey: Buffer.alloc(32), boss: sender, beforeDelete },
     );
 
     expect(outcome).toBe("deleted");
     expect(seen).toEqual([before]);
     expect(await counts(ids)).toEqual(nothing);
     expect(await db.select().from(user).where(eq(user.id, ids.workspace.ownerUserId))).toEqual([]);
+  });
+
+  it("queues the Workspace's Telegram session logout with its secret, before the row cascades away", async () => {
+    const ids = await seed();
+
+    expect(
+      await deleteWorkspace(
+        db,
+        { workspace: ids.workspace, typedName: "Morning coffee" },
+        { encryptionKey: Buffer.alloc(32), boss: sender, beforeDelete: logoutTelegramSession },
+      ),
+    ).toBe("deleted");
+
+    // The frame the delete was after: the row it would have read is gone, so the job carries the
+    // encrypted secret, and the worker logs the session out from that.
+    expect(await counts(ids)).toEqual(nothing);
+    expect(await queued()).toEqual([{ secretCiphertext: "ciphertext" }]);
+  });
+
+  it("queues no logout for a Workspace with no session, or one nobody can read", async () => {
+    const none = await seed();
+    await db.delete(telegramSession).where(eq(telegramSession.workspaceId, none.workspace.id));
+    await deleteWorkspace(
+      db,
+      { workspace: none.workspace, typedName: "Morning coffee" },
+      { encryptionKey: Buffer.alloc(32), boss: sender, beforeDelete: logoutTelegramSession },
+    );
+    expect(await queued()).toEqual([]);
+
+    // A session stored under another WATCHDOG_ENCRYPTION_KEY: no retry could log it out, so the
+    // delete queues nothing rather than a job that can only fail.
+    const unreadable = await seed();
+    await db
+      .update(telegramSession)
+      .set({ unreadableAt: new Date() })
+      .where(eq(telegramSession.workspaceId, unreadable.workspace.id));
+    expect(
+      await deleteWorkspace(
+        db,
+        { workspace: unreadable.workspace, typedName: "Morning coffee" },
+        { encryptionKey: Buffer.alloc(32), boss: sender, beforeDelete: logoutTelegramSession },
+      ),
+    ).toBe("deleted");
+    expect(await queued()).toEqual([]);
   });
 
   it("deletes nothing when the typed name isn't the Workspace's", async () => {
@@ -280,7 +342,7 @@ describe("deleting a Workspace", () => {
       { workspace: ids.workspace, typedName: "Morning Coffee" },
       {
         encryptionKey: Buffer.alloc(32),
-        boss,
+        boss: sender,
         beforeDelete: () => {
           stepped = true;
           return Promise.resolve();
@@ -304,7 +366,7 @@ describe("deleting a Workspace", () => {
       await deleteWorkspace(
         db,
         { workspace: ids.workspace, typedName: "Morning coffee" },
-        { encryptionKey: Buffer.alloc(32), boss },
+        { encryptionKey: Buffer.alloc(32), boss: sender },
       ),
     ).toBe("deleted");
 
@@ -328,7 +390,7 @@ describe("deleting a Workspace", () => {
     await deleteWorkspace(
       db,
       { workspace: ids.workspace, typedName: "Morning coffee" },
-      { encryptionKey: Buffer.alloc(32), boss },
+      { encryptionKey: Buffer.alloc(32), boss: sender },
     );
 
     expect(await afterDeletion(db, "self-hosted")).toBe("/sign-in");
@@ -342,7 +404,7 @@ describe("deleting a Workspace", () => {
     await deleteWorkspace(
       db,
       { workspace: gone.workspace, typedName: "Morning coffee" },
-      { encryptionKey: Buffer.alloc(32), boss },
+      { encryptionKey: Buffer.alloc(32), boss: sender },
     );
 
     expect(await counts(gone)).toEqual(nothing);

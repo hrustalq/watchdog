@@ -6,7 +6,7 @@ import { closeDb, createDb, type Db, eq, migrate, source, sql, telegramLogin, te
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { decryptSecret, encryptSecret } from "../../secrets/secrets.ts";
-import { revokeSession, runLogin, type SessionDeps } from "./login.ts";
+import { logoutDeletedSession, revokeSession, runLogin, type SessionDeps } from "./login.ts";
 import {
   answerLogin,
   cancelLogin,
@@ -406,6 +406,62 @@ describe("a Telegram user session", () => {
 
       // With the row gone, the Workspace can sign in another account.
       expect(await startLogin(db, workspaceId, phone, enqueue)).toBe("started");
+    });
+  });
+
+  describe("logging out the session of a deleted Workspace", () => {
+    /** A Workspace of its own, whose delete takes its session row with it, and that session's job. */
+    async function deleted() {
+      // logOut forgets the session's data centre, which a stub client only has once connected.
+      await telegram.connect();
+      const secretCiphertext = encryptSecret(await telegram.exportSession(), encryptionKey);
+      const ownerId = randomBytes(8).toString("hex");
+      await db.insert(user).values({ id: ownerId, name: "Leaving", email: `${ownerId}@example.com` });
+      const [leaving] = await db.insert(workspace).values({ name: "Leaving", ownerUserId: ownerId }).returning();
+      const workspaceLeft = leaving?.id ?? "";
+      await db.insert(telegramSession).values({ workspaceId: workspaceLeft, account: "Ada", secretCiphertext });
+      // What the delete does: the session's row cascades away before its job runs.
+      await db.delete(workspace).where(eq(workspace.id, workspaceLeft));
+      expect(await db.select().from(telegramSession).where(eq(telegramSession.workspaceId, workspaceLeft))).toEqual([]);
+      return secretCiphertext;
+    }
+
+    it("logs the session out on Telegram from the ciphertext its job carries, with the row gone", async () => {
+      const secretCiphertext = await deleted();
+      telegram.respondWith("auth.logOut", () => {
+        calls.push("logOut");
+        return createStub("auth.loggedOut");
+      });
+
+      await expect(logoutDeletedSession(deps(), secretCiphertext)).resolves.toBeUndefined();
+
+      // The authorization is ended on Telegram, which is the only thing left to do for it.
+      expect(calls).toEqual(["logOut"]);
+    });
+
+    it("ends without a retry for a session Telegram ended, and for one no worker can read", async () => {
+      const secretCiphertext = await deleted();
+      telegram.respondWith("auth.logOut", () => {
+        throw new tl.RpcError(401, "AUTH_KEY_UNREGISTERED");
+      });
+      // Already logged out on Telegram, so nothing is left to retry.
+      await expect(logoutDeletedSession(deps(), secretCiphertext)).resolves.toBeUndefined();
+
+      // A secret another WATCHDOG_ENCRYPTION_KEY encrypted: no retry could log it out, and asking
+      // Telegram is not possible, so the job ends without a client.
+      let clients = 0;
+      const counting = (): SessionDeps => ({
+        encryptionKey,
+        createClient: () => {
+          clients += 1;
+          return telegram;
+        },
+        tickMs: 5,
+      });
+      await expect(
+        logoutDeletedSession(counting(), encryptSecret("the session", randomBytes(32))),
+      ).resolves.toBeUndefined();
+      expect(clients).toBe(0);
     });
   });
 });

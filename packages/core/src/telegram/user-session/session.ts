@@ -31,11 +31,36 @@ export const loginLost =
 
 export type Enqueue = (tx: Tx, id: string) => Promise<void>;
 
+/**
+ * A revoke's job: the session's row, or the secret of one whose row a Workspace delete takes with
+ * it. A deleted Workspace's row is gone before the job runs, so that job carries the ciphertext.
+ */
+export type RevokeJob = { id: string } | { secretCiphertext: string };
+
 /** Queues a login's or a revoke's job over the transaction that writes its row, so they commit together. */
 export function sessionJobEnqueuer(boss: PgBoss, queue: typeof telegramLoginQueue | typeof telegramRevokeQueue): Enqueue {
   return async (tx, id) => {
     await boss.insert(queue, [{ data: { id } }], { db: fromDrizzle(tx, sql) });
   };
+}
+
+/**
+ * Queues the logout of the Workspace's session before the delete's transaction takes its row, which
+ * is what "Deleting and exporting a Workspace" promises (docs: Security and privacy). The job carries
+ * the encrypted secret, because after that transaction commits there is no row to read it from; only
+ * the worker decrypts it. Telegram being slow or unreachable never holds the delete: the job retries
+ * on its own and the Workspace's rows go now. A Workspace with no session, or one Watchdog recorded
+ * as unreadable, queues nothing, because no retry could log out a secret nobody can read.
+ */
+export async function queueSessionLogout(tx: Tx, workspaceId: string, boss: PgBoss): Promise<void> {
+  const [session] = await tx
+    .select({ secretCiphertext: telegramSession.secretCiphertext })
+    .from(telegramSession)
+    .where(and(eq(telegramSession.workspaceId, workspaceId), isNull(telegramSession.unreadableAt)));
+  if (session === undefined) return;
+  await boss.insert(telegramRevokeQueue, [{ data: { secretCiphertext: session.secretCiphertext } }], {
+    db: fromDrizzle(tx, sql),
+  });
 }
 
 /** What a login waits for, or why it ended. */

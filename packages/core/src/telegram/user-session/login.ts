@@ -225,6 +225,23 @@ function readableSecret(ciphertext: string, key: Buffer): string | undefined {
 }
 
 /**
+ * Logs a session out on Telegram from its secret, refusing every other method. A session Telegram
+ * already ended is logged out there already, so that is not a failure. Anything else throws, so
+ * pg-boss retries.
+ */
+async function logOutSecret(deps: SessionDeps, secret: string): Promise<void> {
+  const client = readOnly(deps.createClient(), ["auth.logOut"]);
+  try {
+    await client.importSession(secret);
+    await logOut(client).catch((error: unknown) => {
+      if (!endedByTelegram(error)) throw error;
+    });
+  } finally {
+    await client.destroy();
+  }
+}
+
+/**
  * Logs the session out on Telegram, then deletes it and fails the Sources that read through it. A
  * session Telegram already ended is deleted all the same. A session this worker can't decrypt is
  * marked unreadable and left for the user to delete, because no retry could ever log it out. Any
@@ -242,17 +259,21 @@ export async function revokeSession(db: Db, deps: SessionDeps, sessionId: string
       .where(eq(telegramSession.id, sessionId));
     return;
   }
-  const client = readOnly(deps.createClient(), ["auth.logOut"]);
-  try {
-    await client.importSession(secret);
-    await logOut(client).catch((error: unknown) => {
-      if (!endedByTelegram(error)) throw error;
-    });
-  } finally {
-    await client.destroy();
-  }
+  await logOutSecret(deps, secret);
   await db.transaction(async (tx) => {
     await tx.delete(telegramSession).where(eq(telegramSession.id, sessionId));
     await setPushSourceHealth(tx, sessionSources(session.workspaceId), revokedError);
   });
+}
+
+/**
+ * Logs out a session whose row a deleted Workspace took with it, from the encrypted secret its job
+ * carries: nothing is left to delete or to fail, so this only ends the authorization on Telegram. A
+ * session Telegram already ended is done, and one this worker can't decrypt ends too, because no
+ * retry could log it out. Any other error throws, so pg-boss retries.
+ */
+export async function logoutDeletedSession(deps: SessionDeps, secretCiphertext: string): Promise<void> {
+  const secret = readableSecret(secretCiphertext, deps.encryptionKey);
+  if (secret === undefined) return;
+  await logOutSecret(deps, secret);
 }

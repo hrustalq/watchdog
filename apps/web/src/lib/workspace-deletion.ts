@@ -1,7 +1,7 @@
 // Deleting a Workspace and its owner's account (docs: Security and privacy, "Deleting and exporting
 // a Workspace"): every child table references `workspace` with `on delete cascade`, `workspace`
 // cascades from `user`, and a self-hosted install's admin is the user row that just went.
-import type { Config } from "@watchdog/core";
+import { type Config, queueSessionLogout } from "@watchdog/core";
 import { type Db, eq, type Tx, user } from "@watchdog/db";
 import type { PgBoss } from "pg-boss";
 
@@ -31,6 +31,17 @@ export interface BeforeDelete {
 /** Runs inside the delete's transaction, before any row goes. */
 export type BeforeWorkspaceDelete = (context: BeforeDelete) => Promise<void>;
 
+/**
+ * The pre-delete step: the Workspace's Telegram session has to be logged out on Telegram before its
+ * row cascades away (docs: Security and privacy, "Deleting and exporting a Workspace"). The job it
+ * queues carries the encrypted secret, because only the worker decrypts a session and the row is
+ * gone by the time it runs. Telegram never holds the delete: a job that can't reach it retries on
+ * its own, and the Workspace's data goes now.
+ */
+export const logoutTelegramSession: BeforeWorkspaceDelete = async ({ tx, workspace, boss }) => {
+  await queueSessionLogout(tx, workspace.id, await boss());
+};
+
 /** What the delete did, which the screen turns into a redirect either way. */
 export type DeleteOutcome = "deleted" | "wrong-name";
 
@@ -40,9 +51,8 @@ export type DeleteOutcome = "deleted" | "wrong-name";
  * that skips the form deletes nothing.
  *
  * `beforeDelete` is the one pre-delete step, and it runs before the delete inside the same
- * transaction. GitHub issue #314 fills it: the Workspace's Telegram session has to be logged out on
- * Telegram before its row cascades away, which needs the ciphertext read here, and the job that
- * does it needs the queue above. Until then nothing of the Workspace outlives it elsewhere.
+ * transaction: `logoutTelegramSession` reads what only the rows hold and queues the work that
+ * outlives them, because the delete cascades the Telegram session row away.
  */
 export async function deleteWorkspace(
   db: Db,
