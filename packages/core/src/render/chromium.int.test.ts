@@ -48,11 +48,11 @@ describe("the Chromium Renderer", () => {
     }
   };
   /**
-   * How many browsers the service is running, read from its own process table. It starts a browser a
-   * connection, so each Chrome main process is a browser in flight. A page's helper processes carry
-   * `--type=`, and the zombie a closed browser leaves behind carries no command line at all.
+   * How many browser processes the service is running, read from its own process table. A page's
+   * helper processes carry `--type=`, and the zombie a closed browser leaves behind carries no
+   * command line at all, so each match is one browser.
    */
-  const browsersInFlight = async () => {
+  const browserProcesses = async () => {
     const { output } = await chromium.exec([
       "node",
       "-e",
@@ -70,6 +70,35 @@ for (const entry of readdirSync("/proc")) {
   browsers += 1;
 }
 process.stdout.write(String(browsers));`,
+    ]);
+    return Number(output);
+  };
+  /**
+   * How many sessions the service is serving, read from its own socket table: one accepted connection
+   * on the browser server's port (3001, `0BB9` in hex) per render that holds a browser. This is what
+   * the limit bounds, and unlike a process it ends before the browser is gone: Playwright kills a
+   * closed browser asynchronously, so its process can outlive the render's slot for a moment.
+   */
+  const sessionsServed = async () => {
+    const { output } = await chromium.exec([
+      "node",
+      "-e",
+      `const { readFileSync } = require("node:fs");
+let sessions = 0;
+for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+  let text;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    continue;
+  }
+  for (const line of text.split("\\n").slice(1)) {
+    const fields = line.trim().split(/\\s+/);
+    if (fields.length < 4) continue;
+    if (fields[1].split(":")[1] === "0BB9" && fields[3] === "01") sessions += 1;
+  }
+}
+process.stdout.write(String(sessions));`,
     ]);
     return Number(output);
   };
@@ -220,12 +249,12 @@ process.stdout.write(String(browsers));`,
     async () => {
       released = false;
       // Every render holds its browser until /hold.js answers, so watching the service while the
-      // renders run reads browsers that are in flight, not ones that are about to be.
+      // renders run reads sessions that are live, not ones that are about to be.
       const observed: number[] = [];
       const sampling = { done: false };
       const sampler = (async () => {
         while (!sampling.done) {
-          observed.push(await browsersInFlight());
+          observed.push(await sessionsServed());
           await sleep(100);
         }
       })();
@@ -233,8 +262,14 @@ process.stdout.write(String(browsers));`,
         const renders = Array.from({ length: maxChromiumBrowsers + 2 }, () =>
           renderer.render(`${site}/slow`, { timeout: 25_000 }),
         );
-        // The limit is full once every slot's page is waiting on its script.
+        // The limit is full once every slot's page is waiting on its script. Nothing closes in this
+        // window, so the browsers behind the sessions are countable too.
         await waitFor(() => held.length === maxChromiumBrowsers, `${String(maxChromiumBrowsers)} renders to hold`);
+        await waitFor(
+          async () => (await browserProcesses()) === maxChromiumBrowsers,
+          `${String(maxChromiumBrowsers)} browsers to run`,
+        );
+        expect(await sessionsServed()).toBe(maxChromiumBrowsers);
         const settled: number[] = [];
         for (const render of renders) {
           void render.then(
@@ -250,9 +285,9 @@ process.stdout.write(String(browsers));`,
         expect(rendered.map((page) => page.title)).toEqual(
           Array.from({ length: maxChromiumBrowsers + 2 }, () => "Slow page"),
         );
-        expect(observed.filter((browsers) => browsers > maxChromiumBrowsers)).toEqual([]);
+        expect(observed.filter((sessions) => sessions > maxChromiumBrowsers)).toEqual([]);
         expect(Math.max(...observed)).toBe(maxChromiumBrowsers);
-        await waitFor(async () => (await browsersInFlight()) === 0, "the browsers to close");
+        await waitFor(async () => (await browserProcesses()) === 0, "the browsers to close");
       } finally {
         sampling.done = true;
         await sampler;
@@ -276,12 +311,13 @@ process.stdout.write(String(browsers));`,
       );
       // It never reached the service: the renders that hold a browser are still the only ones, and
       // the page of the render that gave up was never asked for its script.
-      expect(await browsersInFlight()).toBe(maxChromiumBrowsers);
+      expect(await sessionsServed()).toBe(maxChromiumBrowsers);
+      expect(await browserProcesses()).toBe(maxChromiumBrowsers);
       expect(held).toHaveLength(maxChromiumBrowsers);
 
       releaseHold();
       await expect(Promise.all(holding)).resolves.toHaveLength(maxChromiumBrowsers);
-      await waitFor(async () => (await browsersInFlight()) === 0, "the browsers to close");
+      await waitFor(async () => (await browserProcesses()) === 0, "the browsers to close");
     },
     180_000,
   );
