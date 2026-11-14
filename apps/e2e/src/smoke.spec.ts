@@ -874,11 +874,17 @@ test("the Sources screen lists each Source and runs its forms without JavaScript
     await expect(row).toContainText(fixturePage("status"));
   });
 
-  await test.step("Check now makes the Schedule Source due", async () => {
+  await test.step("Check now makes the Schedule Source due, and a reload shows the poll went", async () => {
     const row = sourceRow(noScript, "Platform status");
+    const due = row.getByRole("status").filter({ hasText: "A poll is due" });
     await row.getByRole("button", { name: /^Check now/ }).click();
-    await expect(row.getByRole("status").filter({ hasText: "A poll is due" })).toBeVisible({ timeout: 10_000 });
-    await expect(row.getByRole("status").filter({ hasText: "A poll is due" })).toHaveCount(0, untilPolled);
+    await expect(due).toBeVisible({ timeout: 10_000 });
+    // Nothing follows a poll without JavaScript, so the row's own "Reload this page" is how a person
+    // sees it go: reload until the worker has taken it.
+    await expect(async () => {
+      await noScript.reload();
+      await expect(due).toHaveCount(0, { timeout: 2_000 });
+    }).toPass(untilPolled);
   });
 
   await test.step("Remove asks for confirmation and removes the Source", async () => {
