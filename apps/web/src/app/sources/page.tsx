@@ -4,6 +4,7 @@ import Link from "next/link";
 import { type Config, releasesFeedUrl, sessionOf, signInToken } from "@watchdog/core";
 import { buttonVariants } from "@/components/ui/button";
 import { dataBox, field, fieldError, label, textBox, textLink } from "@/components/field-classes";
+import { FocusOnMount } from "@/components/focus-on-mount";
 import { HealthChip } from "@/components/health";
 import { Timestamp } from "@/components/timestamp";
 import { requireWorkspace, server } from "@/lib/server";
@@ -113,6 +114,10 @@ async function SourceList({ params }: { params: Awaited<PageProps<"/sources">["s
   // row. Only a known id of a row this page renders can match.
   const replacedFor = typeof params.replaced === "string" ? params.replaced : "";
   const invalidFor = typeof params["token-problem"] === "string" ? params["token-problem"] : "";
+  // Check now and Remove name the Source they acted on, so the page can put the keyboard focus back
+  // near that row: a redirect renders the screen again and the button that had focus goes with it.
+  const checkedFor = typeof params.checked === "string" ? params.checked : "";
+  const removed = typeof params.removed === "string";
   const outcomeOf = (id: string): ReplaceOutcome | undefined => {
     if (replacedFor === id) return "replaced";
     if (invalidFor === id) return "invalid-token";
@@ -161,7 +166,9 @@ async function SourceList({ params }: { params: Awaited<PageProps<"/sources">["s
       </Notice>
     ) : null}
     <section aria-labelledby="watched" className="flex flex-col gap-3">
-        <h2 id="watched" className="text-title">
+        {/* Remove takes its row away, so the focus goes to the list's heading, near where the row was. */}
+        {removed ? <FocusOnMount id="watched" /> : null}
+        <h2 id="watched" tabIndex={-1} className="text-title outline-hidden">
           Watching <span className="tabular-nums">{sources.length}</span>{" "}
           {sources.length === 1 ? "Source" : "Sources"}
         </h2>
@@ -174,9 +181,13 @@ async function SourceList({ params }: { params: Awaited<PageProps<"/sources">["s
           <ul className="divide-y rounded-lg border">
             {sources.map((row) => (
               <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+                {/* Check now lands on the line that says the poll is due, so a screen reader reads it. */}
+                {checkedFor === row.id ? <FocusOnMount id={row.due ? `poll-${row.id}` : `source-${row.id}`} /> : null}
                 <div className="flex min-w-0 flex-col gap-1">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <h3 className="text-title min-w-0 break-words">{row.name}</h3>
+                    <h3 id={`source-${row.id}`} tabIndex={-1} className="text-title min-w-0 break-words outline-hidden">
+                      {row.name}
+                    </h3>
                     {/* A bot Source with no chat watches nothing yet, so it has no Health to read. */}
                     {row.type === "telegram" && !("chatId" in row.config) ? null : <HealthChip health={row.health} />}
                   </div>
@@ -231,7 +242,12 @@ async function SourceList({ params }: { params: Awaited<PageProps<"/sources">["s
                     </p>
                   )}
                   {row.due ? (
-                    <p role="status" className="text-sm text-muted-foreground">
+                    <p
+                      id={`poll-${row.id}`}
+                      role="status"
+                      tabIndex={-1}
+                      className="text-sm text-muted-foreground outline-hidden"
+                    >
                       A poll is due, and the worker usually runs it within a minute.{" "}
                       <Link href="/sources" prefetch={false} className={textLink}>
                         Reload this page

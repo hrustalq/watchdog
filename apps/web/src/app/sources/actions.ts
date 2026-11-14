@@ -76,19 +76,22 @@ export async function newSourceLinkAction(sourceId: unknown) {
 export async function checkSourceNowAction(sourceId: unknown) {
   const { workspace } = await requireWorkspace();
   const { db, mode, encryptionKey, authSecret } = server();
+  const id = typeof sourceId === "string" ? sourceId : "";
   // The page offers no button for a check this refuses, so there's nothing to say when it does.
   if (typeof sourceId === "string") {
     await checkSourceNow(db, workspace.id, sourceId, checkGapMinutes(mode), { encryptionKey, authSecret });
   }
-  redirect("/sources");
+  // The id says which row was acted on, so the page can put the focus back in it.
+  redirect(`/sources?${new URLSearchParams({ checked: id })}`);
 }
 
 /** Removes a Source with its Items. An id outside the user's Workspace changes nothing. */
 // Bound arguments come back from the client, so the id is checked against the Workspace.
 export async function removeSourceAction(sourceId: unknown) {
   const { workspace } = await requireWorkspace();
+  const id = typeof sourceId === "string" ? sourceId : "";
   if (typeof sourceId === "string") await removeSource(server().db, workspace.id, sourceId);
-  redirect("/sources");
+  redirect(`/sources?${new URLSearchParams({ removed: id })}`);
 }
 
 /**

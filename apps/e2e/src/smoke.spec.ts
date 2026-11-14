@@ -899,6 +899,44 @@ test("the Sources screen lists each Source and runs its forms without JavaScript
   });
 });
 
+// Check now and Remove end in a redirect that renders the Sources screen again, and the button that
+// had focus goes with the old render. The action names the Source it acted on, so focus lands on that
+// row's line saying a poll is due, or on the list's heading after a Remove, instead of at the top of
+// the page. A row that came due on its schedule takes no focus, and a plain load starts on the body.
+// It runs after the test above, which has already removed the "Platform status" row.
+test("Check now and Remove keep the keyboard focus in the Sources screen", async ({ page }) => {
+  test.setTimeout(240_000);
+  await signInAgain(page);
+
+  await test.step("a plain load takes no focus", async () => {
+    await page.goto(new URL("/sources", page.url()).href);
+    await expect(sourceRow(page, "Platform uptime")).toBeVisible();
+    await expect(page.locator("body")).toBeFocused();
+  });
+
+  await test.step("Check now leaves the focus on the row's line saying a poll is due", async () => {
+    const row = sourceRow(page, "Platform uptime");
+    const due = row.getByRole("status").filter({ hasText: "A poll is due" });
+    // A click before React has hydrated the screen still posts the form, and that render focuses the
+    // same line, so this holds however the click landed.
+    await expect(async () => {
+      await row.getByRole("button", { name: /^Check now/ }).click();
+      await expect(due).toBeFocused({ timeout: 10_000 });
+    }).toPass({ timeout: 60_000 });
+    // The line is a live region, so the focus is also what a screen reader reads.
+    await expect(due).toHaveAttribute("role", "status");
+  });
+
+  await test.step("Remove leaves the focus on the list's heading", async () => {
+    await page.goto(new URL("/sources", page.url()).href);
+    const row = sourceRow(page, "Smoke chat");
+    await row.getByText("Remove", { exact: true }).click();
+    await row.getByRole("button", { name: /^Remove Source and its Items/ }).click();
+    await expect(row, "the Source is still on the screen after Remove").toHaveCount(0, { timeout: 15_000 });
+    await expect(page.locator("#watched")).toBeFocused();
+  });
+});
+
 // A link checker or a monitor reads the status, and Next.js fixes a page's status before the page's
 // own not-found lookup runs. Proxy answers a missing Item or rule with the not-found page and a 404,
 // so the two can be told apart. It runs before the rate limit test below, which uses up the sign-in
