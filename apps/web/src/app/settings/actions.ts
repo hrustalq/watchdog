@@ -11,7 +11,7 @@ import {
   saveAlertSettings,
   saveHealthAlertDestinations,
 } from "@/lib/settings";
-import { afterDeletion, deleteWorkspace } from "@/lib/workspace-deletion";
+import { afterDeletion, deleteWorkspace, logoutTelegramSession } from "@/lib/workspace-deletion";
 
 /**
  * Saves the alert settings of the user's Workspace, which comes from the session and never from the form.
@@ -68,9 +68,9 @@ export async function deleteWorkspaceAction(formData: FormData) {
       workspace: { id: workspace.id, name: workspace.name, ownerUserId: user.id },
       typedName: typeof typedName === "string" ? typedName : "",
     },
-    // The pre-delete step is #314's: the queue and the key a Telegram logout needs are handed over
-    // here, and its rows are still there while it runs.
-    { encryptionKey, boss },
+    // The pre-delete step: the Workspace's Telegram session is logged out on Telegram before its row
+    // cascades away, and the key and the queue that needs are handed over here.
+    { encryptionKey, boss, beforeDelete: logoutTelegramSession },
   );
   if (outcome === "wrong-name") redirect("/settings?delete=name", RedirectType.replace);
   // The account's row is gone, so its sessions are too; this clears the cookie the browser holds.

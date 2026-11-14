@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { encryptSecret, telegramLoginQueue, telegramRevokeQueue } from "@watchdog/core";
+import { encryptSecret, type RevokeJob, telegramLoginQueue, telegramRevokeQueue } from "@watchdog/core";
 import { revokeSession } from "@watchdog/core/telegram-session";
 import { closeDb, createDb, eq, migrate, telegramSession, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
@@ -8,6 +8,12 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { sessionQueue, startTelegramSessions } from "./telegram-session.ts";
 
 const waitLong = { timeout: 30_000, interval: 100 };
+
+/** The row a revoke names. These tests have no deleted Workspace, so a secret-carrying job fails them. */
+function namedId(job: RevokeJob): string {
+  if (!("id" in job)) throw new Error("this revoke named no row, and this test has no deleted Workspace");
+  return job.id;
+}
 
 describe("the Telegram user session jobs", () => {
   let postgres: TestPostgres;
@@ -43,8 +49,8 @@ describe("the Telegram user session jobs", () => {
         });
         throw new Error("the worker stopped");
       },
-      revoke: (id) => {
-        revokes.push(id);
+      revoke: (job) => {
+        revokes.push("id" in job ? job.id : job.secretCiphertext);
         return Promise.resolve();
       },
       session: () => Promise.resolve(),
@@ -52,10 +58,12 @@ describe("the Telegram user session jobs", () => {
     });
 
     const jobId = await boss.send(telegramLoginQueue, { id: "login-1" });
+    // A revoke names the session's row, or carries the secret of one a deleted Workspace took.
     await boss.send(telegramRevokeQueue, { id: "session-1" });
+    await boss.send(telegramRevokeQueue, { secretCiphertext: "a deleted Workspace's session" });
     await vi.waitFor(() => {
       expect(logins).toEqual(["login-1"]);
-      expect(revokes).toEqual(["session-1"]);
+      expect(revokes.toSorted()).toEqual(["a deleted Workspace's session", "session-1"]);
     }, waitLong);
 
     stop();
@@ -117,7 +125,7 @@ describe("the Telegram user session jobs", () => {
     const sessionId = await revoking(db, "changed-key", encryptSecret("the session", randomBytes(32)));
     const stop = await startTelegramSessions(boss, {
       login: () => Promise.resolve(),
-      revoke: (id) =>
+      revoke: (job) =>
         revokeSession(
           db,
           {
@@ -126,7 +134,7 @@ describe("the Telegram user session jobs", () => {
               throw new Error("the revoke tried to reach Telegram with a session it can't read");
             },
           },
-          id,
+          namedId(job),
         ),
       session: () => Promise.resolve(),
       live: () => Promise.resolve([]),

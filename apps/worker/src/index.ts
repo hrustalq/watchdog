@@ -17,7 +17,7 @@ import {
 // Apart from the main entry, which web imports too, so only the worker loads playwright-core.
 import { createChromiumRenderer, createObscuraRenderer } from "@watchdog/core/render";
 // Its own entry too, so only the worker loads mtcute.
-import { liveSessions, revokeSession, runLogin, runSession, sessionClient } from "@watchdog/core/telegram-session";
+import { liveSessions, logoutDeletedSession, revokeSession, runLogin, runSession, sessionClient } from "@watchdog/core/telegram-session";
 import { createDb, instanceSettings, migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { startDelivery } from "./delivery.ts";
@@ -119,7 +119,9 @@ const stopTelegramSessions =
     ? undefined
     : await startTelegramSessions(boss, {
         login: (id, signal) => runLogin(db, sessionDeps, id, signal),
-        revoke: (id) => revokeSession(db, sessionDeps, id),
+        // A revoke names the session's row, or carries the secret of one a deleted Workspace took.
+        revoke: (job) =>
+          "id" in job ? revokeSession(db, sessionDeps, job.id) : logoutDeletedSession(sessionDeps, job.secretCiphertext),
         session: (id, signal, until) =>
           runSession(db, { ...sessionDeps, enqueueItems: itemEnqueuer(boss) }, id, { signal, until }),
         live: () => liveSessions(db),
