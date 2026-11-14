@@ -50,6 +50,11 @@ gate.on("upgrade", async (request, socket, head) => {
     return;
   }
   const endpoint = new URL(server.wsEndpoint());
+  // The client can be gone by the time the browser is up, before its close can reach `done` below.
+  if (socket.destroyed) {
+    void server.kill().catch(() => undefined);
+    return;
+  }
   const upstream = connect({ port: Number(endpoint.port), host: endpoint.hostname }, () => {
     // The browser server answers only at /, and only to a loopback Host, which guards it against DNS
     // rebinding. The token goes no further than the gate.
