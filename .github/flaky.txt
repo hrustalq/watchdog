@@ -1,7 +1,6 @@
 # Test files known to flake under a loaded full run. The gate in scripts/test-gate.mjs
 # reruns exactly these files once when they are the only failures; every other failure
 # fails the build. Keep each line repo-relative, and remove the line when its issue closes.
-apps/worker/src/delivery.int.test.ts
 packages/db/src/migrate.int.test.ts
 packages/core/src/telegram/link.int.test.ts
 packages/core/src/telegram/user-session/runner.int.test.ts

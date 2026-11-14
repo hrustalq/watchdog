@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { closeDb, createDb, type Db, destination, eq, migrate, source, telegramLinkCode, user, workspace } from "@watchdog/db";
+import { closeDb, createDb, type Db, destination, eq, migrate, source, sql, telegramLinkCode, user, workspace } from "@watchdog/db";
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { createFloodLimiter } from "../delivery/telegram.ts";
@@ -134,10 +134,15 @@ describe("linking a Telegram chat", () => {
     expect(code).toMatch(/^[\w-]{22}$/);
     const [stored] = await codesOf(id);
     expect(stored?.codeHash).not.toContain(code);
-    const minutes = ((stored?.expiresAt.getTime() ?? 0) - Date.now()) / 60_000;
     expect(linkCodeMinutes).toBe(15);
-    expect(minutes).toBeGreaterThan(14);
-    expect(minutes).toBeLessThanOrEqual(15);
+    // Read from the database's own clock at both ends, so the TTL measured is the one the row was written
+    // with: this machine's clock can run behind the container's, which alone pushed it past 15 minutes.
+    const [ttl] = await db
+      .select({ minutes: sql<number>`extract(epoch from (${telegramLinkCode.expiresAt} - now()))::float8 / 60` })
+      .from(telegramLinkCode)
+      .where(eq(telegramLinkCode.destinationId, id));
+    expect(ttl?.minutes).toBeGreaterThan(linkCodeMinutes - 1);
+    expect(ttl?.minutes).toBeLessThanOrEqual(linkCodeMinutes);
   });
 
   it("binds the chat, encrypted, confirms the Destination and spends the code", async () => {
