@@ -12,8 +12,9 @@ import { captureItems, type CaptureDeps } from "../../pipeline/capture.ts";
 import { decryptSecret } from "../../secrets/secrets.ts";
 import { telegramDraft } from "../../sources/telegram/draft.ts";
 import type { BotMessage } from "../update.ts";
-import { endedByTelegram, sessionSources } from "./login.ts";
+import { endedByTelegram } from "./login.ts";
 import { FloodWaitTooLong, readOnly } from "./read-only.ts";
+import { sessionSources } from "./session.ts";
 
 export const loggedOutError = "The Telegram session was logged out";
 const unreadable = "The Telegram session can't read this chat. The account may have left it, or been removed from it.";

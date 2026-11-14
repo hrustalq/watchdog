@@ -1,8 +1,9 @@
 // A Telegram user session, as the web sees it (ADR 0014, ADR 0032): it starts a login and writes
 // each step on the login's row, and the worker's job answers there. Nothing here talks to Telegram,
 // so web never loads mtcute and never decrypts a session.
-import { and, type Db, eq, isNull, source, sql, telegramLogin, telegramSession, type Tx } from "@watchdog/db";
+import { and, type Db, eq, isNotNull, isNull, source, sql, telegramLogin, telegramSession, type Tx } from "@watchdog/db";
 import { fromDrizzle, type PgBoss } from "pg-boss";
+import { setPushSourceHealth } from "../../delivery/source-alert.ts";
 import { encryptSecret } from "../../secrets/secrets.ts";
 
 export const telegramLoginQueue = "telegram-login";
@@ -16,6 +17,13 @@ export const stale = sql`${telegramLogin.heartbeatAt} < now() - interval '10 sec
 
 /** A revoke still waiting after this long has run out of retries, so it can be asked for again. */
 const revokeStuck = sql`${telegramSession.revokedAt} < now() - interval '15 minutes'`;
+
+/** What a session's Sources say once it ends, whether it was revoked or deleted unreadable. */
+export const revokedError = "The Telegram session was revoked";
+
+/** A Workspace's Sources that read through its session. */
+export const sessionSources = (workspaceId: string) =>
+  and(eq(source.workspaceId, workspaceId), eq(source.type, "telegram"), sql`${source.config}->>'via' = 'session'`);
 
 export const loginExpired = "The login took longer than 5 minutes, so it ended. Start again.";
 export const loginLost =
@@ -130,6 +138,7 @@ export async function sessionOf(db: Db, workspaceId: string) {
     .select({
       account: telegramSession.account,
       revokedAt: telegramSession.revokedAt,
+      unreadableAt: telegramSession.unreadableAt,
       revokeStuck: sql<boolean>`coalesce(${revokeStuck}, false)`,
       createdAt: telegramSession.createdAt,
     })
@@ -154,6 +163,23 @@ export async function requestRevoke(db: Db, workspaceId: string, enqueue: Enqueu
       .returning({ id: telegramSession.id });
     if (row === undefined) return false;
     await enqueue(tx, row.id);
+    return true;
+  });
+}
+
+/**
+ * Deletes a session Watchdog recorded as unreadable, without logging it out on Telegram: only its
+ * secret could do that, and that is what can't be read. Its Sources fail as a revoke's do. Refused
+ * for a session Watchdog can still read, which the screen revokes instead.
+ */
+export async function deleteUnreadableSession(db: Db, workspaceId: string): Promise<boolean> {
+  return db.transaction(async (tx) => {
+    const [deleted] = await tx
+      .delete(telegramSession)
+      .where(and(eq(telegramSession.workspaceId, workspaceId), isNotNull(telegramSession.unreadableAt)))
+      .returning({ id: telegramSession.id });
+    if (deleted === undefined) return false;
+    await setPushSourceHealth(tx, sessionSources(workspaceId), revokedError);
     return true;
   });
 }
