@@ -72,11 +72,24 @@ describe("migrate", () => {
   }, 60_000);
 });
 
+/**
+ * A test's deadline here. Its work is a pnpm and drizzle-kit start per invocation, which a loaded runner
+ * charges to the test: "leaves the pgboss schema alone on generate and push" took 60.45 s on the branch-#180
+ * run, against the 60 s this file allowed, while the file ran in 29.86 s idle and one `generate` took 34 s.
+ * The hooks already allow 120_000 for a container start, and the file's vitest config says the timeout only
+ * catches a hang, so the tests get that budget too: load may slow them, a hang still fails them.
+ */
+const testBudget = 120_000;
+
 describe("drizzle-kit", () => {
   let postgres: TestPostgres;
 
   beforeAll(async () => {
     postgres = await startPostgres();
+    // Whatever a test runs first pays a cold pnpm and drizzle-kit start, which is the fixed part of its cost
+    // and the part a busy runner stretches most. Warm it here, on the hook's budget, so the tests time their
+    // own work rather than the module load before it.
+    await pnpm(["exec", "drizzle-kit", "--version"], postgres.url);
     return postgres.stop;
   }, 120_000);
 
@@ -111,5 +124,5 @@ describe("drizzle-kit", () => {
     // re-creates them on push, which can leave one dropped. Public changes go through migrations.
     await pnpm(["exec", "drizzle-kit", "push", "--force"], postgres.url);
     expect(pgbossState(await databaseState(postgres.url))).toEqual(pgbossState(before));
-  }, 60_000);
+  }, testBudget);
 });
