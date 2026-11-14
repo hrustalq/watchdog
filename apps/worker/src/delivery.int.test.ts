@@ -867,13 +867,22 @@ describe("the deliver queue", () => {
     // What the five-second bound stood for, counted rather than timed: the fifty were fetched a batch at a
     // time, so a Delivery queued behind them waits for the walk's own work and not four polls of a queue
     // that had the jobs ready. A job a poll fetched them one at a time, and a loaded machine turned the
-    // same walk into eight seconds. Each batch's jobs share the `started_on` its fetch wrote, and a job
-    // queued for its chat's turn is a new row, so only the fetched fifty have one. Ten a fetch is five,
-    // and a fetch that finds one taken before it names its own — six is what the first full run measured,
-    // and a walk that took a poll a job would be fifty (#435).
-    const fetched = await db.$client.query<{ fetches: string; fetched: string }>(
-      `select count(distinct started_on) as fetches, count(*) filter (where started_on is not null) as fetched
-       from pgboss.job where name = $2 and data->>'deliveryId' = any($1::text[])`,
+    // same walk into eight seconds. Each batch's jobs share the `started_on` its fetch wrote. A Delivery
+    // whose chat turn was more than a moment away went back in the queue as a new row for that turn, and a
+    // poll fetches that one too: it is not one of the fifty the walk took, so the walk is read off the row
+    // the enqueuer wrote for each Delivery, the first for its id, and the count no longer moves with how
+    // many delivers a loaded runner deferred (#463). Ten a fetch is five, and a fetch that finds one taken
+    // before it names its own — six is what the first full run measured, and a walk that took a poll a job
+    // would be fifty (#435).
+    const fetched = await db.$client.query<{ fetched: string; fetches: string }>(
+      `with walk as (
+         select distinct on (data->>'deliveryId') started_on
+         from pgboss.job
+         where name = $2 and data->>'deliveryId' = any($1::text[])
+         order by data->>'deliveryId', created_on, id
+       )
+       select count(*) filter (where started_on is not null) as fetched, count(distinct started_on) as fetches
+       from walk`,
       [ids, deliverQueue],
     );
     expect(fetched.rows.at(0)?.fetched).toBe("50");
