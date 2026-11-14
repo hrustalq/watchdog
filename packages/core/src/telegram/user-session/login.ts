@@ -5,11 +5,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { BaseTelegramClient, MemoryStorage, tl, User } from "@mtcute/node";
 import { checkPassword, logOut, sendCode, signIn } from "@mtcute/node/methods.js";
 import type { ITelegramClient } from "@mtcute/node";
-import { and, type Db, eq, getTableColumns, isNull, lt, source, sql, telegramLogin, telegramSession } from "@watchdog/db";
+import { and, type Db, eq, getTableColumns, isNull, lt, sql, telegramLogin, telegramSession } from "@watchdog/db";
 import { setPushSourceHealth } from "../../delivery/source-alert.ts";
-import { decryptSecret, encryptSecret } from "../../secrets/secrets.ts";
+import { decryptSecret, encryptSecret, UnreadableSecretError } from "../../secrets/secrets.ts";
 import { readOnly } from "./read-only.ts";
-import { loginLost, stale } from "./session.ts";
+import { loginLost, revokedError, sessionSources, stale } from "./session.ts";
 
 export interface SessionDeps {
   encryptionKey: Buffer;
@@ -23,8 +23,6 @@ export interface SessionDeps {
 export function sessionClient(api: { id: number; hash: string }): ITelegramClient {
   return new BaseTelegramClient({ apiId: api.id, apiHash: api.hash, storage: new MemoryStorage(), logLevel: 0 });
 }
-
-export const revokedError = "The Telegram session was revoked";
 
 // Telegram's refusals pass to the screen as these sentences, never as raw error text.
 const refusals = {
@@ -43,10 +41,6 @@ const is = (error: unknown, ...names: string[]) => names.some((name) => tl.RpcEr
 /** Telegram ended the session: it was logged out, terminated from another device, or the account is gone. */
 export const endedByTelegram = (error: unknown) =>
   is(error, "AUTH_KEY_UNREGISTERED", "SESSION_REVOKED", "SESSION_EXPIRED", "USER_DEACTIVATED");
-
-/** A Workspace's Sources that read through its session. */
-export const sessionSources = (workspaceId: string) =>
-  and(eq(source.workspaceId, workspaceId), eq(source.type, "telegram"), sql`${source.config}->>'via' = 'session'`);
 
 const floodWait = (error: unknown) => is(error, "FLOOD_WAIT_%d", "PHONE_NUMBER_FLOOD", "PHONE_PASSWORD_FLOOD");
 
@@ -218,15 +212,39 @@ async function finish(db: Db, deps: SessionDeps, client: ITelegramClient, login:
 }
 
 /**
+ * The session's secret, or undefined when this worker's key can't read it, because
+ * WATCHDOG_ENCRYPTION_KEY changed after the session was stored.
+ */
+function readableSecret(ciphertext: string, key: Buffer): string | undefined {
+  try {
+    return decryptSecret(ciphertext, key);
+  } catch (error) {
+    if (error instanceof UnreadableSecretError) return undefined;
+    throw error;
+  }
+}
+
+/**
  * Logs the session out on Telegram, then deletes it and fails the Sources that read through it. A
- * session Telegram already ended is deleted all the same. Any other error throws, so pg-boss retries.
+ * session Telegram already ended is deleted all the same. A session this worker can't decrypt is
+ * marked unreadable and left for the user to delete, because no retry could ever log it out. Any
+ * other error throws, so pg-boss retries.
  */
 export async function revokeSession(db: Db, deps: SessionDeps, sessionId: string): Promise<void> {
   const [session] = await db.select().from(telegramSession).where(eq(telegramSession.id, sessionId));
   if (session === undefined) return;
+  const secret = readableSecret(session.secretCiphertext, deps.encryptionKey);
+  if (secret === undefined) {
+    // Not a failure a retry can fix: Telegram can't be asked to end a session Watchdog can't read.
+    await db
+      .update(telegramSession)
+      .set({ unreadableAt: sql`now()` })
+      .where(eq(telegramSession.id, sessionId));
+    return;
+  }
   const client = readOnly(deps.createClient(), ["auth.logOut"]);
   try {
-    await client.importSession(decryptSecret(session.secretCiphertext, deps.encryptionKey));
+    await client.importSession(secret);
     await logOut(client).catch((error: unknown) => {
       if (!endedByTelegram(error)) throw error;
     });

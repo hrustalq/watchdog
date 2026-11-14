@@ -6,14 +6,16 @@ import { closeDb, createDb, type Db, eq, migrate, source, sql, telegramLogin, te
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { decryptSecret, encryptSecret } from "../../secrets/secrets.ts";
-import { revokedError, revokeSession, runLogin, type SessionDeps } from "./login.ts";
+import { revokeSession, runLogin, type SessionDeps } from "./login.ts";
 import {
   answerLogin,
   cancelLogin,
+  deleteUnreadableSession,
   loginExpired,
   loginLost,
   loginState,
   requestRevoke,
+  revokedError,
   sessionOf,
   startLogin,
 } from "./session.ts";
@@ -333,13 +335,57 @@ describe("a Telegram user session", () => {
       });
       const { sessionId } = await signedIn();
       await expect(revokeSession(db, deps(), sessionId)).rejects.toThrow();
-      expect(await sessionOf(db, workspaceId)).toBeDefined();
+      // Kept, and not marked unreadable: the session can still be read, so a retry can log it out.
+      expect(await sessionOf(db, workspaceId)).toMatchObject({ unreadableAt: null });
 
       telegram.respondWith("auth.logOut", () => {
         throw new tl.RpcError(401, "AUTH_KEY_UNREGISTERED");
       });
       await revokeSession(db, deps(), sessionId);
       expect(await sessionOf(db, workspaceId)).toBeUndefined();
+    });
+
+    it("records a session another key encrypted instead of retrying, and deletes only that", async () => {
+      // The session as it was stored before WATCHDOG_ENCRYPTION_KEY changed.
+      const changedKey = randomBytes(32);
+      const secretCiphertext = encryptSecret(await telegram.exportSession(), changedKey);
+      await db.insert(telegramSession).values({ workspaceId, account: "Ada", secretCiphertext });
+      const [watched] = await db
+        .insert(source)
+        .values({ workspaceId, type: "telegram", name: "Chat", config: { via: "session", chatId: 7, title: "Chat" }, nextPollAt: null })
+        .returning();
+      expect(await requestRevoke(db, workspaceId, enqueue)).toBe(true);
+      const [sessionId] = jobs;
+      let clients = 0;
+      const counting = (): SessionDeps => ({
+        encryptionKey,
+        createClient: () => {
+          clients += 1;
+          return telegram;
+        },
+        tickMs: 5,
+      });
+
+      // The job ends instead of throwing, so pg-boss has nothing to retry.
+      await expect(revokeSession(db, counting(), sessionId ?? "")).resolves.toBeUndefined();
+      // It never asked Telegram anything: the session it would have used is what can't be read.
+      expect(clients).toBe(0);
+      expect(await sessionOf(db, workspaceId)).toMatchObject({ revokeStuck: false });
+      expect((await sessionOf(db, workspaceId))?.unreadableAt).toBeInstanceOf(Date);
+
+      // A session Watchdog can still read is revoked instead, never deleted this way.
+      await db.update(telegramSession).set({ unreadableAt: null });
+      expect(await deleteUnreadableSession(db, workspaceId)).toBe(false);
+      expect(await sessionOf(db, workspaceId)).toBeDefined();
+
+      await db.update(telegramSession).set({ unreadableAt: new Date() });
+      expect(await deleteUnreadableSession(db, workspaceId)).toBe(true);
+      expect(await sessionOf(db, workspaceId)).toBeUndefined();
+      const [failing] = await db.select().from(source).where(eq(source.id, watched?.id ?? ""));
+      expect(failing).toMatchObject({ health: "failing", lastError: revokedError });
+
+      // With the row gone, the Workspace can sign in another account.
+      expect(await startLogin(db, workspaceId, phone, enqueue)).toBe("started");
     });
   });
 });

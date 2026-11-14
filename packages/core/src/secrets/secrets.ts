@@ -11,7 +11,13 @@ const tagLength = 16;
 // it would make every stored fingerprint look like another key.
 const fingerprintLabel = "watchdog encryption key fingerprint v1";
 
-const failure = (reason: string) => new Error(`Can't decrypt the secret: ${reason}`);
+/**
+ * The ciphertext can't be read with the key at hand: WATCHDOG_ENCRYPTION_KEY changed after it was
+ * written. Its own class, so a caller can tell that apart from a network or database failure.
+ */
+export class UnreadableSecretError extends Error {}
+
+const failure = (reason: string) => new UnreadableSecretError(`Can't decrypt the secret: ${reason}`);
 
 export function encryptSecret(plaintext: string, key: Buffer): string {
   const iv = randomBytes(ivLength);

@@ -6,9 +6,9 @@ import { and, closeDb, createDb, type Db, eq, item, migrate, source, telegramSes
 import { startPostgres } from "@watchdog/db/testing";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { encryptSecret } from "../../secrets/secrets.ts";
-import { revokedError, revokeSession } from "./login.ts";
+import { revokeSession } from "./login.ts";
 import { loggedOutError, runSession } from "./runner.ts";
-import { requestRevoke, sessionChats, watchChat } from "./session.ts";
+import { requestRevoke, revokedError, sessionChats, watchChat } from "./session.ts";
 
 const encryptionKey = randomBytes(32);
 const day = 24 * 60 * 60;

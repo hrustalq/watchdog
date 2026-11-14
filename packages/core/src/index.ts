@@ -33,6 +33,7 @@ export { telegramIntake } from "./sources/telegram/intake.ts";
 export {
   answerLogin,
   cancelLogin,
+  deleteUnreadableSession,
   type LoginState,
   loginState,
   requestRevoke,
