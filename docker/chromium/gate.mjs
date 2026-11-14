@@ -32,7 +32,8 @@ const startBrowser = () =>
 const refuse = "HTTP/1.1 401 Unauthorized\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
 const unavailable = "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
 const gate = createServer((_request, response) => {
-  response.writeHead(401).end();
+  // A request the gate doesn't proxy has no reason to hold its connection open.
+  response.writeHead(401, { connection: "close" }).end();
 });
 gate.on("upgrade", async (request, socket, head) => {
   socket.on("error", () => socket.destroy());
