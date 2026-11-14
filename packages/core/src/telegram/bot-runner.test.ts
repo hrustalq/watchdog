@@ -1,12 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import type { AlertMessage } from "../delivery/content.ts";
+import type { Destination } from "../delivery/deliver.ts";
+import { createFloodLimiter, createTelegramSender } from "../delivery/telegram.ts";
+import { encryptSecret } from "../secrets/secrets.ts";
 import { type BotChat, runBot } from "./bot-runner.ts";
 import type { BotUpdate } from "./update.ts";
 
 const botToken = "123456:secret-token";
 const requestBody = z.looseObject({
   offset: z.number().optional(),
-  chat_id: z.number().optional(),
+  // A number from the bot's own replies, and a string from a sender's alert.
+  chat_id: z.union([z.number(), z.string()]).optional(),
   text: z.string().optional(),
 });
 
@@ -22,12 +27,12 @@ const linked = (name: string) => Promise.resolve(`Linked to ${name} in Watchdog`
  * a shutdown does, by aborting the signal during a poll.
  */
 function fakeTelegram(batches: unknown[][], answers: Partial<Record<string, () => Response>> = {}) {
-  const sent: { method: string; body: z.output<typeof requestBody> }[] = [];
+  const sent: { method: string; body: z.output<typeof requestBody>; at: number }[] = [];
   const stopping = new AbortController();
   const fetch: Parameters<typeof runBot>[0]["fetch"] = (input, init) => {
     const method = String(input).split("/").at(-1) ?? "";
     const body = requestBody.parse(JSON.parse(typeof init?.body === "string" ? init.body : "{}"));
-    sent.push({ method, body });
+    sent.push({ method, body, at: Date.now() });
     const answer = answers[method];
     if (answer !== undefined) return Promise.resolve(answer());
     if (method === "getMe") return Promise.resolve(Response.json({ ok: true, result: { username: "WatchdogBot" } }));
@@ -55,7 +60,18 @@ function run(
   pingDatabase: () => Promise<unknown> = () => Promise.resolve(),
   intake: (update: BotUpdate) => Promise<unknown> = () => Promise.resolve(),
 ) {
-  return runBot({ botToken, fetch: telegram.fetch, linkChat, intake, pingDatabase, retryMs: 1 }, telegram.signal);
+  return runBot(
+    {
+      botToken,
+      fetch: telegram.fetch,
+      floodLimiter: createFloodLimiter(),
+      linkChat,
+      intake,
+      pingDatabase,
+      retryMs: 1,
+    },
+    telegram.signal,
+  );
 }
 
 describe("the Telegram bot runner", () => {
@@ -185,7 +201,15 @@ describe("the Telegram bot runner", () => {
     });
 
     await runBot(
-      { botToken, fetch: telegram.fetch, linkChat, intake: () => Promise.resolve(), pingDatabase: () => Promise.resolve(), retryMs: 1 },
+      {
+        botToken,
+        fetch: telegram.fetch,
+        floodLimiter: createFloodLimiter(),
+        linkChat,
+        intake: () => Promise.resolve(),
+        pingDatabase: () => Promise.resolve(),
+        retryMs: 1,
+      },
       stopping.signal,
     );
 
@@ -322,5 +346,111 @@ describe("the Telegram bot runner", () => {
     await run(fakeTelegram([]));
 
     expect(stderr).not.toHaveBeenCalled();
+  });
+
+  describe("the flood limits shared with the alerts", () => {
+    const encryptionKey = Buffer.alloc(32, 7);
+    const alert: AlertMessage = {
+      title: "A security advisory",
+      source: "Hacker News",
+      rating: "Severity 5, Importance 3",
+      severity: 5,
+      summary: "Patch now.",
+      link: "https://watchdog.test/items/0a1b",
+      why: "Severity is at least 4",
+    };
+
+    /** A Telegram Destination for the chat, as a Delivery holds it. */
+    const destinationFor = (chatId: string): Destination => ({
+      id: chatId,
+      workspaceId: "0a1c",
+      type: "telegram",
+      name: `chat ${chatId}`,
+      config: {},
+      secretCiphertext: encryptSecret(chatId, encryptionKey),
+      secretShownAt: null,
+      confirmedAt: null,
+      lastError: null,
+      lastErrorAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    it("replies and alerts reach Telegram no faster than 30 a second while a flooded chat's replies are dropped (#223)", async () => {
+      const flooded = { id: 4242, type: "private" };
+      const updates = [
+        ...Array.from({ length: 100 }, (_, index) => startMessage(index + 1, "/start nope", flooded)),
+        startMessage(101, "/start abc", { id: 7, type: "private" }),
+      ];
+      const telegram = fakeTelegram([updates]);
+      const limiter = createFloodLimiter();
+      // One limiter for the alerts and the replies, as the worker has.
+      const alerts = createTelegramSender(botToken, { fetch: telegram.fetch, encryptionKey, limiter });
+      const started = Date.now();
+
+      const sending = Promise.all(
+        Array.from({ length: 40 }, (_, index) => alerts.send(destinationFor(String(1000 + index)), alert)),
+      );
+      await runBot(
+        {
+          botToken,
+          fetch: telegram.fetch,
+          floodLimiter: limiter,
+          mayDropReply: (reply) => reply === "That code is unknown or has expired.",
+          linkChat: (code) => Promise.resolve(code === "abc" ? "Linked to Ops alerts in Watchdog" : "That code is unknown or has expired."),
+          intake: () => Promise.resolve(),
+          pingDatabase: () => Promise.resolve(),
+          retryMs: 1,
+        },
+        telegram.signal,
+      );
+      await sending;
+
+      // The 100 unknown codes were dropped after the first, rather than waited out one by one.
+      expect(telegram.replies().filter(({ chat_id }) => chat_id === flooded.id)).toHaveLength(1);
+      // The valid code from another chat linked, well inside the five seconds a person waits.
+      const linkedReply = telegram.sent.find(({ method, body }) => method === "sendMessage" && body.chat_id === 7);
+      expect(linkedReply?.body.text).toBe("Linked to Ops alerts in Watchdog");
+      expect((linkedReply?.at ?? Infinity) - started).toBeLessThan(5_000);
+
+      // 40 alerts and 2 replies, and no 31 of them in one second.
+      const arrivals = telegram.sent
+        .filter(({ method }) => method === "sendMessage")
+        .map(({ at }) => at)
+        .sort((before, after) => before - after);
+      expect(arrivals).toHaveLength(42);
+      expect(
+        arrivals.filter((at, index) => {
+          const later = arrivals[index + 30];
+          return later !== undefined && later - at < 1_000;
+        }),
+      ).toEqual([]);
+    });
+
+    it("sends a Linked reply even when its chat is over the limit, rather than dropping it (#223)", async () => {
+      const privateChat = { id: 42, type: "private" };
+      const telegram = fakeTelegram([
+        [startMessage(10, "/start one", privateChat), startMessage(11, "/start two", privateChat)],
+      ]);
+
+      await runBot(
+        {
+          botToken,
+          fetch: telegram.fetch,
+          floodLimiter: createFloodLimiter(),
+          mayDropReply: (reply) => reply === "That code is unknown or has expired.",
+          linkChat: () => Promise.resolve("Linked to Ops alerts in Watchdog"),
+          intake: () => Promise.resolve(),
+          pingDatabase: () => Promise.resolve(),
+          retryMs: 1,
+        },
+        telegram.signal,
+      );
+
+      const replies = telegram.sent.filter(({ method }) => method === "sendMessage");
+      expect(replies).toHaveLength(2);
+      const [first, second] = replies;
+      expect((second?.at ?? 0) - (first?.at ?? 0)).toBeGreaterThanOrEqual(1_000);
+    });
   });
 });

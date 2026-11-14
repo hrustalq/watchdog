@@ -2,8 +2,10 @@ import { rmSync, writeFileSync } from "node:fs";
 import {
   createAgentFetch,
   createEgressFetch,
+  createFloodLimiter,
   createMailer,
   createSenders,
+  isUnknownLinkCodeReply,
   itemEnqueuer,
   keyFingerprint,
   linkChat,
@@ -65,8 +67,11 @@ const deliveryDb = createDb(config.databaseUrl);
 const egressFetch = createEgressFetch(config);
 const mailer = createMailer(config);
 const alertFrom = config.smtp?.alertFrom;
+// One limiter for the bot's messages, so the alerts and the bot runner's replies count against Telegram's
+// flood limits together.
+const floodLimiter = createFloodLimiter();
 await startDelivery(deliveryDb, boss, {
-  senders: createSenders(config, { fetch: egressFetch, mailer }),
+  senders: createSenders(config, { fetch: egressFetch, mailer, telegramLimiter: floodLimiter }),
   appUrl: config.auth.url,
   secret: config.auth.secret,
   ...(config.mode === "hosted" && {
@@ -97,7 +102,9 @@ const stopTelegramBot =
           {
             botToken,
             fetch: egressFetch,
+            floodLimiter,
             linkChat: (code, chat) => linkChat(db, config.encryptionKey, code, chat),
+            mayDropReply: isUnknownLinkCodeReply,
             intake: telegramIntake(db, { enqueueItems: itemEnqueuer(boss) }),
             pingDatabase: () => db.$client.query("select 1"),
           },

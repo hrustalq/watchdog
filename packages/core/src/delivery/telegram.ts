@@ -10,12 +10,19 @@ import { groupedAlertText } from "./group.ts";
 import { sourceAlertText } from "./source-alert-content.ts";
 
 const maxLength = 4096;
-// Telegram's limits are 1 message a second per chat and 30 a second across the bot. These leave a margin,
-// because a request reaches Telegram a little later than it's let go, and not always equally later.
+// Telegram's limits are 1 message a second per chat, 30 a second across the bot and 20 a minute in a group.
+// These leave a margin, because a request reaches Telegram a little later than it's let go, and not always
+// equally later.
 const chatGapMs = 1050;
 const botGapMs = 35;
-/** The longest wait a send takes on itself: past it, a caller that can reschedule is told when the turn is. */
-const momentMs = 250;
+/** Telegram's FAQ allows a bot 20 messages a minute in a group. */
+const groupLimit = 20;
+const groupGapMs = 61_000;
+/**
+ * The longest wait a send takes on itself: past it, a caller that can reschedule is told when the turn is,
+ * and the bot runner drops a reply it may drop rather than hold every other chat up for it.
+ */
+export const floodMomentMs = 250;
 
 export const botApiUrl = (botToken: string, method: string) => `https://api.telegram.org/bot${botToken}/${method}`;
 
@@ -47,16 +54,25 @@ function alertText({ title, source, rating, summary, link, why }: AlertMessage) 
   return `${body.slice(0, room - 1).replace(/[\uD800-\uDBFF]$/, "")}…${ending}`;
 }
 
+/** A group, supergroup or channel, as the Bot API gives it: their ids are negative, and a private chat's id is
+ * positive. Only a group has the 20-a-minute limit.
+ */
+const isGroup = (chatId: string) => chatId.startsWith("-");
+
+/** What a send that Telegram's flood limit has paused says in the Log, with the whole seconds it has left. */
+const floodLimitReason = (ms: number) =>
+  `Telegram's flood limit asked to wait ${String(Math.ceil(ms / 1000))} seconds`;
+
 /**
- * Takes a send's turn and says how long it is away. One worker sends alerts, so these limits can be kept in
- * memory. The web app's test alerts have a limiter of their own, so a test within a second of an alert to
- * the same chat can get a 429, which only that test or one attempt of the alert pays for.
+ * Takes a send's turn and says how long it is away. One limiter keeps Telegram's flood limits for a bot: the
+ * worker shares one between its Delivery sender and the bot runner's replies, and the web app has its own for
+ * test alerts. A 429's wait is kept per chat, and a group has a budget of its own.
  *
  * A turn is taken at the moment the message goes, so the gap that follows it is kept from a real send. A
  * caller that can send again takes no turn: it is told when its place in the chat's queue comes up, and its
  * job goes then, so nothing waits here on its behalf.
  */
-function floodLimiter() {
+export function createFloodLimiter() {
   let botFreeAt = 0;
   const chatFreeAt = new Map<string, number>();
   /** When each chat's queued sends have had their turns: a rescheduled send's place among them. */
@@ -67,26 +83,62 @@ function floodLimiter() {
    * turn behind it. Expires, so a send that never comes can't hold another one back.
    */
   const chatHeldUntil = new Map<string, number>();
+  /** When each group's last sends went, oldest first: what its budget counts. */
+  const groupSends = new Map<string, number[]>();
+  /** A chat Telegram refused with a 429, and the moment its `retry_after` has passed. */
+  const chatPausedUntil = new Map<string, number>();
 
   /** A chat whose second has passed needs no entry, which keeps these to the last second's chats. */
-  const keepLastSecond = (now: number) => {
+  const forgetOld = (now: number) => {
     for (const [chat, at] of chatFreeAt) if (at <= now) chatFreeAt.delete(chat);
     for (const [chat, at] of chatQueuedAt) if (at <= now) chatQueuedAt.delete(chat);
     for (const [chat, at] of chatHeldUntil) if (at <= now) chatHeldUntil.delete(chat);
+    for (const [chat, at] of chatPausedUntil) if (at <= now) chatPausedUntil.delete(chat);
+    for (const [chat, sends] of groupSends) {
+      const live = sends.filter((at) => at > now - groupGapMs);
+      if (live.length === 0) groupSends.delete(chat);
+      else groupSends.set(chat, live);
+    }
+  };
+
+  /** When the group's budget lets another message go, or 0 when it has room. */
+  const groupFreeAt = (chatId: string, now: number) => {
+    if (!isGroup(chatId)) return 0;
+    const sends = groupSends.get(chatId) ?? [];
+    if (sends.length < groupLimit) return 0;
+    return (sends[sends.length - groupLimit] ?? now) + groupGapMs;
+  };
+
+  /** The moment the chat may be sent to: its own gap, the bot's, a 429's wait and the group's budget. */
+  const freeAtOf = (chatId: string, now: number) =>
+    Math.max(
+      botFreeAt,
+      chatFreeAt.get(chatId) ?? 0,
+      chatPausedUntil.get(chatId) ?? 0,
+      groupFreeAt(chatId, now),
+    );
+
+  const takeTurn = (chatId: string, now: number) => {
+    botFreeAt = now + botGapMs;
+    chatFreeAt.set(chatId, now + chatGapMs);
+    if (!isGroup(chatId)) return;
+    const sends = groupSends.get(chatId) ?? [];
+    sends.push(now);
+    groupSends.set(chatId, sends);
   };
 
   /** The wait until the chat's turn, which it takes when that is 0, or the one its caller resends for. */
   const nextTurn = (chatId: string, deferTurn: boolean) => {
     const now = Date.now();
-    keepLastSecond(now);
+    forgetOld(now);
 
-    const freeAt = Math.max(botFreeAt, chatFreeAt.get(chatId) ?? 0);
+    const freeAt = freeAtOf(chatId, now);
     const queuedAt = chatQueuedAt.get(chatId) ?? 0;
     if (freeAt > now) {
       // A place that has come is waited out here rather than queued again, which would come back late.
       const held = chatHeldUntil.get(chatId);
       chatHeldUntil.delete(chatId);
-      if (held === undefined && freeAt - now > momentMs && deferTurn) {
+      if (held === undefined && freeAt - now > floodMomentMs && deferTurn) {
         // Behind the sends already queued for this chat, which come a gap apart rather than in a crowd.
         const at = Math.max(freeAt, queuedAt);
         chatQueuedAt.set(chatId, at + chatGapMs);
@@ -95,8 +147,7 @@ function floodLimiter() {
       return freeAt - now;
     }
 
-    botFreeAt = now + botGapMs;
-    chatFreeAt.set(chatId, now + chatGapMs);
+    takeTurn(chatId, now);
     chatQueuedAt.set(chatId, Math.max(queuedAt, now + chatGapMs));
     return 0;
   };
@@ -112,12 +163,12 @@ function floodLimiter() {
    */
   const placeInQueue = (chatId: string, dueAt: Date | null): number | undefined => {
     const now = Date.now();
-    keepLastSecond(now);
+    forgetOld(now);
 
-    const freeAt = Math.max(botFreeAt, chatFreeAt.get(chatId) ?? 0);
+    const freeAt = freeAtOf(chatId, now);
     // A place that has come is taken now, or waited out here when it is barely a gap away: queued again it
     // would come back a poll later, and the turns behind it would slip with it.
-    if (dueAt !== null && dueAt.getTime() <= now + momentMs) {
+    if (dueAt !== null && dueAt.getTime() <= now + floodMomentMs) {
       if (freeAt - now <= chatGapMs) {
         chatHeldUntil.set(chatId, freeAt);
         return undefined;
@@ -127,11 +178,42 @@ function floodLimiter() {
 
     const at = Math.max(freeAt, chatQueuedAt.get(chatId) ?? 0, now);
     chatQueuedAt.set(chatId, at + chatGapMs);
-    return at - now > momentMs ? at - now : undefined;
+    return at - now > floodMomentMs ? at - now : undefined;
   };
 
-  return { nextTurn, placeInQueue };
+  return {
+    nextTurn,
+    placeInQueue,
+    /**
+     * The wait until the chat's turn, taking it when there is one. Unlike `nextTurn`, a caller that can't have
+     * the turn now books no place, so one that will never send leaves nothing behind: the bot runner's replies
+     * use this, because so many of them are dropped.
+     */
+    tryTurn: (chatId: string) => {
+      const now = Date.now();
+      forgetOld(now);
+      const freeAt = freeAtOf(chatId, now);
+      if (freeAt > now) return freeAt - now;
+      takeTurn(chatId, now);
+      chatQueuedAt.set(chatId, Math.max(chatQueuedAt.get(chatId) ?? 0, now + chatGapMs));
+      return 0;
+    },
+    /**
+     * Keeps Telegram's asked wait for the chat, so nothing else reaches it until then. A 429's `retry_after`
+     * is in seconds; the wait ends later than this call, because the answer took time to arrive.
+     */
+    pause: (chatId: string, ms: number) => {
+      chatPausedUntil.set(chatId, Math.max(chatPausedUntil.get(chatId) ?? 0, Date.now() + ms));
+    },
+    /** How long the chat must wait before another send, or undefined when Telegram hasn't asked for one. */
+    pausedFor: (chatId: string) => {
+      const until = chatPausedUntil.get(chatId) ?? 0;
+      return until > Date.now() ? until - Date.now() : undefined;
+    },
+  };
 }
+
+export type FloodLimiter = ReturnType<typeof createFloodLimiter>;
 
 /** Without a token it sends nothing, and each attempt fails with a reason saying so. */
 export function createTelegramSender(
@@ -140,6 +222,8 @@ export function createTelegramSender(
     /** The egress guard's fetch, as for every request out of Watchdog. */
     fetch: ReturnType<typeof createEgressFetch>;
     encryptionKey: Buffer;
+    /** The limits to keep to, which the worker shares with the bot runner's replies. Own when not given. */
+    limiter?: FloodLimiter;
   },
 ): AlertSender {
   if (botToken === undefined) {
@@ -148,14 +232,21 @@ export function createTelegramSender(
     };
   }
   const url = botApiUrl(botToken, "sendMessage");
-  const turn = floodLimiter();
+  const turn = deps.limiter ?? createFloodLimiter();
 
   /**
    * Undefined when the message went, or else Telegram's refusal. The wait for the chat's turn happens here,
    * so the gap is kept from the moment the message goes. A job whose turn is further off than a moment is
    * told when it is instead, and goes again then.
+   *
+   * A chat Telegram's flood limit has paused is refused here, with the time left, rather than waited out: a
+   * long wait would hold the job slot, and the Delivery's next attempt is queued for that time instead.
    */
   const post = async (chatId: string, text: string, deferTurn: boolean) => {
+    const paused = turn.pausedFor(chatId);
+    if (paused !== undefined) {
+      throw new RetryAfterSendError(floodLimitReason(paused), paused);
+    }
     for (let waitMs = turn.nextTurn(chatId, deferTurn); waitMs > 0; waitMs = turn.nextTurn(chatId, deferTurn)) {
       await sleep(waitMs);
     }
@@ -188,11 +279,12 @@ export function createTelegramSender(
       let text: string;
       if ("health" in message) text = sourceAlertText(message);
       else text = "lines" in message ? groupedAlertText(message, maxLength) : alertText(message);
-      let refused = await post(decryptSecret(destination.secretCiphertext, deps.encryptionKey), text, deferTurn);
+      let chatId = decryptSecret(destination.secretCiphertext, deps.encryptionKey);
+      let refused = await post(chatId, text, deferTurn);
       const movedTo = refused?.answer.parameters?.migrate_to_chat_id;
       // Once only, so a chat that keeps moving can't hold the send in a loop.
       if (movedTo !== undefined) {
-        const chatId = String(movedTo);
+        chatId = String(movedTo);
         await onChatMoved?.(encryptSecret(chatId, deps.encryptionKey));
         refused = await post(chatId, text, deferTurn);
       }
@@ -205,10 +297,10 @@ export function createTelegramSender(
       }
       const retryAfter = answer.parameters?.retry_after;
       if (status === 429 && retryAfter !== undefined) {
-        throw new RetryAfterSendError(
-          `Telegram's flood limit asked to wait ${String(retryAfter)} seconds`,
-          retryAfter * 1000,
-        );
+        // Telegram's answer says the whole bot is over a limit, but its docs don't say so for a chat, so the
+        // wait is kept per chat: if the Log shows the bot itself refused, this is where that would change.
+        turn.pause(chatId, retryAfter * 1000);
+        throw new RetryAfterSendError(floodLimitReason(retryAfter * 1000), retryAfter * 1000);
       }
       throw new Error(`Telegram refused the message with ${String(status)}${said}`);
     },

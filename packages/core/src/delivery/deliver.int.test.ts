@@ -503,6 +503,45 @@ describe("deliver", () => {
       expect(present(retries[0]).at).toEqual(row.nextAttemptAt);
     });
 
+    it("queues a Delivery to a chat a 429 paused without a request, at or after the wait (#223)", async () => {
+      const { seeded, received, deps } = await linked(() =>
+        Response.json({ ok: false, error_code: 429, parameters: { retry_after: 5 } }, { status: 429 }),
+      );
+      const before = Date.now();
+      await deliver(db, seeded.deliveryId, deps);
+
+      // A Delivery that arrives while the chat waits is queued for the wait's end rather than tried: no second
+      // request, no attempt of its own and no Log row.
+      const [next] = await db
+        .insert(item)
+        .values({
+          workspaceId: seeded.workspaceId,
+          sourceId: seeded.sourceId,
+          externalId: "two",
+          title: "Another advisory",
+          body: "Another entry.",
+          raw: {},
+          severity: 5,
+          importance: 3,
+        })
+        .returning();
+      const [queued] = await db
+        .insert(delivery)
+        .values({ actionId: seeded.actionId, itemId: present(next).id, destinationId: seeded.destinationId })
+        .returning();
+      const queuedId = present(queued).id;
+
+      await deliver(db, queuedId, deps);
+
+      expect(received).toHaveLength(1);
+      expect(await rowOf(seeded.deliveryId)).toMatchObject({ status: "queued", attempts: 1 });
+      const waiting = present(await rowOf(queuedId));
+      expect(waiting).toMatchObject({ status: "queued", attempts: 0, lastError: null });
+      expect(waiting.nextAttemptAt?.getTime()).toBeGreaterThanOrEqual(before + 5_000);
+      const [logged] = await actLog(seeded.itemId);
+      expect(logged?.message).toContain("Telegram's flood limit asked to wait");
+    });
+
     it("ends the Delivery as failed with no retry on a 403, and the Destination says the bot was removed", async () => {
       const { seeded, retries, deps } = await linked(() =>
         Response.json(
