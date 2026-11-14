@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { startTransition, useActionState, useEffect, useRef, useState } from "react";
 import { dataBox, fieldError, label, textBox } from "@/components/field-classes";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { draftPage, keepDraft, useKeptDraft } from "@/lib/draft";
 import {
   type DeclaredField,
   type DestinationChoice,
@@ -49,10 +50,19 @@ interface RuleEditorProps {
  * Next.js keeps a page's state when it's navigated away from (Activity), which would show the last
  * rule in "New", or an abandoned edit when a rule is opened again. A link starts from what the server
  * says, and Back still restores a draft in progress. So does a rule the server has changed since.
+ *
+ * A save that never finished is the other way a page comes back without its text: the error page
+ * replaces it, or an expired session sends it to sign-in. The draft was kept in this tab then, and
+ * the editor starts from it, as it does from a draft the server sends back.
  */
 export function RuleEditor(props: RuleEditorProps) {
   const { bfcacheId } = useRouter();
-  return <Editor key={`${bfcacheId}:${props.initialYaml}`} {...props} />;
+  const kept = useKeptDraft("yaml");
+  // Only a draft that says something the server's copy doesn't is worth bringing back: one that says
+  // the same is the save that went through.
+  const restored = kept !== null && whatItSays(kept) !== whatItSays(props.initialYaml) ? kept : null;
+  const initialYaml = restored ?? props.initialYaml;
+  return <Editor key={`${bfcacheId}:${initialYaml}`} {...props} initialYaml={initialYaml} />;
 }
 
 /**
@@ -124,7 +134,11 @@ function Editor({
       onSubmit={(event) => {
         event.preventDefault();
         const data = new FormData(event.currentTarget);
-        setSent(whatItSays(view === "yaml" ? yaml : draftToYaml(draft)));
+        const edited = view === "yaml" ? yaml : draftToYaml(draft);
+        setSent(whatItSays(edited));
+        // Kept for this tab: a save the server can't finish takes the page away, and this is the
+        // only copy of the rule. A refusal leaves it on screen, where it belongs.
+        keepDraft(draftPage(), "yaml", edited);
         startTransition(() => {
           formAction(data);
         });

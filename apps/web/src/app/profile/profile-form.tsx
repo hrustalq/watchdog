@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { field, fieldError, label, textBox } from "@/components/field-classes";
+import { forgetDraft, keepDraft, useKeptDraft } from "@/lib/draft";
 import { cn } from "@/lib/utils";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
@@ -22,10 +23,24 @@ interface ProfileFormProps {
 /**
  * Next.js keeps a page's state when it's navigated away from (Activity), so an abandoned edit would
  * look saved on the way back. A link starts from what's saved, and Back still restores the edit.
+ *
+ * A save that never finished is the other way a page comes back without its text: the error page
+ * replaces it, or an expired session sends it to sign-in. What was typed then is kept in this tab,
+ * and the screen starts from it again.
  */
-export function ProfileForm(props: ProfileFormProps) {
+export function ProfileForm({ body: savedBody, ...props }: ProfileFormProps) {
   const { bfcacheId } = useRouter();
-  return <Form key={bfcacheId} {...props} />;
+  // The screen's name rather than its address: a save adds `?saved=1`, and the draft belongs to both.
+  const kept = useKeptDraft("body", "profile");
+  const restored = kept !== null && kept.trim() !== savedBody ? kept : null;
+  // A copy that says what's saved is a save that went through, so it's the one thing to forget. One
+  // holding other text stays until the next save replaces it.
+  useEffect(() => {
+    if (kept !== null && restored === null) forgetDraft("profile");
+  }, [kept, restored]);
+  return (
+    <Form key={`${bfcacheId}:${restored === null ? "saved" : "kept"}`} {...props} body={restored ?? savedBody} />
+  );
 }
 
 function Form({ body: savedBody, language: savedLanguage, languages, maxBody, refused, justSaved }: ProfileFormProps) {
@@ -42,11 +57,14 @@ function Form({ body: savedBody, language: savedLanguage, languages, maxBody, re
     <form
       action={saveProfileAction}
       onSubmit={(event) => {
-        // Stopped here, the draft stays. The server's refusal can't bring it back.
-        if (over) {
-          event.preventDefault();
-          box.current?.focus();
+        if (!over) {
+          // Kept for this tab: the server's answer can't bring the text back to a page it lost.
+          keepDraft("profile", "body", body);
+          return;
         }
+        // Stopped here, the draft stays. The server's refusal can't bring it back.
+        event.preventDefault();
+        box.current?.focus();
       }}
       className="flex flex-col gap-6"
     >
