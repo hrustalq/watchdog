@@ -75,9 +75,10 @@ describe("migrate", () => {
 /**
  * A test's deadline here. Its work is a pnpm and drizzle-kit start per invocation, which a loaded runner
  * charges to the test: "leaves the pgboss schema alone on generate and push" took 60.45 s on the branch-#180
- * run, against the 60 s this file allowed, while the file ran in 29.86 s idle and one `generate` took 34 s.
- * The hooks already allow 120_000 for a container start, and the file's vitest config says the timeout only
- * catches a hang, so the tests get that budget too: load may slow them, a hang still fails them.
+ * run and "db:migrate applies every migration" timed out twice in a row on the #246 one, against the 60 s this
+ * file allowed, while the file ran in 29.86 s idle and one `generate` took 34 s. The hooks already allow
+ * 120_000 for a container start, and the file's vitest config says the timeout only catches a hang, so the
+ * tests get that budget too: load may slow them, a hang still fails them.
  */
 const testBudget = 120_000;
 
@@ -104,7 +105,7 @@ describe("drizzle-kit", () => {
     // migrate() at worker boot reads the same log, so it finds nothing to apply either.
     await migrate(postgres.url);
     expect(await databaseState(postgres.url)).toEqual(first);
-  }, 60_000);
+  }, testBudget);
 
   it("leaves the pgboss schema alone on generate and push", async () => {
     await migrate(postgres.url);
