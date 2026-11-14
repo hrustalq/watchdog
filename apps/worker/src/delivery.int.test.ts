@@ -711,10 +711,12 @@ describe("the deliver queue", () => {
       );
       expect(await activeJobs()).toBe("0");
     }, waitLong);
-    // Still most of a minute of them to go, so the burst is waiting when the other chat's message comes.
-    expect((await Promise.all(burstIds.map(rowOf))).filter((row) => row?.status === "queued").length).toBeGreaterThan(
-      30,
-    );
+    // The burst still had turns of its own to wait for when the other chat's alert was queued: more of them
+    // than the five seconds that alert is allowed, so its wait is the chat's queue being overtaken rather than
+    // an empty one. How many are left by now is the machine's to decide — a loaded runner has sent 24 of the 50
+    // by the time the burst settles — so measure the queue here instead of assuming most of it is left.
+    const waitingWhenQueued = (await Promise.all(burstIds.map(rowOf))).filter((row) => row?.status === "queued").length;
+    expect(waitingWhenQueued).toBeGreaterThan(5);
 
     const elsewhereQueuedAt = Date.now();
     await db.transaction((tx) => deliveryEnqueuer(boss)(tx, [elsewhereId]));
@@ -738,6 +740,9 @@ describe("the deliver queue", () => {
       .map(({ at }) => at)
       .sort((a, b) => a - b);
     expect(burstTimes).toHaveLength(50);
+    // And it went before the last of them: queued behind the turns still waiting here, it would have been
+    // half a minute off.
+    expect(elsewhereAt).toBeLessThan(present(burstTimes.at(-1)));
     const gapsMs = burstTimes.reduce<number[]>((gaps, at, index) => {
       const before = burstTimes[index - 1];
       if (before !== undefined) gaps.push(at - before);
