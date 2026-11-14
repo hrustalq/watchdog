@@ -47,6 +47,13 @@ export function unwatchable(url: string, answer: { status: number; statusText: s
 }
 
 /**
+ * What a page that never showed its Region is read as. A render names it too, when its wait for the
+ * Region ends with no match: the read that would name it there happens after the wait, which on a
+ * loaded machine can outlast the render's deadline and turn the answer into a render timeout.
+ */
+export const regionMissingMessage = (region: string) => `The region ${region} matched nothing on the page`;
+
+/**
  * The page's title, and the Region's HTML (each match's outer HTML, in document order) and text. A
  * Source without a Region watches the whole <body>. Throws when the Region matches nothing.
  */
@@ -62,7 +69,7 @@ export function readPage(html: string, region: string | undefined) {
     matches = [body ?? getChildren(document).filter((node) => !("name" in node && node.name === "!doctype"))];
   } else {
     matches = selectAll(region, document);
-    if (matches.length === 0) throw new Error(`The region ${region} matched nothing on the page`);
+    if (matches.length === 0) throw new Error(regionMissingMessage(region));
   }
   // Characters stay UTF-8 rather than becoming entities, so the HTML cap counts the page's own bytes.
   const parts = matches.map((match) => render(match, { encodeEntities: "utf8" }));

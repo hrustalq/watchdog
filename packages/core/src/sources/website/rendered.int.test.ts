@@ -223,7 +223,9 @@ describe("rendered website Sources", () => {
   });
 
   it("fails a poll whose Region never appears within the render timeout, and leaves no CDP session open", async () => {
-    // The page loads at once and never adds #missing, so the wait ends with the render's deadline.
+    // The page loads at once and never adds #missing, so the wait for the Region ends with nothing
+    // matched, a read's time before the render's deadline — which a loaded machine can't turn into a
+    // render timeout, because the render names the Region rather than reading the page after it (#432).
     const watching = await lateSource("#missing");
 
     const started = Date.now();

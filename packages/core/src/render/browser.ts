@@ -2,7 +2,7 @@
 // and the page's answer checked as a static fetch's would be (docs: Sources and ingestion, "Renderers").
 import { setTimeout as sleep } from "node:timers/promises";
 import { type Browser, type BrowserContext, errors, type Page } from "playwright-core";
-import { unwatchable } from "../sources/website/page.ts";
+import { regionMissingMessage, unwatchable } from "../sources/website/page.ts";
 import type { Limit } from "./limit.ts";
 import type { Renderer } from "./renderer.ts";
 
@@ -153,6 +153,8 @@ export function createBrowserRenderer<Prepared>({
           // A stuck browser may never answer the close, and the deadline still holds.
           await Promise.race([close(), sleep(closeWait, undefined, { ref: false })]);
         }
+        // The page never showed its Region: the poll's answer is about the Region, not about time.
+        if ("regionMissing" in answer) throw new Error(regionMissingMessage(answer.regionMissing));
         const problem = unwatchable(url, answer);
         if (problem !== undefined) throw new Error(problem);
         if (Buffer.byteLength(answer.html) > maxHtmlBytes) throw new Error(`${url} rendered more than 10 MB of HTML`);
@@ -174,7 +176,10 @@ async function visit({ context, url, blocked }: Opened, { region, until }: { reg
   // The render's deadline closes the browser, so the navigation needs no timeout of its own.
   const response = await page.goto(url, { waitUntil: "load", timeout: 0 });
   if (response === null) throw new Error("no answer");
-  await ready(page, region, until);
+  const missing = await ready(page, region, until);
+  // The page never showed its Region, so the answer is about the Region rather than about reading a
+  // page that is ready. Naming it here keeps the read off the deadline the wait has nearly used.
+  if (missing !== undefined) return { regionMissing: missing };
   return {
     status: response.status(),
     statusText: response.statusText(),
@@ -194,22 +199,28 @@ async function visit({ context, url, blocked }: Opened, { region, until }: { reg
  * be read half built, and the next poll would capture the change. A page that never stands still, or
  * a request that never ends, is read when only the time to read it is left, so it doesn't fail a poll
  * that reads it today.
+ *
+ * Returns the Region the page never showed, or undefined when it is ready. The wait for a Region that
+ * doesn't come ends a read's time before the deadline, so a render that then read the page would race
+ * the deadline for the time to read it: on a loaded machine the poll answered "didn't finish rendering
+ * within 30 s" instead of naming the Region (#432).
  */
-async function ready(page: Page, region: string | undefined, until: number) {
+async function ready(page: Page, region: string | undefined, until: number): Promise<string | undefined> {
   const stillUntil = until - readTime;
   if (region !== undefined) {
     try {
       await page.waitForSelector(region, { state: "attached", timeout: Math.max(1, stillUntil - Date.now()) });
     } catch (error) {
-      // A Region that never matches is read as the page is, so its own read names it as the error.
       if (!(error instanceof errors.TimeoutError)) throw error;
+      return region;
     }
-    return;
+    return undefined;
   }
   while (Date.now() < stillUntil) {
     await sleep(stillPoll, undefined, { ref: false });
-    if ((await pageStandingStill(page)) >= stillFor) return;
+    if ((await pageStandingStill(page)) >= stillFor) return undefined;
   }
+  return undefined;
 }
 
 /** How long the page says it has stood still: no request in flight, nothing in it changed. */
