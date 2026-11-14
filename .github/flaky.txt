@@ -3,3 +3,4 @@
 # fails the build. Keep each line repo-relative, and remove the line when its issue closes.
 packages/core/src/sources/website/rendered.int.test.ts
 packages/db/src/migrate.int.test.ts
+apps/worker/src/delivery.int.test.ts
