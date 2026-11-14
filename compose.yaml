@@ -125,11 +125,16 @@ services:
     environment:
       CHROMIUM_TOKEN: ${CHROMIUM_TOKEN:-}
     networks: [chromium]
+    # Chromium runs with its sandbox on, which creates the namespaces it confines a page to with clone,
+    # unshare and setns. Docker's default seccomp profile refuses those, so this is Playwright's profile:
+    # that default with the three syscalls allowed. Nothing wider — no privileged, no added capability,
+    # no seccomp=unconfined.
+    security_opt: ["seccomp=docker/chromium/seccomp.json"]
     # A browser needs more shared memory than Docker's default 64 MB.
     shm_size: 1gb
-    # The browser server behind the gate answers on loopback once it is up.
+    # The gate answers 401 to everything it doesn't proxy, so an answer at all means it is listening.
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/').then((r) => r.ok || process.exit(1), () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then((r) => r.status === 401 || process.exit(1), () => process.exit(1))"]
       timeout: 5s
       start_period: 30s
       start_interval: 1s
