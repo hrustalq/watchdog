@@ -1,0 +1,1 @@
+ALTER TABLE "telegram_session" ADD COLUMN "unreadable_at" timestamp with time zone;

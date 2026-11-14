@@ -1,6 +1,8 @@
-import { telegramLoginQueue, telegramRevokeQueue } from "@watchdog/core";
+import { randomBytes } from "node:crypto";
+import { encryptSecret, telegramLoginQueue, telegramRevokeQueue } from "@watchdog/core";
+import { revokeSession } from "@watchdog/core/telegram-session";
+import { closeDb, createDb, eq, migrate, telegramSession, user, workspace } from "@watchdog/db";
 import { startPostgres, type TestPostgres } from "@watchdog/db/testing";
-import { migrate } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sessionQueue, startTelegramSessions } from "./telegram-session.ts";
@@ -97,4 +99,74 @@ describe("the Telegram user session jobs", () => {
       expect((await boss.findJobs(sessionQueue)).map(({ state }) => state)).toEqual(["completed", "completed"]);
     }, waitLong);
   });
+
+  /** A Workspace with the one session a revoke acts on, and nothing watching it. */
+  async function revoking(db: ReturnType<typeof createDb>, owner: string, secret: string) {
+    await db.insert(user).values({ id: owner, name: owner, email: `${owner}@example.com` });
+    const [space] = await db.insert(workspace).values({ name: owner, ownerUserId: owner }).returning();
+    const [session] = await db
+      .insert(telegramSession)
+      .values({ workspaceId: space?.id ?? "", account: "Ada", secretCiphertext: secret })
+      .returning({ id: telegramSession.id });
+    return session?.id ?? "";
+  }
+
+  it("completes a revoke whose session it can't decrypt, instead of retrying it forever", async () => {
+    const db = createDb(postgres.url);
+    // The session as a change of WATCHDOG_ENCRYPTION_KEY leaves it: stored under another key.
+    const sessionId = await revoking(db, "changed-key", encryptSecret("the session", randomBytes(32)));
+    const stop = await startTelegramSessions(boss, {
+      login: () => Promise.resolve(),
+      revoke: (id) =>
+        revokeSession(
+          db,
+          {
+            encryptionKey: randomBytes(32),
+            createClient: () => {
+              throw new Error("the revoke tried to reach Telegram with a session it can't read");
+            },
+          },
+          id,
+        ),
+      session: () => Promise.resolve(),
+      live: () => Promise.resolve([]),
+    });
+
+    const jobId = await boss.send(telegramRevokeQueue, { id: sessionId });
+    await vi.waitFor(async () => {
+      expect((await boss.findJobs(telegramRevokeQueue, { id: jobId ?? "" }))[0]?.state).toBe("completed");
+    }, waitLong);
+    const [job] = await boss.findJobs(telegramRevokeQueue, { id: jobId ?? "" });
+    // No second attempt: the first one ended the job.
+    expect(job).toMatchObject({ state: "completed", retryCount: 0 });
+    const [row] = await db.select().from(telegramSession).where(eq(telegramSession.id, sessionId));
+    expect(row?.unreadableAt).toBeInstanceOf(Date);
+
+    stop();
+    await closeDb(db);
+  }, 60_000);
+
+  it("retries a revoke that failed for any other reason, as an unreachable Telegram does", async () => {
+    const db = createDb(postgres.url);
+    const key = randomBytes(32);
+    const sessionId = await revoking(db, "unreachable", encryptSecret("the session", key));
+    const stop = await startTelegramSessions(boss, {
+      login: () => Promise.resolve(),
+      // What revokeSession throws when Telegram doesn't answer; packages/core's login test pins that.
+      revoke: () => Promise.reject(new Error("Telegram didn't answer")),
+      session: () => Promise.resolve(),
+      live: () => Promise.resolve([]),
+    });
+
+    const jobId = await boss.send(telegramRevokeQueue, { id: sessionId });
+    await vi.waitFor(async () => {
+      expect((await boss.findJobs(telegramRevokeQueue, { id: jobId ?? "" }))[0]?.state).toBe("retry");
+    }, waitLong);
+    const [row] = await db.select().from(telegramSession).where(eq(telegramSession.id, sessionId));
+    // The session is kept for the retry, and not marked unreadable.
+    expect(row?.unreadableAt).toBeNull();
+
+    stop();
+    await closeDb(db);
+  }, 60_000);
 });

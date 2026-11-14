@@ -4,6 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import {
   answerLogin,
   cancelLogin,
+  deleteUnreadableSession,
   type LoginState,
   loginState,
   requestRevoke,
@@ -61,6 +62,15 @@ export async function cancelTelegramLogin(access: SessionAccess, workspaceId: st
 export async function revokeTelegramSession(access: SessionAccess, workspaceId: string) {
   if (!access.available) return false;
   return requestRevoke(access.db, workspaceId, sessionJobEnqueuer(await access.boss(), telegramRevokeQueue));
+}
+
+/**
+ * Deletes a session Watchdog recorded as unreadable, without logging it out: only its secret could
+ * do that, and that is what a changed encryption key took away.
+ */
+export async function deleteTelegramSession(access: SessionAccess, workspaceId: string) {
+  if (!access.available) return false;
+  return deleteUnreadableSession(access.db, workspaceId);
 }
 
 /** Watches a chat picked from the session's list. The id comes from the form, so only a listed one counts. */

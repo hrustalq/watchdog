@@ -6,6 +6,7 @@ import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   answerTelegramLogin,
   cancelTelegramLogin,
+  deleteTelegramSession,
   revokeTelegramSession,
   type SessionAccess,
   startTelegramLogin,
@@ -55,6 +56,7 @@ describe("the Telegram user session screen", () => {
     await cancelTelegramLogin(access(false), workspaceId);
     await db.insert(telegramSession).values({ workspaceId, account: "Ada", secretCiphertext: "v1.x" });
     expect(await revokeTelegramSession(access(false), workspaceId)).toBe(false);
+    expect(await deleteTelegramSession(access(false), workspaceId)).toBe(false);
 
     const [login] = await db.select().from(telegramLogin);
     expect(login).toMatchObject({ step: "code", codeCiphertext: null });
@@ -89,5 +91,16 @@ describe("the Telegram user session screen", () => {
     const [session] = await db.insert(telegramSession).values({ workspaceId, account: "Ada", secretCiphertext: "v1.x" }).returning();
     expect(await revokeTelegramSession(access(true), workspaceId)).toBe(true);
     expect(await jobs(telegramRevokeQueue)).toEqual([session?.id]);
+  });
+
+  it("deletes a session it recorded as unreadable, and leaves a readable one to the revoke", async () => {
+    await db.insert(telegramSession).values({ workspaceId, account: "Ada", secretCiphertext: "v1.x" });
+    // A session it can still read is revoked, which logs it out on Telegram first.
+    expect(await deleteTelegramSession(access(true), workspaceId)).toBe(false);
+    expect((await db.select().from(telegramSession))[0]?.unreadableAt).toBeNull();
+
+    await db.update(telegramSession).set({ unreadableAt: new Date() });
+    expect(await deleteTelegramSession(access(true), workspaceId)).toBe(true);
+    expect(await db.select().from(telegramSession)).toEqual([]);
   });
 });

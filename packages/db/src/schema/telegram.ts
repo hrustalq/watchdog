@@ -56,6 +56,11 @@ export const telegramSession = pgTable("telegram_session", {
   /** Set when the user revokes it. The worker then logs it out on Telegram and deletes the row. */
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   /**
+   * Set when a revoke found the secret unreadable, because WATCHDOG_ENCRYPTION_KEY changed after the
+   * session was stored. Telegram can't be told to end it, so the screen offers to delete it instead.
+   */
+  unreadableAt: timestamp("unreadable_at", { withTimezone: true }),
+  /**
    * The groups, supergroups and channels the account is in, which the runner reads at the start of
    * each turn, for the screen to pick from. Null until it first has.
    */
