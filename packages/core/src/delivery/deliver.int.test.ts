@@ -30,7 +30,7 @@ import type { AlertMessage, WebhookMessage } from "./content.ts";
 import { createEmailSender } from "./email.ts";
 import type { GroupedAlert } from "./group.ts";
 import { localDateTime } from "./schedule-delivery.ts";
-import { createTelegramSender } from "./telegram.ts";
+import { createTelegramSender, createFloodLimiter, type FloodLimiter } from "./telegram.ts";
 import { verifyWebhookSignature } from "./verify-signature.ts";
 import { createWebhookSender } from "./webhook.ts";
 
@@ -468,6 +468,8 @@ describe("deliver", () => {
         .set({ secretCiphertext: encryptSecret("-100200", encryptionKey) })
         .where(eq(destination.id, seeded.destinationId));
       const received: z.output<typeof telegramBody>[] = [];
+      // The sender's own accounting of each chat's turn, which a test that measures a turn reads.
+      const limiter = createFloodLimiter();
       const telegram = createTelegramSender("123456:token", {
         fetch: (_input, init) => {
           const body = telegramBody.parse(JSON.parse(typeof init?.body === "string" ? init.body : ""));
@@ -475,9 +477,21 @@ describe("deliver", () => {
           return Promise.resolve(answer(body.chat_id));
         },
         encryptionKey,
+        limiter,
       });
       const { deps, retries } = recording();
-      return { seeded, received, retries, deps: { ...deps, senders: { ...deps.senders, telegram } } };
+      return { seeded, received, retries, limiter, deps: { ...deps, senders: { ...deps.senders, telegram } } };
+    }
+
+    /**
+     * Takes the chat's turn in the sender's limiter, waiting out the one a send before took. A test that
+     * measures a send finding the turn taken takes it here, so what it measures is the turn rather than how
+     * long that send took on a loaded machine.
+     */
+    async function takeTurn(limiter: FloodLimiter, chatId: string) {
+      for (let waitMs = limiter.tryTurn(chatId); waitMs > 0; waitMs = limiter.tryTurn(chatId)) {
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+      }
     }
 
     it("sends a queued Delivery to the linked chat with the Item's title and link", async () => {
@@ -659,7 +673,7 @@ describe("deliver", () => {
       });
 
       it("sends the next Delivery straight to the new chat", async () => {
-        const { seeded, received, deps } = await linked(movedChat(sentAnswer));
+        const { seeded, received, limiter, deps } = await linked(movedChat(sentAnswer));
         // So the next alert goes at once rather than wait out the burst window.
         await db.update(workspace).set({ burstWindowSeconds: 0 }).where(eq(workspace.id, seeded.workspaceId));
         await deliver(db, seeded.deliveryId, deps);
@@ -682,12 +696,18 @@ describe("deliver", () => {
           .returning();
         const queuedId = present(queued).id;
 
-        // The turn the first send took is still the chat's, so this one's job goes again when it comes.
+        // The chat's turn, taken in the sender's own accounting, so this Delivery finds it taken whatever the
+        // first send took. Waiting a fixed pause instead assumed that send had finished inside the turn.
+        await takeTurn(limiter, newChat);
         await deliver(db, queuedId, deps);
 
         expect(received.map(({ chat_id }) => chat_id)).toEqual(["-100200", newChat]);
-        expect(await rowOf(queuedId)).toMatchObject({ status: "queued", attempts: 0 });
-        await new Promise((resolve) => setTimeout(resolve, 1100));
+        const deferred = present(await rowOf(queuedId));
+        expect(deferred).toMatchObject({ status: "queued", attempts: 0 });
+        // The job goes when the turn the row was queued for comes, which the row now says.
+        const due = deferred.nextAttemptAt?.getTime();
+        if (due === undefined) throw new Error("Expected the queued Delivery to wait for a turn");
+        await new Promise((resolve) => setTimeout(resolve, due - Date.now() + 20));
 
         await deliver(db, queuedId, deps);
 
