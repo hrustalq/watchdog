@@ -296,6 +296,9 @@ function FeedList({ items, edit }: { items: FeedItem[]; edit: boolean }) {
                 Rate<span className="sr-only"> {row.title ?? "Untitled Item"}</span>
               </Link>
             ) : null}
+            {/* A Delivery that needs the user, in words rather than a second lamp: the row's lamp is
+                high Severity's. Alarm Red is for a failure, and the words stay there in forced colours. */}
+            {row.deliveryFailing ? <span className="text-alarm">Delivery failing</span> : null}
             {/* What the user was already told about, in graphite: an alert that went is no alarm. */}
             {row.alerted ? (
               <span role="img" aria-label="Alerted" title="Alerted" className="inline-flex text-muted-foreground">

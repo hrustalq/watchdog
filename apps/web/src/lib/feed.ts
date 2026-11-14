@@ -102,6 +102,15 @@ async function readPage(db: Db, cursor: SQL<string>, where: SQL | undefined, ord
         select 1 from ${delivery} join ${destination} on ${destination.id} = ${delivery.destinationId}
         where ${delivery.itemId} = ${item.id} and ${delivery.status} = 'sent'
           and ${destination.type} in ('telegram', 'email'))`,
+      // Whether a Delivery needs the user: waiting for a retry after a failed attempt, or failed for
+      // good. A webhook counts too, because a broken integration is still something to fix. A Delivery
+      // released from a hold is `queued` with attempts and no time to wait for, so it isn't failing.
+      deliveryFailing: sql<boolean>`exists(
+        select 1 from ${delivery}
+        where ${delivery.itemId} = ${item.id}
+          and (${delivery.status} = 'failed'
+            or (${delivery.status} = 'queued' and ${delivery.attempts} > 0
+              and ${delivery.nextAttemptAt} is not null)))`,
       cursor,
     })
     .from(item)

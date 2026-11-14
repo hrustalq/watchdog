@@ -685,6 +685,9 @@ describe("Feed", () => {
       appUrl: "http://localhost:3000",
       retryDelivery: () => Promise.resolve(),
     };
+    /** Senders that answer with a failure, which leaves each Delivery waiting for its retry. */
+    const refuses = { send: () => Promise.reject(new Error("The inbox refused")) };
+    const refusingDeps = { ...deliverDeps, senders: { telegram: refuses, email: refuses, webhook: refuses } };
 
     /** An Action on Items whose title contains "launch", pointing at one confirmed address. */
     async function withAction(kind: "alert" | "digest" = "alert") {
@@ -737,6 +740,61 @@ describe("Feed", () => {
         .returning();
       await db.insert(delivery).values({ actionId, itemId: other, destinationId: present(hook).id, status: "sent" });
       expect(await alerted()).toEqual({ [itemId]: true, [other]: false });
+    });
+
+    it("says a row's Delivery is failing while it waits for a retry, and clears it once one sends", async () => {
+      const { seeded } = await withAction();
+      const [itemId = "", other = ""] = await insertItems(seeded, [{ title: "A launch" }, { title: "Quiet news" }]);
+      await processItem(db, itemId, pipelineDeps);
+      await processItem(db, other, pipelineDeps);
+      const failing = async () =>
+        Object.fromEntries((await feedPage(db, seeded.workspaceId)).items.map((row) => [row.id, row.deliveryFailing]));
+      expect(await failing()).toEqual({ [itemId]: false, [other]: false });
+
+      // A sender that refuses leaves the Delivery waiting for its retry.
+      const [queued] = await db.select({ id: delivery.id }).from(delivery).where(eq(delivery.itemId, itemId));
+      await deliver(db, present(queued).id, refusingDeps);
+      expect(await failing()).toEqual({ [itemId]: true, [other]: false });
+
+      // A Delivery released from a hold goes now, so waiting for nothing isn't failing.
+      await db.update(delivery).set({ nextAttemptAt: null }).where(eq(delivery.itemId, itemId));
+      expect(await failing()).toEqual({ [itemId]: false, [other]: false });
+
+      // The retry sends, which clears the mark.
+      await db.update(delivery).set({ status: "sent", sentAt: now }).where(eq(delivery.itemId, itemId));
+      expect(await failing()).toEqual({ [itemId]: false, [other]: false });
+    });
+
+    it("marks a row whose only failing Delivery is a webhook's, which a broken integration needs", async () => {
+      const { seeded, actionId } = await withAction();
+      const [itemId = ""] = await insertItems(seeded, [{ title: "Quiet news" }]);
+      await processItem(db, itemId, pipelineDeps);
+      const [hook] = await db
+        .insert(destination)
+        .values({ workspaceId: seeded.workspaceId, type: "webhook", name: "CI", config: { url: "https://ci.test" } })
+        .returning();
+      const [queued] = await db
+        .insert(delivery)
+        .values({ actionId, itemId, destinationId: present(hook).id })
+        .returning();
+      await deliver(db, present(queued).id, refusingDeps);
+
+      const [row] = (await feedPage(db, seeded.workspaceId)).items;
+      expect(present(row)).toMatchObject({ id: itemId, alerted: false, deliveryFailing: true });
+    });
+
+    it("keeps a row marked when its Delivery failed for good, which nothing will send", async () => {
+      const { seeded } = await withAction();
+      const [itemId = ""] = await insertItems(seeded, [{ title: "A launch" }]);
+      await processItem(db, itemId, pipelineDeps);
+      const [queued] = await db.select({ id: delivery.id }).from(delivery).where(eq(delivery.itemId, itemId));
+      // Failures that outlast the 24 hours of retries end the Delivery failed, with no retry at all.
+      const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      await db.update(delivery).set({ createdAt: dayAgo, attempts: 12 }).where(eq(delivery.id, present(queued).id));
+      await deliver(db, present(queued).id, { ...refusingDeps, now: () => now });
+
+      const [row] = (await feedPage(db, seeded.workspaceId)).items;
+      expect(present(row)).toMatchObject({ id: itemId, alerted: false, deliveryFailing: true });
     });
 
     it("reads a held Delivery's time from its row", async () => {
