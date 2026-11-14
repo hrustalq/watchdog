@@ -71,8 +71,11 @@ const floodLimitReason = (ms: number) =>
  * A turn is taken at the moment the message goes, so the gap that follows it is kept from a real send. A
  * caller that can send again takes no turn: it is told when its place in the chat's queue comes up, and its
  * job goes then, so nothing waits here on its behalf.
+ *
+ * The gaps are measured on `clock`, which a test replaces to read the gap itself rather than how long the
+ * calls before it took on a loaded machine.
  */
-export function createFloodLimiter() {
+export function createFloodLimiter(clock: () => number = Date.now) {
   let botFreeAt = 0;
   const chatFreeAt = new Map<string, number>();
   /** When each chat's queued sends have had their turns: a rescheduled send's place among them. */
@@ -129,7 +132,7 @@ export function createFloodLimiter() {
 
   /** The wait until the chat's turn, which it takes when that is 0, or the one its caller resends for. */
   const nextTurn = (chatId: string, deferTurn: boolean) => {
-    const now = Date.now();
+    const now = clock();
     forgetOld(now);
 
     const freeAt = freeAtOf(chatId, now);
@@ -162,7 +165,7 @@ export function createFloodLimiter() {
    * came: a send given a place takes it, rather than going behind the places handed out since.
    */
   const placeInQueue = (chatId: string, dueAt: Date | null): number | undefined => {
-    const now = Date.now();
+    const now = clock();
     forgetOld(now);
 
     const freeAt = freeAtOf(chatId, now);
@@ -190,7 +193,7 @@ export function createFloodLimiter() {
      * use this, because so many of them are dropped.
      */
     tryTurn: (chatId: string) => {
-      const now = Date.now();
+      const now = clock();
       forgetOld(now);
       const freeAt = freeAtOf(chatId, now);
       if (freeAt > now) return freeAt - now;
@@ -203,12 +206,12 @@ export function createFloodLimiter() {
      * is in seconds; the wait ends later than this call, because the answer took time to arrive.
      */
     pause: (chatId: string, ms: number) => {
-      chatPausedUntil.set(chatId, Math.max(chatPausedUntil.get(chatId) ?? 0, Date.now() + ms));
+      chatPausedUntil.set(chatId, Math.max(chatPausedUntil.get(chatId) ?? 0, clock() + ms));
     },
     /** How long the chat must wait before another send, or undefined when Telegram hasn't asked for one. */
     pausedFor: (chatId: string) => {
       const until = chatPausedUntil.get(chatId) ?? 0;
-      return until > Date.now() ? until - Date.now() : undefined;
+      return until > clock() ? until - clock() : undefined;
     },
   };
 }
