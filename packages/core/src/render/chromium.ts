@@ -7,7 +7,16 @@ import type { Headers } from "undici";
 import { type createEgressFetch, EgressBlockedError } from "../egress/egress.ts";
 import { unwatchable } from "../sources/website/page.ts";
 import { createBrowserRenderer } from "./browser.ts";
+import { createLimit } from "./limit.ts";
 import type { Renderer } from "./renderer.ts";
+
+/**
+ * How many browsers the Chromium service runs at once (docs: Sources and ingestion, "The Chromium
+ * fallback"). Each browser a render starts costs about 400 MB, measured in the service with a page
+ * loaded, so the ten Sources the poll queue runs at once would need 4 GB; four need about 1.6 GB.
+ * A render past four waits for a browser, inside its 30-second deadline.
+ */
+export const maxChromiumBrowsers = 4;
 
 /** Request headers that describe the browser's own connection, which the guard's fetch makes anew. */
 const connectionHeaders = new Set([
@@ -44,6 +53,8 @@ export function createChromiumRenderer(
   const headers = { authorization: `Bearer ${server.token}` };
   return createBrowserRenderer({
     name: "Chromium",
+    // The service starts a browser a connection, and every render opens its own connection.
+    limit: createLimit(maxChromiumBrowsers),
     connect: (timeout) => chromium.connect(server.url, { headers, timeout }),
     // Chromium doesn't route the request a fulfilled redirect leads to, so it must never be answered
     // with one. The guard follows the page's redirects before the browser is reached, checking each

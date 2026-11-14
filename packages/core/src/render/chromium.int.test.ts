@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage } from "node:http";
+import { setTimeout as sleep } from "node:timers/promises";
 import { GenericContainer, type StartedTestContainer, TestContainers, Wait } from "testcontainers";
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadConfig } from "../config.ts";
 import { createEgressFetch } from "../egress/egress.ts";
-import { createChromiumRenderer } from "./chromium.ts";
+import { createChromiumRenderer, maxChromiumBrowsers } from "./chromium.ts";
+import { renderTimeout } from "./renderer.ts";
 
 // The Chromium fallback as compose.yaml builds it, rendering pages from a server in this process
 // (docs: Testing and CI, "no live HTTP"). The container can reach that server at
@@ -30,6 +32,76 @@ describe("the Chromium Renderer", () => {
   let hidden: string;
   const asked: string[] = [];
   const upgrades: string[] = [];
+  /** Answers to /hold.js the test withholds, so a render keeps its browser until the test lets go. */
+  const held: (() => void)[] = [];
+  let released = false;
+  const releaseHold = () => {
+    released = true;
+    for (const answer of held.splice(0)) answer();
+  };
+  /** Waits for what a test reads next, so the test reads the moment it names rather than a guess. */
+  const waitFor = async (holds: () => boolean | Promise<boolean>, what: string) => {
+    const deadline = Date.now() + 20_000;
+    while (!(await holds())) {
+      if (Date.now() > deadline) throw new Error(`Waited 20 s for ${what}`);
+      await sleep(100);
+    }
+  };
+  /**
+   * How many browser processes the service is running, read from its own process table. A page's
+   * helper processes carry `--type=`, and the zombie a closed browser leaves behind carries no
+   * command line at all, so each match is one browser.
+   */
+  const browserProcesses = async () => {
+    const { output } = await chromium.exec([
+      "node",
+      "-e",
+      `const { readdirSync, readFileSync } = require("node:fs");
+let browsers = 0;
+for (const entry of readdirSync("/proc")) {
+  if (!/^[0-9]+$/.test(entry) || entry === String(process.pid)) continue;
+  let args;
+  try {
+    args = readFileSync("/proc/" + entry + "/cmdline").toString();
+  } catch {
+    continue;
+  }
+  if (!args.includes("chrome-headless-shell") || args.includes("--type=")) continue;
+  browsers += 1;
+}
+process.stdout.write(String(browsers));`,
+    ]);
+    return Number(output);
+  };
+  /**
+   * How many sessions the service is serving, read from its own socket table: one accepted connection
+   * on the browser server's port (3001, `0BB9` in hex) per render that holds a browser. This is what
+   * the limit bounds, and unlike a process it ends before the browser is gone: Playwright kills a
+   * closed browser asynchronously, so its process can outlive the render's slot for a moment.
+   */
+  const sessionsServed = async () => {
+    const { output } = await chromium.exec([
+      "node",
+      "-e",
+      `const { readFileSync } = require("node:fs");
+let sessions = 0;
+for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+  let text;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    continue;
+  }
+  for (const line of text.split("\\n").slice(1)) {
+    const fields = line.trim().split(/\\s+/);
+    if (fields.length < 4) continue;
+    if (fields[1].split(":")[1] === "0BB9" && fields[3] === "01") sessions += 1;
+  }
+}
+process.stdout.write(String(sessions));`,
+    ]);
+    return Number(output);
+  };
   let renderer: ReturnType<typeof createChromiumRenderer>;
   let fetch: ReturnType<typeof createEgressFetch>;
 
@@ -55,6 +127,18 @@ describe("the Chromium Renderer", () => {
       }
       if (path === "/old") return response.writeHead(302, { location: "/status" }).end();
       if (path === "/to-hidden") return response.writeHead(302, { location: `${hidden}/status` }).end();
+      if (path === "/slow") {
+        return html(`<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Slow page</title>
+<script src="/hold.js"></script></head><body><main>Slow page</main></body></html>`);
+      }
+      if (path === "/hold.js") {
+        response.writeHead(200, { "content-type": "text/javascript" });
+        const answer = () => response.end(`document.body.dataset.held = "done";`);
+        // Held open, the page's load event never fires, so the render keeps its browser.
+        if (released) answer();
+        else held.push(answer);
+        return;
+      }
       return response.writeHead(404).end("Not found");
     });
     server.on("upgrade", (request: IncomingMessage, socket) => {
@@ -90,7 +174,9 @@ describe("the Chromium Renderer", () => {
       return Promise.resolve(address === undefined ? [] : [{ address, family: 4 }]);
     };
     const url = `ws://${chromium.getHost()}:${String(chromium.getMappedPort(3000))}`;
-    fetch = createEgressFetch(config, { lookup });
+    // The guard stops a request after 30 s, which would cut short a page the tests below hold open
+    // for longer; the render's own deadline is what bounds a request in production.
+    fetch = createEgressFetch(config, { lookup, timeoutMs: 120_000 });
     renderer = createChromiumRenderer({ url, token }, fetch);
     return async () => {
       server.closeAllConnections();
@@ -157,4 +243,114 @@ describe("the Chromium Renderer", () => {
       expect(await response.text()).toBe("");
     }
   });
+
+  it(
+    `runs no more than ${String(maxChromiumBrowsers)} browsers for ${String(maxChromiumBrowsers + 2)} renders at once, and finishes them all`,
+    async () => {
+      released = false;
+      // Every render holds its browser until /hold.js answers, so watching the service while the
+      // renders run reads sessions that are live, not ones that are about to be.
+      const observed: number[] = [];
+      const sampling = { done: false };
+      const sampler = (async () => {
+        while (!sampling.done) {
+          observed.push(await sessionsServed());
+          await sleep(100);
+        }
+      })();
+      try {
+        const renders = Array.from({ length: maxChromiumBrowsers + 2 }, () =>
+          renderer.render(`${site}/slow`, { timeout: 25_000 }),
+        );
+        // The limit is full once every slot's page is waiting on its script. Nothing closes in this
+        // window, so the browsers behind the sessions are countable too.
+        await waitFor(() => held.length === maxChromiumBrowsers, `${String(maxChromiumBrowsers)} renders to hold`);
+        await waitFor(
+          async () => (await browserProcesses()) === maxChromiumBrowsers,
+          `${String(maxChromiumBrowsers)} browsers to run`,
+        );
+        expect(await sessionsServed()).toBe(maxChromiumBrowsers);
+        const settled: number[] = [];
+        for (const render of renders) {
+          void render.then(
+            () => settled.push(1),
+            () => settled.push(1),
+          );
+        }
+        await sleep(500);
+        expect(settled).toEqual([]);
+
+        releaseHold();
+        const rendered = await Promise.all(renders);
+        expect(rendered.map((page) => page.title)).toEqual(
+          Array.from({ length: maxChromiumBrowsers + 2 }, () => "Slow page"),
+        );
+        expect(observed.filter((sessions) => sessions > maxChromiumBrowsers)).toEqual([]);
+        expect(Math.max(...observed)).toBe(maxChromiumBrowsers);
+        await waitFor(async () => (await browserProcesses()) === 0, "the browsers to close");
+      } finally {
+        sampling.done = true;
+        await sampler;
+      }
+    },
+    120_000,
+  );
+
+  it(
+    "fails a render that waits past its 30-second deadline for a browser, and opens no connection for it",
+    async () => {
+      released = false;
+      const holding = Array.from({ length: maxChromiumBrowsers }, () =>
+        renderer.render(`${site}/slow`, { timeout: renderTimeout * 2 }),
+      );
+      await waitFor(() => held.length === maxChromiumBrowsers, `${String(maxChromiumBrowsers)} renders to hold`);
+
+      const waiting = renderer.render(`${site}/slow`, { timeout: renderTimeout });
+      await expect(waiting).rejects.toThrow(
+        new Error(`${site}/slow didn't finish rendering within ${String(renderTimeout / 1000)} s`),
+      );
+      // It never reached the service: the renders that hold a browser are still the only ones, and
+      // the page of the render that gave up was never asked for its script.
+      expect(await sessionsServed()).toBe(maxChromiumBrowsers);
+      expect(await browserProcesses()).toBe(maxChromiumBrowsers);
+      expect(held).toHaveLength(maxChromiumBrowsers);
+
+      releaseHold();
+      await expect(Promise.all(holding)).resolves.toHaveLength(maxChromiumBrowsers);
+      await waitFor(async () => (await browserProcesses()) === 0, "the browsers to close");
+    },
+    180_000,
+  );
+
+  it(
+    "doesn't hold up a static poll while renders wait for a browser",
+    async () => {
+      released = false;
+      const renders = Array.from({ length: maxChromiumBrowsers + 2 }, () =>
+        renderer.render(`${site}/slow`, { timeout: 25_000 }),
+      );
+      await waitFor(() => held.length === maxChromiumBrowsers, `${String(maxChromiumBrowsers)} renders to hold`);
+      const settled: number[] = [];
+      for (const render of renders) {
+        void render.then(
+          () => settled.push(1),
+          () => settled.push(1),
+        );
+      }
+      await sleep(500);
+      // Two renders are waiting for a browser, and neither has finished.
+      expect(settled).toEqual([]);
+
+      const started = Date.now();
+      const response = await fetch(`${site}/status`);
+      const elapsed = Date.now() - started;
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain("Loading…");
+      expect(elapsed).toBeLessThan(2000);
+
+      releaseHold();
+      await Promise.all(renders);
+    },
+    120_000,
+  );
 });
