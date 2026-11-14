@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { textLink } from "@/components/field-classes";
 import { buttonVariants } from "@/components/ui/button";
 import { hasUnreadableKey } from "@/lib/model";
-import { type ActionKind, type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
+import { type ActionKind, digestScheduleName, type RuleKind, ruleNoun, type RuleType } from "@/lib/rule-draft";
 import type { RuleSummary } from "@/lib/rule-summary";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
@@ -293,7 +293,8 @@ function ActionDetail({
       )}
       {schedule === null ? null : (
         <p className="text-sm text-muted-foreground">
-          Schedule <span className="font-mono text-[0.8125rem]">{schedule}</span>
+          Schedule{" "}
+          {digestScheduleName(schedule) ?? <span className="font-mono text-[0.8125rem]">{schedule}</span>}
         </p>
       )}
       {waiting.length === 0 ? null : (

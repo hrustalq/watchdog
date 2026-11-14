@@ -468,9 +468,11 @@ test("the Rules editor keeps a draft only where it should, with and without Java
     await save.click();
     await expect(schedule).toHaveAccessibleDescription(/can't be blank/);
     await expect(schedule).toBeFocused();
-    await schedule.fill("0 9 * * 1");
+    await schedule.selectOption("custom");
+    await field("Cron expression").fill("0 9 * * 1");
     await saveRule(page);
     await expect(waiting).toBeVisible();
+    await expect(page.getByText("Schedule Every Monday at 09:00", { exact: true }).locator("visible=true")).toBeVisible();
   });
 
   await test.step("the switch disables an Action, so the later tests' Items fire nothing", async () => {

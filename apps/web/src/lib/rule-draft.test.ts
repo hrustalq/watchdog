@@ -1,3 +1,4 @@
+import { scheduleError } from "@watchdog/core";
 import { draftToYaml } from "@watchdog/core/rules/draft";
 import { describe, expect, it } from "vitest";
 import {
@@ -8,6 +9,8 @@ import {
   changeOp,
   conditionPart,
   destinationFits,
+  digestScheduleName,
+  digestSchedules,
   fieldPart,
   fieldReading,
   formHides,
@@ -136,6 +139,23 @@ describe("an Action's draft", () => {
   it("puts its keys in the model's order, and only the ones it has", () => {
     const draft = { destinations: [], note: "hi", kind: "alert", action: "x" };
     expect(Object.keys(inActionOrder(draft))).toEqual(["action", "kind", "destinations", "note"]);
+  });
+});
+
+describe("a Digest's schedule", () => {
+  it("is named when the form offers it, and only then", () => {
+    expect(digestScheduleName("0 9 * * *")).toBe("Every day at 09:00");
+    expect(digestScheduleName("0 9 * * 1")).toBe("Every Monday at 09:00");
+    expect(digestScheduleName("15 7 * * *")).toBeUndefined();
+    expect(digestScheduleName("")).toBeUndefined();
+  });
+
+  it("offers each schedule once, so every one can be chosen", () => {
+    expect(new Set(digestSchedules.map(({ cron }) => cron)).size).toBe(digestSchedules.length);
+  });
+
+  it.each(digestSchedules)("offers $label, which hosted's minimum accepts", ({ cron }) => {
+    expect(scheduleError(cron, "hosted")).toBeUndefined();
   });
 });
 
