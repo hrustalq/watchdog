@@ -3,6 +3,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { type Browser, type BrowserContext, errors } from "playwright-core";
 import { unwatchable } from "../sources/website/page.ts";
+import type { Limit } from "./limit.ts";
 import type { Renderer } from "./renderer.ts";
 
 /** The most HTML a render may return, the egress guard's cap on a static fetch. */
@@ -19,12 +20,18 @@ export interface Opened {
 
 export function createBrowserRenderer<Prepared>({
   name,
+  limit,
   connect,
   prepare,
   open,
 }: {
   /** As in "Couldn't reach the <name> renderer". */
   name: string;
+  /**
+   * How many browsers this renderer may hold at once. A render past it waits for one of them, inside
+   * its own deadline, and keeps the slot it gets until its browser is closed.
+   */
+  limit?: Limit;
   connect: (timeout: number) => Promise<Browser>;
   /** Runs before the browser is reached, inside the deadline. What it throws is the render's error. */
   prepare: (url: string, signal: AbortSignal) => Promise<Prepared>;
@@ -50,48 +57,62 @@ export function createBrowserRenderer<Prepared>({
       } catch (error) {
         throw stopped() ?? error;
       }
-      let browser: Browser;
+      // A render past the limit waits here for a browser of its own. The deadline covers the wait as
+      // it covers the rest of the render, so a render that waits too long fails as a timeout.
+      let release: (() => void) | undefined;
       try {
-        browser = await connect(Math.max(1, timeout - (Date.now() - started)));
+        if (limit !== undefined) release = await limit.acquire(stop);
       } catch (error) {
-        // Playwright's own connect timeout can fire just before the deadline does.
-        if (error instanceof errors.TimeoutError) throw timedOut();
-        throw stopped() ?? new Error(`Couldn't reach the ${name} renderer: ${firstLine(error)}`);
+        throw stopped() ?? error;
       }
-      // Closing the browser closes the context and page this render opened, and ends its session.
-      // A stop closes it at once, so whatever the page was doing fails.
-      let closing: Promise<void> | undefined;
-      const close = () => (closing ??= browser.close().catch(() => undefined));
-      const onStop = () => void close();
-      stop.addEventListener("abort", onStop, { once: true });
-      // Closing is the only thing that ends a call the browser stopped answering, and a starved browser
-      // can ignore the close too. So the answer is raced with the stop itself: whatever the browser does,
-      // the render ends at its deadline, as the page's own caller was promised.
-      const stopping = new Promise<never>((_, reject) => {
-        const fail = () => {
-          reject(stopped() ?? new Error(`Rendering ${url} was stopped`));
-        };
-        if (stop.aborted) fail();
-        else stop.addEventListener("abort", fail, { once: true });
-      });
-      // Rejects only when the work below wins the race, and then nobody is waiting for it.
-      void stopping.catch(() => undefined);
-      let answer;
       try {
         stop.throwIfAborted();
-        answer = await Promise.race([open(browser, prepared, stop).then(visit), stopping]);
-      } catch (error) {
-        throw stopped() ?? new Error(`${url} couldn't be rendered: ${firstLine(error)}`);
+        let browser: Browser;
+        try {
+          browser = await connect(Math.max(1, timeout - (Date.now() - started)));
+        } catch (error) {
+          // Playwright's own connect timeout can fire just before the deadline does.
+          if (error instanceof errors.TimeoutError) throw timedOut();
+          throw stopped() ?? new Error(`Couldn't reach the ${name} renderer: ${firstLine(error)}`);
+        }
+        // Closing the browser closes the context and page this render opened, and ends its session.
+        // A stop closes it at once, so whatever the page was doing fails.
+        let closing: Promise<void> | undefined;
+        const close = () => (closing ??= browser.close().catch(() => undefined));
+        const onStop = () => void close();
+        stop.addEventListener("abort", onStop, { once: true });
+        // Closing is the only thing that ends a call the browser stopped answering, and a starved
+        // browser can ignore the close too. So the answer is raced with the stop itself: whatever the
+        // browser does, the render ends at its deadline, as the page's own caller was promised.
+        const stopping = new Promise<never>((_, reject) => {
+          const fail = () => {
+            reject(stopped() ?? new Error(`Rendering ${url} was stopped`));
+          };
+          if (stop.aborted) fail();
+          else stop.addEventListener("abort", fail, { once: true });
+        });
+        // Rejects only when the work below wins the race, and then nobody is waiting for it.
+        void stopping.catch(() => undefined);
+        let answer;
+        try {
+          stop.throwIfAborted();
+          answer = await Promise.race([open(browser, prepared, stop).then(visit), stopping]);
+        } catch (error) {
+          throw stopped() ?? new Error(`${url} couldn't be rendered: ${firstLine(error)}`);
+        } finally {
+          stop.removeEventListener("abort", onStop);
+          // A stuck browser may never answer the close, and the deadline still holds.
+          await Promise.race([close(), sleep(closeWait, undefined, { ref: false })]);
+        }
+        const problem = unwatchable(url, answer);
+        if (problem !== undefined) throw new Error(problem);
+        if (Buffer.byteLength(answer.html) > maxHtmlBytes) throw new Error(`${url} rendered more than 10 MB of HTML`);
+        const { html, title, finalUrl, blocked } = answer;
+        return { html, title, finalUrl, blocked };
       } finally {
-        stop.removeEventListener("abort", onStop);
-        // A stuck browser may never answer the close, and the deadline still holds.
-        await Promise.race([close(), sleep(closeWait, undefined, { ref: false })]);
+        // The browser is closed by now, so its slot is free for the next render.
+        release?.();
       }
-      const problem = unwatchable(url, answer);
-      if (problem !== undefined) throw new Error(problem);
-      if (Buffer.byteLength(answer.html) > maxHtmlBytes) throw new Error(`${url} rendered more than 10 MB of HTML`);
-      const { html, title, finalUrl, blocked } = answer;
-      return { html, title, finalUrl, blocked };
     },
   };
 }
