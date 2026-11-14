@@ -28,6 +28,13 @@ const account = createStub("user", { id: 42, firstName: "Ada", lastName: "Lovela
 const authorized = () => createStub("auth.authorization", { user: account });
 const rpcError = (text: string) => new tl.RpcError(400, text);
 
+/**
+ * What a wait on the job gives it. It answers on its own timer, so a tick and the database round trips
+ * around it come after the read that starts the wait, and a loaded runner stretches both: vitest's
+ * one-second default is not that budget (#459).
+ */
+const jobTurn = { timeout: 5_000, interval: 10 };
+
 describe("a Telegram user session", () => {
   let db: Db;
   let workspaceId = "";
@@ -91,10 +98,22 @@ describe("a Telegram user session", () => {
         if (state?.step !== step) throw new Error(`still ${String(state?.step)}`);
         return state;
       },
-      { timeout: 5_000, interval: 10 },
+      jobTurn,
     );
 
   const rowOf = async (id: string) => (await db.select().from(telegramLogin).where(eq(telegramLogin.id, id)))[0];
+
+  /** The row's refusal, once the job has written it: the state it reaches on its own tick, not a read. */
+  const untilRefusal = async (id: string, refusal: string) =>
+    vi.waitFor(
+      async () => {
+        const row = await rowOf(id);
+        if (row?.refusal !== refusal) throw new Error(`the row still says ${String(row?.refusal)}`);
+        return row;
+      },
+      jobTurn,
+    );
+
   const storedSession = async () => (await db.select().from(telegramSession).where(eq(telegramSession.workspaceId, workspaceId)))[0];
 
   it("signs in with the phone number and the code, and stores the session encrypted", async () => {
@@ -136,11 +155,11 @@ describe("a Telegram user session", () => {
 
     await until("code");
     await answerLogin(db, encryptionKey, workspaceId, "code", "11111");
-    expect(await until("code").then(async () => vi.waitFor(async () => {
-      const state = await loginState(db, workspaceId);
-      if (state?.refusal === null) throw new Error("no refusal yet");
-      return state;
-    }))).toMatchObject({ step: "code", refusal: "That code is wrong. Check it in Telegram and enter it again." });
+    // The job refuses the code on its own tick, after the answer lands, so wait for the row it writes —
+    // the step it stays on, the refusal, the code used and cleared — not for a step it was already at.
+    const codeWrong = "That code is wrong. Check it in Telegram and enter it again.";
+    expect(await untilRefusal(loginId, codeWrong)).toMatchObject({ step: "code", codeCiphertext: null });
+    expect(await loginState(db, workspaceId)).toEqual({ step: "code", phone, refusal: codeWrong });
 
     // A password before Telegram asked for one is a form from another step.
     expect(await answerLogin(db, encryptionKey, workspaceId, "password", "hunter2")).toBe(false);
@@ -150,8 +169,9 @@ describe("a Telegram user session", () => {
     expect(await rowOf(loginId)).toMatchObject({ codeCiphertext: null, passwordCiphertext: null });
 
     await answerLogin(db, encryptionKey, workspaceId, "password", "letmein");
-    await vi.waitFor(async () => {
-      if ((await loginState(db, workspaceId))?.refusal !== "That password is wrong. Enter it again.") throw new Error("not yet");
+    expect(await untilRefusal(loginId, "That password is wrong. Enter it again.")).toMatchObject({
+      step: "password",
+      passwordCiphertext: null,
     });
     // A password is used as typed, spaces and all.
     await answerLogin(db, encryptionKey, workspaceId, "password", " hunter2 ");
@@ -224,7 +244,7 @@ describe("a Telegram user session", () => {
     await answerLogin(db, encryptionKey, workspaceId, "code", "12345");
     await vi.waitFor(async () => {
       if ((await db.select().from(telegramLogin))[0]?.codeCiphertext !== null) throw new Error("not taken yet");
-    });
+    }, jobTurn);
     await cancelLogin(db, workspaceId);
     signedIn(undefined);
     await job;
@@ -253,7 +273,7 @@ describe("a Telegram user session", () => {
     await db.update(telegramLogin).set({ heartbeatAt: new Date(Date.now() - 11_000) });
     await vi.waitFor(async () => {
       expect(await loginState(db, workspaceId)).toMatchObject({ step: "starting" });
-    });
+    }, jobTurn);
     answer(undefined);
     await until("code");
     stopping.abort();
