@@ -374,6 +374,27 @@ describe("Digests", () => {
     expect(await dueDigests(db, dayEnd)).toContain(actionId);
   });
 
+  it("keeps a held address's Items when its send fails at the hold's end, and waits for the next firing", async () => {
+    const { workspaceId, actionId, inbox, collect, pendingFor } = await seed();
+    await collect();
+    await db.insert(sentMessage).values(
+      Array.from({ length: 50 }, () => ({ workspaceId, destinationId: inbox, type: "email" as const, sentAt: eightInMoscow })),
+    );
+    const emailCap = { queueNotice: () => Promise.resolve() };
+
+    await sendDigest(db, actionId, deps(recordingSenders().senders, eightInMoscow, { emailCap }));
+    // The day ends, and the mail server refuses the message.
+    const dayEnd = new Date("2026-11-03T21:00:00Z");
+    await db.delete(sentMessage).where(eq(sentMessage.workspaceId, workspaceId));
+    await sendDigest(db, actionId, deps(recordingSenders(["inbox"]).senders, dayEnd, { emailCap }));
+
+    // Its Items stay for the next firing, and the past hold doesn't make the sweep try it every minute.
+    expect(await pendingFor(inbox)).toBe(1);
+    const [row] = await db.select({ heldUntil: digestItem.heldUntil }).from(digestItem).where(eq(digestItem.destinationId, inbox));
+    expect(present(row).heldUntil).toBeNull();
+    expect(await dueDigests(db, dayEnd)).not.toContain(actionId);
+  });
+
   it("keeps updated_at, which the Act stage compares with captured_at", async () => {
     const { actionId, collect } = await seed();
     await collect();

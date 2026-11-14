@@ -338,6 +338,23 @@ async function record(db: Db, actionId: string, claimed: Claim, outcomes: Outcom
             ),
           ),
         );
+    // A failed send keeps its rows, but not the hold's time: that has passed, and the sweep reads a held
+    // row as due, so it would send it every minute. Without one it waits for the next firing, as the Log
+    // says, and an address still at the cap is held again then.
+    const waitForNext = (destinationId: string, items: Collected[]) =>
+      tx
+        .update(digestItem)
+        .set({ heldUntil: null })
+        .where(
+          and(
+            eq(digestItem.actionId, actionId),
+            eq(digestItem.destinationId, destinationId),
+            inArray(
+              digestItem.itemId,
+              items.map(({ id }) => id),
+            ),
+          ),
+        );
 
     for (const { target, items, reservation, error } of outcomes) {
       const named = { actionId, destinationId: target.id, destination: target.name };
@@ -354,7 +371,10 @@ async function record(db: Db, actionId: string, claimed: Claim, outcomes: Outcom
       if (anySent) {
         await log(`${failure}. It won't be sent again`, { ...named, digest: "failed", reason, final: true }, items);
         await drop(target.id, items);
-      } else if (next === undefined) {
+        continue;
+      }
+      await waitForNext(target.id, items);
+      if (next === undefined) {
         await log(`${failure}. It waits for the next Digest`, { ...named, final: false }, items);
       } else {
         await log(`${failure}. It waits for the next Digest, at ${next.words}`, { ...named, retryAt: next.at.toISOString() }, items);
