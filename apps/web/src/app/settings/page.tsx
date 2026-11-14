@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { FieldError } from "../destinations/field-error";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
-import { saveHealthAlertsAction, setSignup } from "./actions";
+import { deleteWorkspaceAction, saveHealthAlertsAction, setSignup } from "./actions";
 import { SettingsForm } from "./settings-form";
 import { ZoneSuggestion } from "./zone-suggestion";
 
@@ -339,6 +339,8 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
 
         <HealthAlertsSection workspaceId={workspace.id} email={user.email} />
 
+        <DeleteWorkspaceSection name={workspace.name} email={user.email} refused={params.delete === "name"} />
+
         {admin ? <SignupSection /> : null}
       </main>
     </div>
@@ -402,6 +404,57 @@ async function HealthAlertsSection({ workspaceId, email }: { workspaceId: string
           </SubmitButton>
         </form>
       )}
+    </section>
+  );
+}
+
+/**
+ * Deletes the Workspace and the account with it, behind a confirmation that names the Workspace
+ * (docs: Security and privacy, "Deleting and exporting a Workspace"). It's a form of its own, so
+ * nothing else on the page can post it, and it works without JavaScript: the check is the server's.
+ */
+function DeleteWorkspaceSection({ name, email, refused }: { name: string; email: string; refused: boolean }) {
+  return (
+    <section aria-labelledby="delete-heading" className="flex flex-col gap-4 rounded-lg border p-4">
+      <div className="flex flex-col gap-1">
+        <h2 id="delete-heading" className="text-title">
+          Delete Workspace
+        </h2>
+        <p className="max-w-[70ch] text-sm text-muted-foreground">
+          This deletes the Workspace and everything in it in one go: its Sources, Items and their Log, Corrections,
+          Rules, Destinations, Actions, Deliveries, Profile, model settings, Agent calls and Telegram connections. It
+          deletes your account, <span className="break-all">{email}</span>, with them, so it signs you out. It can&apos;t
+          be undone.
+        </p>
+      </div>
+      {refused ? (
+        <p role="alert" className="rounded-lg bg-muted px-3 py-2 text-sm">
+          That isn&apos;t this Workspace&apos;s name, so nothing was deleted. Type <strong>{name}</strong> to confirm.
+        </p>
+      ) : null}
+      <form action={deleteWorkspaceAction} className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <label htmlFor="delete-name" className={label}>
+            Type {name} to confirm
+          </label>
+          <input
+            id="delete-name"
+            name="name"
+            type="text"
+            required
+            autoComplete="off"
+            spellCheck={false}
+            aria-describedby="delete-name-help"
+            className={cn(field, dataBox, "sm:max-w-xs")}
+          />
+          <p id="delete-name-help" className={help}>
+            The Workspace&apos;s name, exactly as it is above.
+          </p>
+        </div>
+        <SubmitButton variant="destructive" pendingLabel="Deleting…" className="sm:w-auto sm:self-start">
+          Delete Workspace
+        </SubmitButton>
+      </form>
     </section>
   );
 }

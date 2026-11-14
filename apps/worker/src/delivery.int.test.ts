@@ -30,6 +30,7 @@ import {
   digestQueue,
   enqueueDueDeliveries,
   enqueueDueDigests,
+  sourceAlertQueue,
   startDelivery,
 } from "./delivery.ts";
 
@@ -162,7 +163,15 @@ describe("the deliver queue", () => {
     const actionId = present(saved).id;
     await db.insert(actionDestination).values({ actionId, destinationId });
     const [row] = await db.insert(delivery).values({ actionId, itemId, destinationId }).returning();
-    return { itemId, deliveryId: present(row).id };
+    return {
+      ownerId,
+      workspaceId,
+      sourceId: present(src).id,
+      itemId,
+      destinationId,
+      actionId,
+      deliveryId: present(row).id,
+    };
   }
 
   const enqueue = (deliveryId: string) =>
@@ -963,6 +972,62 @@ describe("the deliver queue", () => {
 
     await vi.waitFor(async () => {
       expect((await jobsOf(deliveryId)).map((job) => job.state)).toEqual(["completed"]);
+    }, waitLong);
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("ends every job queued for a deleted Workspace quietly, with no retry", async () => {
+    const { ownerId, workspaceId, sourceId, itemId, destinationId, deliveryId } = await seed();
+    const [health] = await db
+      .insert(sourceAlert)
+      .values({ workspaceId, sourceId, kind: "failing", error: "The feed answered 500", status: "queued" })
+      .returning();
+    const [saved] = await db
+      .insert(action)
+      .values({
+        workspaceId,
+        name: "daily",
+        kind: "digest",
+        definition: {
+          action: "daily",
+          when: { field: "title", op: "is", value: "One" },
+          kind: "digest",
+          schedule: "0 9 * * *",
+          destinations: [destinationId],
+        },
+      })
+      .returning();
+    const digestId = present(saved).id;
+    await db.insert(actionDestination).values({ actionId: digestId, destinationId });
+    await db.insert(digestItem).values({ actionId: digestId, itemId, destinationId });
+
+    // One job of each kind the Workspace's rows can have queued. The rows go first, so each job is
+    // the one a worker is left with for a Workspace that is no longer there, which is what a
+    // deletion mid-flight leaves behind.
+    await db.delete(user).where(eq(user.id, ownerId));
+    const send = vi.fn<AlertSender["send"]>(() => Promise.resolve());
+    await startWorker(send);
+    await enqueue(deliveryId);
+    await boss.insert(sourceAlertQueue, [{ data: { alertId: present(health).id } }]);
+    await boss.insert(digestQueue, [{ data: { actionId: digestId } }]);
+
+    const states = async () =>
+      (
+        await db.$client.query<{ name: string; state: string; retry_count: number }>(
+          `select name, state, retry_count from pgboss.job
+           where (name = $1 and data->>'deliveryId' = $4)
+              or (name = $2 and data->>'alertId' = $5)
+              or (name = $3 and data->>'actionId' = $6)`,
+          [deliverQueue, sourceAlertQueue, digestQueue, deliveryId, present(health).id, digestId],
+        )
+      ).rows;
+
+    await vi.waitFor(async () => {
+      const jobs = await states();
+      expect(jobs.map((job) => job.name).sort()).toEqual([deliverQueue, digestQueue, sourceAlertQueue].sort());
+      // Nothing threw, so no job went back for a retry and none is waiting to.
+      expect(jobs.map((job) => job.state)).toEqual(["completed", "completed", "completed"]);
+      expect(jobs.map((job) => job.retry_count)).toEqual([0, 0, 0]);
     }, waitLong);
     expect(send).not.toHaveBeenCalled();
   });

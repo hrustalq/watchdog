@@ -1,6 +1,7 @@
 "use server";
 
 import { refresh } from "next/cache";
+import { headers } from "next/headers";
 import { redirect, RedirectType } from "next/navigation";
 import { setSignupOpen } from "@/lib/instance";
 import { requireWorkspace, server } from "@/lib/server";
@@ -10,6 +11,7 @@ import {
   saveAlertSettings,
   saveHealthAlertDestinations,
 } from "@/lib/settings";
+import { afterDeletion, deleteWorkspace } from "@/lib/workspace-deletion";
 
 /**
  * Saves the alert settings of the user's Workspace, which comes from the session and never from the form.
@@ -48,4 +50,30 @@ export async function setSignup(open: unknown) {
   if (!admin) redirect("/");
   await setSignupOpen(server().db, open === true);
   refresh();
+}
+
+/**
+ * Deletes the Workspace and the account that owns it, then signs that account out and sends it away.
+ * The session names the Workspace and the account, so a post can only ever delete the caller's own.
+ * A typed name that isn't the Workspace's comes back to the page as refused, and nothing is deleted;
+ * without a session there is nothing to delete, and `requireWorkspace` goes to sign-in instead.
+ */
+export async function deleteWorkspaceAction(formData: FormData) {
+  const { user, workspace } = await requireWorkspace();
+  const { db, auth, mode, encryptionKey, boss } = server();
+  const typedName = formData.get("name");
+  const outcome = await deleteWorkspace(
+    db,
+    {
+      workspace: { id: workspace.id, name: workspace.name, ownerUserId: user.id },
+      typedName: typeof typedName === "string" ? typedName : "",
+    },
+    // The pre-delete step is #314's: the queue and the key a Telegram logout needs are handed over
+    // here, and its rows are still there while it runs.
+    { encryptionKey, boss },
+  );
+  if (outcome === "wrong-name") redirect("/settings?delete=name", RedirectType.replace);
+  // The account's row is gone, so its sessions are too; this clears the cookie the browser holds.
+  await auth.api.signOut({ headers: await headers() });
+  redirect(await afterDeletion(db, mode));
 }
