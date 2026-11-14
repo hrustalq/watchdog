@@ -1,6 +1,9 @@
 // How an Item's Rating and Categories read, in the Feed and on the Item (DESIGN.md, "Rating chips").
 
-export const chip = "inline-flex items-center gap-1.5 rounded-sm border px-1.5 py-0.5 text-xs font-medium tracking-[0.01em]";
+// A chip's words can't break at a space on their own, since it's a flex box, so `max-w-full` lets it
+// shrink to the column and wrap its own text where a phone's detail column is narrower than it.
+export const chip =
+  "inline-flex max-w-full items-center gap-1.5 rounded-sm border px-1.5 py-0.5 text-xs font-medium tracking-[0.01em]";
 
 // Forced colours drop backgrounds, which would hide a filled lamp and leave only the hollow ones.
 export const filledLamp = "forced-color-adjust-none forced-colors:bg-[CanvasText]";
@@ -70,7 +73,7 @@ export function Rating({
     );
   }
   return (
-    <span id={id} className="inline-flex flex-wrap items-center gap-1.5">
+    <span id={id} className="inline-flex max-w-full flex-wrap items-center gap-1.5">
       <SeverityChip value={severity} />
       <ImportanceChip value={importance} />
     </span>

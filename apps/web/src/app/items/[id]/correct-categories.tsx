@@ -53,7 +53,9 @@ export function CorrectCategories({
           </ul>
         )}
       </form>
-      <form action={correctCategoriesAction} className="flex items-center gap-2 has-data-pending:opacity-60">
+      {/* The box and its button wrap rather than pushing the row past the page's gutter, which a
+          phone's column at large text can't hold side by side. */}
+      <form action={correctCategoriesAction} className="flex flex-wrap items-center gap-2 has-data-pending:opacity-60">
         <input type="hidden" name="itemId" value={itemId} />
         <CorrectionStatus result={result} />
         <input
@@ -68,7 +70,7 @@ export function CorrectCategories({
           list={knownList}
           aria-label="Add a Category"
           placeholder="Add a Category"
-          className={`${field} w-48`}
+          className={`${field} min-w-0 grow basis-48`}
         />
         <datalist id={knownList}>
           {offered.map((category) => (
