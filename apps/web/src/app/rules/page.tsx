@@ -11,6 +11,7 @@ import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
 import { removeRuleAction, setRuleEnabledAction } from "./actions";
+import { ForgetDrafts } from "./forget-drafts";
 import { RulesBreadcrumb } from "./rules-breadcrumb";
 import {
   actionApplies,
@@ -29,6 +30,7 @@ export default function RulesPage({ searchParams }: PageProps<"/rules">) {
     <div className="flex flex-1 flex-col">
       <RulesBreadcrumb />
       <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
+        <ForgetDrafts prefix="/rules" />
         <div className="flex flex-col gap-1">
           <h1 className="text-headline">Rules</h1>
           <p className="text-sm text-muted-foreground">{appliesFromNow}</p>
