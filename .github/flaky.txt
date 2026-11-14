@@ -2,4 +2,3 @@
 # reruns exactly these files once when they are the only failures; every other failure
 # fails the build. Keep each line repo-relative, and remove the line when its issue closes.
 packages/db/src/migrate.int.test.ts
-apps/worker/src/delivery.int.test.ts
