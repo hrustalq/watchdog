@@ -13,6 +13,8 @@ import { requestRevoke, sessionChats, watchChat } from "./session.ts";
 const encryptionKey = randomBytes(32);
 const day = 24 * 60 * 60;
 const waitLong = { timeout: 10_000, interval: 20 };
+/** The end state the turn reaches, which a loaded runner gets to later than a quiet one. */
+const waitEnd = { timeout: 30_000, interval: 50 };
 
 const channelId = 1_234_567_890;
 const chatId = -1_000_000_000_000 - channelId;
@@ -301,10 +303,17 @@ describe("a Telegram user session's runner", () => {
     await vi.waitFor(async () => {
       expect((await db.select().from(source).where(eq(source.id, gone.id)))[0]?.health).toBe("failing");
     }, waitLong);
+    // The runner registers a chat for live updates before it reads it, and the chat that isn't there
+    // never reaches the history call, so the other Source's read having started is what says a message
+    // arriving now is taken. One that arrives earlier is dropped, and a Source is read once a turn, so
+    // no wait recovers it: waiting for the Item alone fails when the read starts a moment too late.
+    await vi.waitFor(() => {
+      expect(historyAsked).toHaveLength(1);
+    }, waitLong);
     arrives(message(9, "Still here"));
     await vi.waitFor(async () => {
       expect((await itemsOf(watching.id)).map(({ title }) => title)).toEqual(["Still here"]);
-    }, waitLong);
+    }, waitEnd);
     stopping.abort();
     await turn;
   });
