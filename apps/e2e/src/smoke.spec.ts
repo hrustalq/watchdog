@@ -977,7 +977,9 @@ const headerMenu = (page: Page) => page.locator("header details");
 /** Opens the header menu with a tap on its summary, and waits until it is open. */
 async function openHeaderMenu(page: Page) {
   const menu = headerMenu(page);
-  if ((await menu.getAttribute("open")) === null) await menu.locator("summary").click();
+  // A bounded click: the default never gives up, and a menu that can't be reached would spend the
+  // test's whole timeout here instead of failing.
+  if ((await menu.getAttribute("open")) === null) await menu.locator("summary").click({ timeout: 15_000 });
   await expect(menu).toHaveAttribute("open");
 }
 
@@ -1046,15 +1048,20 @@ test("the Workspace header menu holds at phone width, with and without JavaScrip
     const row = narrow.getByRole("listitem").first();
     const point = await tapPoint(row.getByRole("link").first());
     await openHeaderMenu(narrow);
-    // The summary's ::before covers the page, so this tap is the menu's own and not the row's.
+    // The cover is the summary's ::before, so the tap on the row lands on the summary instead.
+    const covering = await narrow.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, point);
+    expect(covering, "the tap on the row lands under the menu, not on its cover").toBe("SUMMARY");
     await narrow.mouse.click(point.x, point.y);
+    // A tap that reached the row would leave for the Item and hide the Feed behind it, so a
+    // navigation gets the moment it needs before this believes the tap did nothing.
+    await narrow.waitForTimeout(1_000);
+    expect(narrow.url(), "the tap outside opened the Item under the menu").toBe(feed);
     await expect(menu, "the tap outside didn't close the menu").not.toHaveAttribute("open");
-    await expect(narrow, "the tap outside opened the Item under the menu").toHaveURL(feed);
   });
 
   await test.step("an open menu left through one of its links is closed on return", async () => {
     await openHeaderMenu(narrow);
-    await panel.getByRole("link", { name: "Sources", exact: true }).click();
+    await panel.getByRole("link", { name: "Sources", exact: true }).click({ timeout: 15_000 });
     await expect(narrow).toHaveURL(/\/sources$/);
     await narrow.goBack();
     await expect(narrow).toHaveURL(feed);
@@ -1072,12 +1079,10 @@ test("the Workspace header menu holds at phone width, with and without JavaScrip
 
   await test.step("a Feed refresh leaves an open menu open", async () => {
     await openHeaderMenu(narrow);
-    // The refresh the Feed does when the tab becomes visible again, rather than the 30-second one.
+    // The refresh the Feed does when the tab becomes visible again, rather than the 30-second one. Next
+    // asks for it at the page's own URL with a `_rsc` cache-buster appended.
     const [answer] = await Promise.all([
-      narrow.waitForResponse(
-        (response) => response.url() === feed && response.request().resourceType() === "fetch",
-        { timeout: 15_000 },
-      ),
+      narrow.waitForResponse((response) => response.url().startsWith(`${feed}&_rsc=`), { timeout: 15_000 }),
       narrow.evaluate(() => {
         document.dispatchEvent(new Event("visibilitychange"));
       }),
@@ -1107,7 +1112,7 @@ test("the Workspace header menu holds at phone width, with and without JavaScrip
 
   await test.step("without JavaScript, the menu opens and its every control is reachable", async () => {
     await noScript.goto(feed);
-    await noScriptMenu.locator("summary").click();
+    await noScriptMenu.locator("summary").click({ timeout: 15_000 });
     await expect(noScriptMenu, "a tap on the summary didn't open the menu without script").toHaveAttribute("open");
     // Only the panel's own controls: the wide header's copies of them are `display: none` here.
     await noScriptMenu.locator("summary").focus();
@@ -1124,16 +1129,16 @@ test("the Workspace header menu holds at phone width, with and without JavaScrip
 
   await test.step("without JavaScript, a tap outside the open menu closes it and opens nothing", async () => {
     const point = await tapPoint(noScript.getByRole("listitem").first().getByRole("link").first());
-    await noScriptMenu.locator("summary").click();
-    await expect(noScriptMenu).toHaveAttribute("open");
+    await openHeaderMenu(noScript);
     await noScript.mouse.click(point.x, point.y);
+    await noScript.waitForTimeout(1_000);
+    expect(noScript.url(), "the tap outside opened the Item under the menu").toBe(feed);
     await expect(noScriptMenu, "the tap outside didn't close the menu").not.toHaveAttribute("open");
-    await expect(noScript, "the tap outside opened the Item under the menu").toHaveURL(feed);
   });
 
   await test.step("without JavaScript, Sign out in the menu ends the session", async () => {
-    await noScriptMenu.locator("summary").click();
-    await noScriptPanel.getByRole("button", { name: "Sign out" }).click();
+    await openHeaderMenu(noScript);
+    await noScriptPanel.getByRole("button", { name: "Sign out" }).click({ timeout: 15_000 });
     await expect(noScript).toHaveURL(/\/sign-in/);
     await noScriptContext.close();
   });
