@@ -26,8 +26,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      // Dark-first: dark is the default and the reference theme (DESIGN.md → Overview).
-      className={cn("dark h-full antialiased font-sans", recursive.variable)}
+      // The theme follows the OS colour scheme in CSS alone (`prefers-color-scheme` in
+      // globals.css), so the first paint already has the right one and no script is needed.
+      // Dark is the base and the reference theme (DESIGN.md → Overview).
+      className={cn("h-full antialiased font-sans", recursive.variable)}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
