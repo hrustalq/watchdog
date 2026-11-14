@@ -11,6 +11,11 @@ describe("buttonVariants", () => {
     expect(classes({ variant: "outline" })).not.toContain("border-transparent");
   });
 
+  it("fills an outline button's dark hover with the muted token DESIGN.md names", () => {
+    expect(classes({ variant: "outline" })).toContain("dark:hover:bg-muted");
+    expect(classes({ variant: "outline" })).not.toContain("dark:hover:bg-input/30");
+  });
+
   it("leaves the other variants their transparent border", () => {
     expect(classes()).toContain("border-transparent");
     expect(classes({ variant: "ghost" })).toContain("border-transparent");
