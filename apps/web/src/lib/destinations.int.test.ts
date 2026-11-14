@@ -171,7 +171,7 @@ describe("Destinations", () => {
       expect(await addTelegramDestination(db, ours, { name: "  " })).toEqual({ problem: "blank-name" });
     });
 
-    it("gives a new code only to the Workspace's own Telegram Destination that is still waiting", async () => {
+    it("gives a new code only to the Workspace's own Telegram Destination, waiting or confirmed", async () => {
       const { destination: added, code } = await addTelegram();
       const { destination: email } = await addEmail();
 
@@ -180,7 +180,56 @@ describe("Destinations", () => {
       expect(await newTelegramLink(db, ours, "not-a-uuid")).toBeUndefined();
 
       await linkChat(db, deps.encryptionKey, code, chat);
-      expect(await newTelegramLink(db, ours, added.id)).toBeUndefined();
+      expect(await newTelegramLink(db, ours, added.id)).toMatch(/^[\w-]{22}$/);
+    });
+
+    it("replaces a confirmed Destination's chat when the new code is used, and not before", async () => {
+      const { destination: added, code } = await addTelegram();
+      await linkChat(db, deps.encryptionKey, code, { id: "-100200", title: "Ops room", type: "supergroup" });
+      await db
+        .update(destination)
+        .set({ lastError: "The bot was removed from the chat", lastErrorAt: new Date() })
+        .where(eq(destination.id, added.id));
+
+      const replacement = await newTelegramLink(db, ours, added.id);
+      expect(replacement).toMatch(/^[\w-]{22}$/);
+      if (replacement === undefined) throw new Error("No code was issued");
+      expect(await stateOf(added.id)).toBe("confirmed");
+      expect(await telegramLinkInCookie(db, await rowsOf(ours), telegramLinkCookieValue(added.id, replacement))).toMatchObject({
+        status: "pending",
+        id: added.id,
+        code: replacement,
+      });
+      // Without TELEGRAM_BOT_TOKEN the row has no control, so the panel it would open has none either.
+      expect(
+        await telegramLinkInCookie(
+          db,
+          await listDestinations(db, ours, { telegramAvailable: false }),
+          telegramLinkCookieValue(added.id, replacement),
+        ),
+      ).toBeUndefined();
+      // Until the code is used, the row still points at the old chat, with the error that chat gave.
+      const waiting = await db.query.destination.findFirst({ where: eq(destination.id, added.id) });
+      if (waiting === undefined) throw new Error("The Destination is missing");
+      expect(decryptSecret(waiting.secretCiphertext ?? "", deps.encryptionKey)).toBe("-100200");
+      expect(waiting.config).toEqual({ chat: "Ops room" });
+      expect(waiting.lastError).toBe("The bot was removed from the chat");
+
+      expect(
+        await linkChat(db, deps.encryptionKey, replacement, { id: "-100300", title: "New room", type: "supergroup" }),
+      ).toBe(`Linked to ${waiting.name} in Watchdog`);
+
+      expect((await rowsOf(ours)).find(({ id }) => id === added.id)).toMatchObject({
+        state: "confirmed",
+        pointsAt: "New room",
+        lastError: null,
+        lastErrorAt: null,
+      });
+      // The code is spent, so the panel gives way to the notice that the Destination is linked.
+      expect(await telegramLinkInCookie(db, await rowsOf(ours), telegramLinkCookieValue(added.id, replacement))).toMatchObject({
+        status: "linked",
+        id: added.id,
+      });
     });
 
     it("shows a code only with the Destination it was made for, in this Workspace", async () => {

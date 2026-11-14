@@ -196,16 +196,26 @@ describe("linking a Telegram chat", () => {
     expect(await codesOf(id)).toHaveLength(1);
   });
 
-  it("can't rebind a linked chat with a code that was still live", async () => {
-    const { id } = await waiting();
-    const first = await issueLinkCode(db, { destinationId: id });
-    await linkChat(db, encryptionKey, first, chat);
-    // A code that slipped in just after the link, as a page open from before it could ask for.
-    const late = await issueLinkCode(db, { destinationId: id });
+  it("points a confirmed Destination at another chat, and clears the error its old chat was failing with", async () => {
+    const { id, name } = await waiting();
+    await linkChat(db, encryptionKey, await issueLinkCode(db, { destinationId: id }), chat);
+    await db
+      .update(destination)
+      .set({ lastError: "The bot was removed from the chat", lastErrorAt: new Date() })
+      .where(eq(destination.id, id));
+    // Asked for on the Destinations screen, because the bot was removed from the chat it was linked to.
+    const code = await issueLinkCode(db, { destinationId: id });
 
-    expect(await linkChat(db, encryptionKey, late, { id: "1", title: "Private chat", type: "private" })).toMatch(unknownCode);
+    expect(await linkChat(db, encryptionKey, code, { id: "1", title: "Private chat", type: "private" })).toBe(
+      `Linked to ${name} in Watchdog`,
+    );
 
-    expect(decryptSecret((await read(id))?.secretCiphertext ?? "", encryptionKey)).toBe("-100200");
+    const replaced = await read(id);
+    expect(decryptSecret(replaced?.secretCiphertext ?? "", encryptionKey)).toBe("1");
+    expect(replaced?.config).toEqual({ chat: "Private chat" });
+    expect(replaced).toMatchObject({ lastError: null, lastErrorAt: null });
+    expect(replaced?.confirmedAt).toBeInstanceOf(Date);
+    expect(await codesOf(id)).toEqual([]);
   });
 
   it("drops a NUL from a chat's title, which jsonb refuses and would stop the loop on this update", async () => {
