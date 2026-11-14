@@ -701,7 +701,7 @@ describe("Rules", () => {
         const name = unique();
         const { type, id } = await saved(ours, digestYaml([mine.name], 'schedule: "0 9 * * 1"\n', name));
         const collected = await itemIn();
-        await db.insert(digestItem).values({ actionId: id, itemId: collected });
+        await db.insert(digestItem).values({ actionId: id, itemId: collected, destinationId: mine.id });
 
         await saved(ours, alertYaml([mine.name], name), { type, id });
 
@@ -720,7 +720,7 @@ describe("Rules", () => {
           { actionId: alert.id, itemId: grouped, destinationId: mine.id, status: "grouped" },
           { actionId: alert.id, itemId: sent, destinationId: mine.id, status: "sent" },
         ]);
-        await db.insert(digestItem).values({ actionId: digest.id, itemId: collected });
+        await db.insert(digestItem).values({ actionId: digest.id, itemId: collected, destinationId: mine.id });
 
         expect(await removeRule(db, ours, "action", alert.id)).toBe(true);
         expect(await removeRule(db, ours, "action", digest.id)).toBe(true);

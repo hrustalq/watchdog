@@ -1,12 +1,14 @@
 import {
   action,
   actionDestination,
+  and,
   closeDb,
   createDb,
   type Db,
   destination,
   digestItem,
   eq,
+  isNotNull,
   item,
   itemLog,
   migrate,
@@ -104,7 +106,7 @@ describe("Digests", () => {
     await db.insert(actionDestination).values({ actionId, destinationId: inbox });
 
     let count = 0;
-    /** Collects a new Item into the Digest. */
+    /** Collects a new Item into the Digest, for each Destination it points at, as the Act stage does. */
     const collect = async (rating: { severity: number; importance: number } | null = { severity: 3, importance: 3 }) => {
       count += 1;
       const [row] = await db
@@ -121,13 +123,21 @@ describe("Digests", () => {
         })
         .returning();
       const itemId = present(row).id;
-      await db.insert(digestItem).values({ actionId, itemId });
+      // Only the confirmed Destinations, as the Act stage collects only for those.
+      const confirmed = await db
+        .select({ id: actionDestination.destinationId })
+        .from(actionDestination)
+        .innerJoin(destination, eq(destination.id, actionDestination.destinationId))
+        .where(and(eq(actionDestination.actionId, actionId), isNotNull(destination.confirmedAt)));
+      await db.insert(digestItem).values(confirmed.map(({ id }) => ({ actionId, itemId, destinationId: id })));
       return itemId;
     };
     const logOf = (itemId: string) =>
       db.select({ message: itemLog.message, data: itemLog.data }).from(itemLog).where(eq(itemLog.itemId, itemId));
     const pending = () => db.$count(digestItem, eq(digestItem.actionId, actionId));
-    return { workspaceId, actionId, inbox, addDestination, point, collect, logOf, pending };
+    const pendingFor = (destinationId: string) =>
+      db.$count(digestItem, and(eq(digestItem.actionId, actionId), eq(digestItem.destinationId, destinationId)));
+    return { workspaceId, actionId, inbox, addDestination, point, collect, logOf, pending, pendingFor };
   }
 
   const deps = (senders: DigestDeps["senders"], now: Date, extra: Partial<DigestDeps> = {}): DigestDeps => ({
@@ -273,10 +283,14 @@ describe("Digests", () => {
     expect(await pending()).toBe(0);
   });
 
-  it("is held by the hosted cap when the day has no room for a mail to each address, and sends when it has", async () => {
-    const { workspaceId, actionId, inbox, addDestination, point, collect, pending } = await seed();
-    await point(await addDestination("backup"));
-    await collect();
+  it("sends to its chat and the address the day has room for, and holds the other address until the day ends", async () => {
+    const { workspaceId, actionId, inbox, addDestination, point, collect, logOf, pending, pendingFor } = await seed();
+    // Addresses go in name order, so "inbox" takes the day's last place and "work" is the one held.
+    const work = await addDestination("work");
+    const chat = await addDestination("chat", { type: "telegram", config: {} });
+    await point(work);
+    await point(chat);
+    const itemId = await collect();
     const sentToday = (count: number) =>
       db.insert(sentMessage).values(
         Array.from({ length: count }, () => ({ workspaceId, destinationId: inbox, type: "email" as const, sentAt: eightInMoscow })),
@@ -286,17 +300,50 @@ describe("Digests", () => {
 
     await sentToday(49);
     await sendDigest(db, actionId, deps(senders, eightInMoscow, { emailCap }));
-    expect(sent).toEqual([]);
-    expect(await pending()).toBe(1);
+
+    // The chat isn't counted against the cap, and the day had room for one mail, which goes to the first
+    // address by name. The other one keeps the firing's Items, and the time the cap ends.
+    expect(sent.map(({ to }) => to).sort()).toEqual(["chat", "inbox"]);
+    expect(sent.map(({ message }) => message.count)).toEqual([1, 1]);
+    expect(await pendingFor(work)).toBe(1);
+    expect(await pendingFor(inbox)).toBe(0);
+    expect(await pendingFor(chat)).toBe(0);
+    // Midnight in Moscow, the end of the local day the cap counted.
+    const dayEnd = new Date("2026-11-03T21:00:00Z");
+    const [held] = await db.select({ heldUntil: digestItem.heldUntil }).from(digestItem).where(eq(digestItem.destinationId, work));
+    expect(present(held).heldUntil).toEqual(dayEnd);
+    // The sweep finds it through the hold, not the schedule, so it goes before the next firing.
+    expect(await dueDigests(db, new Date(dayEnd.getTime() - 60_000))).not.toContain(actionId);
+    expect(await dueDigests(db, dayEnd)).toContain(actionId);
 
     await db.delete(sentMessage).where(eq(sentMessage.workspaceId, workspaceId));
-    await sentToday(48);
-    await sendDigest(db, actionId, deps(senders, eightInMoscow, { emailCap }));
-    expect(sent).toHaveLength(2);
-    expect(await db.$count(sentMessage, eq(sentMessage.workspaceId, workspaceId))).toBe(50);
+    await sendDigest(db, actionId, deps(senders, dayEnd, { emailCap }));
+
+    // The held address gets the Items of the firing it was held from, as that Digest.
+    expect(sent.map(({ to }) => to).sort()).toEqual(["chat", "inbox", "work"]);
+    expect(sent.map(({ message }) => message.count)).toEqual([1, 1, 1]);
+    const toWork = present(sent.find(({ to }) => to === "work"));
+    expect(toWork.message.lines.map(({ link }) => link)).toEqual([`${appUrl}/items/${itemId}`]);
+    expect(await pending()).toBe(0);
+
+    // The next firing's Items aren't the held ones, and don't repeat them to it.
+    const next = await collect();
+    await sendDigest(db, actionId, deps(senders, new Date(eightInMoscow.getTime() + 24 * 60 * 60_000), { emailCap }));
+    expect(sent.slice(3).map(({ to }) => to).sort()).toEqual(["chat", "inbox", "work"]);
+    expect(sent.slice(3).map(({ message }) => message.lines.map(({ link }) => link))).toEqual([
+      [`${appUrl}/items/${next}`],
+      [`${appUrl}/items/${next}`],
+      [`${appUrl}/items/${next}`],
+    ]);
+    // One send per Destination per Item: the held Item doesn't go to the held address twice.
+    expect((await logOf(itemId)).map(({ message }) => message).sort()).toEqual([
+      "Sent in the Digest Morning to chat",
+      "Sent in the Digest Morning to inbox",
+      "Sent in the Digest Morning to work",
+    ]);
   });
 
-  it("holds a Digest whose mail the hosted cap would pass, and queues the notice", async () => {
+  it("holds every address of a Digest the hosted cap would pass, and queues the notice", async () => {
     const { workspaceId, actionId, inbox, collect, pending } = await seed();
     await collect();
     await db.insert(sentMessage).values(
@@ -321,8 +368,31 @@ describe("Digests", () => {
     expect(sent).toEqual([]);
     expect(await pending()).toBe(1);
     expect(notices).toEqual([workspaceId]);
-    // Still due, so the next tick tries again, and it goes after midnight.
-    expect(await dueDigests(db, eightInMoscow)).toContain(actionId);
+    // The firing ran, so the schedule doesn't come again today; the sweep finds the held Items at midnight.
+    const dayEnd = new Date("2026-11-03T21:00:00Z");
+    expect(await dueDigests(db, eightInMoscow)).not.toContain(actionId);
+    expect(await dueDigests(db, dayEnd)).toContain(actionId);
+  });
+
+  it("keeps a held address's Items when its send fails at the hold's end, and waits for the next firing", async () => {
+    const { workspaceId, actionId, inbox, collect, pendingFor } = await seed();
+    await collect();
+    await db.insert(sentMessage).values(
+      Array.from({ length: 50 }, () => ({ workspaceId, destinationId: inbox, type: "email" as const, sentAt: eightInMoscow })),
+    );
+    const emailCap = { queueNotice: () => Promise.resolve() };
+
+    await sendDigest(db, actionId, deps(recordingSenders().senders, eightInMoscow, { emailCap }));
+    // The day ends, and the mail server refuses the message.
+    const dayEnd = new Date("2026-11-03T21:00:00Z");
+    await db.delete(sentMessage).where(eq(sentMessage.workspaceId, workspaceId));
+    await sendDigest(db, actionId, deps(recordingSenders(["inbox"]).senders, dayEnd, { emailCap }));
+
+    // Its Items stay for the next firing, and the past hold doesn't make the sweep try it every minute.
+    expect(await pendingFor(inbox)).toBe(1);
+    const [row] = await db.select({ heldUntil: digestItem.heldUntil }).from(digestItem).where(eq(digestItem.destinationId, inbox));
+    expect(present(row).heldUntil).toBeNull();
+    expect(await dueDigests(db, dayEnd)).not.toContain(actionId);
   });
 
   it("keeps updated_at, which the Act stage compares with captured_at", async () => {

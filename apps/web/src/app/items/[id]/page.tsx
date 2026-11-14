@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { localDateTime } from "@watchdog/core";
 import { Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
 import { Button } from "@/components/ui/button";
@@ -472,12 +473,18 @@ function ActionsSection({
                     </span>
                   </li>
                 ))}
-                {row.digestTo.map((name) => (
-                  <li key={name} className="flex items-start gap-2">
-                    <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor("queued", false)}`} />
+                {row.digestTo.map(({ destination: to, heldUntil }) => (
+                  <li key={to} className="flex items-start gap-2">
+                    <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full ${lampFor(heldUntil === null ? "queued" : "held", false)}`} />
                     <span className="min-w-0 break-words">
-                      {name}
-                      <span className="text-muted-foreground"> · In the next Digest</span>
+                      {to}
+                      <span className="text-muted-foreground">
+                        {/* A Destination the hosted email cap holds goes at the end of the local day, and
+                            the rest of the Digest went at its time. */}
+                        {heldUntil === null
+                          ? " · In the next Digest"
+                          : ` · Held until ${localDateTime(heldUntil, timezone)}: the hosted limit of 50 mails a day`}
+                      </span>
                     </span>
                   </li>
                 ))}

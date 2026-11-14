@@ -138,7 +138,12 @@ export const sentMessage = pgTable(
   ],
 );
 
-/** The Items a Digest has collected and not yet sent. The Digest's send deletes the rows it sent. */
+/**
+ * The Items a Digest has collected for one Destination and not yet sent. Each Destination has its own
+ * rows, so it empties on its own: the hosted email cap can hold some of a Digest's addresses while the
+ * rest of its Destinations get it (docs: Actions and delivery, "Sending a Digest"). The send deletes
+ * the rows it sent, and `heldUntil` says when a held Destination's rows go.
+ */
 export const digestItem = pgTable(
   "digest_item",
   {
@@ -148,10 +153,22 @@ export const digestItem = pgTable(
     itemId: uuid("item_id")
       .notNull()
       .references(() => item.id, { onDelete: "cascade" }),
+    /** Cascades, so a removed Destination's collected Items go with it. */
+    destinationId: uuid("destination_id")
+      .notNull()
+      .references(() => destination.id, { onDelete: "cascade" }),
+    /** When the hosted email cap's hold on this Destination's rows ends, or null while it isn't held. */
+    heldUntil: timestamp("held_until", { withTimezone: true }),
   },
   (table) => [
-    primaryKey({ columns: [table.actionId, table.itemId] }),
+    primaryKey({ columns: [table.actionId, table.itemId, table.destinationId] }),
     // As on delivery.
     index("digest_item_item_id_idx").on(table.itemId),
+    // The cascade, when a Destination is removed.
+    index("digest_item_destination_id_idx").on(table.destinationId),
+    // The worker's sweep, which finds the Digests whose held Destinations can go.
+    index("digest_item_held_until_idx")
+      .on(table.heldUntil)
+      .where(sql`${table.heldUntil} is not null`),
   ],
 );

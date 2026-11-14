@@ -118,7 +118,15 @@ async function runActStage(tx: Tx, itemId: string, deps: ActDeps) {
     }
 
     if (kind === "digest") {
-      await tx.insert(digestItem).values({ actionId: saved.id, itemId }).onConflictDoNothing();
+      // One row per Destination, so each empties on its own when the hosted cap holds one of them. The
+      // Rules screen refuses a webhook Destination on a Digest, so `confirmed` here is Telegram and email.
+      const going = confirmed.filter(({ type }) => type !== "webhook");
+      if (going.length > 0) {
+        await tx
+          .insert(digestItem)
+          .values(going.map(({ id }) => ({ actionId: saved.id, itemId, destinationId: id })))
+          .onConflictDoNothing();
+      }
     } else {
       const inserted = await tx
         .insert(delivery)

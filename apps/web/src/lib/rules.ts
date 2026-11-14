@@ -399,12 +399,17 @@ async function dropUnsent(tx: Tx, which: SQL | undefined, message: string) {
   await tx.delete(delivery).where(inArray(delivery.id, unsent.map(({ id }) => id)));
 }
 
-/** As `dropUnsent`, for the Items a Digest has collected and not sent. */
-async function dropCollected(tx: Tx, actionId: string, message: string) {
-  const collected = await tx.delete(digestItem).where(eq(digestItem.actionId, actionId)).returning({ itemId: digestItem.itemId });
+/** As `dropUnsent`, for the Items a Digest has collected and not sent. A Destination has its own rows. */
+async function dropCollected(tx: Tx, which: SQL | undefined, message: string, data: Record<string, unknown>) {
+  const collected = await tx.delete(digestItem).where(which).returning({ itemId: digestItem.itemId });
   if (collected.length === 0) return;
   await tx.insert(itemLog).values(
-    collected.map(({ itemId }) => ({ itemId, stage: "act" as const, message, data: { actionId } })),
+    [...new Set(collected.map(({ itemId }) => itemId))].map((itemId) => ({
+      itemId,
+      stage: "act" as const,
+      message,
+      data,
+    })),
   );
 }
 
@@ -444,14 +449,18 @@ async function storeAction(
   for (const { destinationId } of dropped) {
     if (destinationIds.includes(destinationId)) continue;
     const name = held.find(({ id }) => id === destinationId)?.name ?? destinationId;
-    await dropUnsent(
+    const message = `Not sent: the Action ${rule.action} no longer goes to ${name}`;
+    await dropUnsent(tx, and(eq(delivery.actionId, row.id), eq(delivery.destinationId, destinationId)), message);
+    // A Digest collects per Destination, so what waited for this one goes with it.
+    await dropCollected(
       tx,
-      and(eq(delivery.actionId, row.id), eq(delivery.destinationId, destinationId)),
-      `Not sent: the Action ${rule.action} no longer goes to ${name}`,
+      and(eq(digestItem.actionId, row.id), eq(digestItem.destinationId, destinationId)),
+      message,
+      { actionId: row.id, destinationId, destination: name },
     );
   }
   if (rule.kind !== "digest") {
-    await dropCollected(tx, row.id, `Not sent: the Action ${rule.action} isn't a Digest any more`);
+    await dropCollected(tx, eq(digestItem.actionId, row.id), `Not sent: the Action ${rule.action} isn't a Digest any more`, { actionId: row.id });
   }
   return row;
 }
@@ -740,7 +749,7 @@ export async function removeRule(db: Db, workspaceId: string, type: RuleType, id
     if (type === "action") {
       const message = `Not sent: the Action ${row.name} was deleted`;
       await dropUnsent(tx, eq(delivery.actionId, id), message);
-      await dropCollected(tx, id, message);
+      await dropCollected(tx, eq(digestItem.actionId, id), message, { actionId: id });
     }
     await tx.delete(table).where(eq(table.id, id));
     return true;

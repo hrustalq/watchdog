@@ -363,7 +363,7 @@ describe("the deliver queue", () => {
           updatedAt: twoDaysAgo,
         })
         .where(eq(action.id, actionId));
-      await db.insert(digestItem).values({ actionId, itemId });
+      await db.insert(digestItem).values({ actionId, itemId, destinationId });
       return { itemId, actionId };
     }
     const digestJobs = async (actionId: string) =>

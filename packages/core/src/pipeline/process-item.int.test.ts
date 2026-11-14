@@ -2646,7 +2646,7 @@ describe("processItem", () => {
       expect(await deliveriesOf(itemId)).toHaveLength(2);
     });
 
-    it("collects an Item into a Digest: one row, no Delivery and no job", async () => {
+    it("collects an Item into a Digest: one row per Destination, no Delivery and no job", async () => {
       const seeded = await seed();
       await sortAdvisories(seeded);
       const mail = await addDestination(seeded, "me");
@@ -2657,7 +2657,12 @@ describe("processItem", () => {
 
       await processItem(db, itemId, jobs.deps);
 
-      expect(await digestRowsOf(itemId)).toEqual([{ actionId, itemId }]);
+      // Each Destination has its own row, so the hosted email cap can hold one of them and not the other.
+      expect(await digestRowsOf(itemId)).toMatchObject([
+        { actionId, itemId, destinationId: mail, heldUntil: null },
+        { actionId, itemId, destinationId: other, heldUntil: null },
+      ]);
+      expect(await digestRowsOf(itemId)).toHaveLength(2);
       expect(await deliveriesOf(itemId)).toEqual([]);
       expect(jobs.queued.flat()).toEqual([]);
       expect(await sentences(itemId)).toEqual(["Action weekly fired: Category is advisory. Collected for me, team"]);

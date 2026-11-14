@@ -4,7 +4,6 @@
 import { localDateTime } from "@watchdog/core";
 import {
   action,
-  actionDestination,
   and,
   correction,
   type Db,
@@ -285,8 +284,9 @@ export function deliveryStatus({ status, attempts, nextAttemptAt, lastError }: D
 /**
  * Each Action that fired on an Item, oldest first, with its Destinations and how each Delivery stands,
  * read from the `delivery` table. A Digest has no Delivery per Item, so its Destinations show the Item
- * waiting in `digest_item`, and once sent, the Log rows the send wrote, because it deletes those rows: each
- * Destination it went to, and each that failed when another got it.
+ * waiting in `digest_item`, with the time when the hosted email cap holds that one, and once sent, the
+ * Log rows the send wrote, because it deletes those rows: each Destination it went to, and each that
+ * failed when another got it.
  * Empty when nothing fired, or the Item isn't this Workspace's.
  */
 export async function itemActions(db: Db, workspaceId: string, itemId: string) {
@@ -315,11 +315,11 @@ export async function itemActions(db: Db, workspaceId: string, itemId: string) {
         actionName: action.name,
         createdAt: action.createdAt,
         destination: destination.name,
+        heldUntil: digestItem.heldUntil,
       })
       .from(digestItem)
       .innerJoin(action, eq(action.id, digestItem.actionId))
-      .innerJoin(actionDestination, eq(actionDestination.actionId, action.id))
-      .innerJoin(destination, eq(destination.id, actionDestination.destinationId))
+      .innerJoin(destination, eq(destination.id, digestItem.destinationId))
       // A Digest only sends to confirmed Destinations, as the Act stage only collects for them.
       .where(and(eq(digestItem.itemId, itemId), eq(action.workspaceId, workspaceId), isNotNull(destination.confirmedAt)))
       .orderBy(action.createdAt, action.id, destination.name),
@@ -352,7 +352,7 @@ export async function itemActions(db: Db, workspaceId: string, itemId: string) {
     name: string;
     createdAt: Date;
     deliveries: typeof deliveries;
-    digestTo: string[];
+    digestTo: { destination: string; heldUntil: Date | null }[];
     digestSent: { destination: string; at: Date; failed: boolean; reason: string | null }[];
   }
   const fired = new Map<string, Fired>();
@@ -362,7 +362,7 @@ export async function itemActions(db: Db, workspaceId: string, itemId: string) {
     return found;
   };
   for (const row of deliveries) entry(row).deliveries.push(row);
-  for (const row of digests) entry(row).digestTo.push(row.destination);
+  for (const { destination: to, heldUntil, ...row } of digests) entry(row).digestTo.push({ destination: to, heldUntil });
   for (const { destination: to, at, failed, reason, ...row } of digestsSent) {
     entry(row).digestSent.push({ destination: to, at, failed, reason });
   }

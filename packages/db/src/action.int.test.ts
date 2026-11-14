@@ -63,7 +63,7 @@ async function seedEverything(db: Db) {
       .values({ actionId: alert.id, itemId, destinationId: chat.id, status: "sent", sentAt: new Date() })
       .returning(),
   );
-  await db.insert(digestItem).values({ actionId: digest.id, itemId });
+  await db.insert(digestItem).values({ actionId: digest.id, itemId, destinationId: mail.id });
   await db.insert(telegramLinkCode).values({
     codeHash: `hash-${chat.id}`,
     destinationId: chat.id,

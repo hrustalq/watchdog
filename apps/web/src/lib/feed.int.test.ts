@@ -17,6 +17,7 @@ import {
   itemField,
   itemLog,
   migrate,
+  sentMessage,
   source,
   sql,
   user,
@@ -820,10 +821,41 @@ describe("Feed", () => {
       await processItem(db, itemId, pipelineDeps);
 
       expect(await itemActions(db, seeded.workspaceId, itemId)).toMatchObject([
-        { name: "Weekly", deliveries: [], digestTo: ["Team inbox"] },
+        { name: "Weekly", deliveries: [], digestTo: [{ destination: "Team inbox", heldUntil: null }] },
       ]);
       expect(await itemActions(db, (await seed()).workspaceId, itemId)).toEqual([]);
       expect(await itemActions(db, seeded.workspaceId, "not-a-uuid")).toEqual([]);
+    });
+
+    it("shows a Destination the hosted email cap holds as waiting, with when it goes, and the rest as sent", async () => {
+      const { seeded, actionId } = await withAction("digest");
+      // Addresses go in name order, so "Team inbox" takes the day's last place and "Work inbox" waits.
+      const [later] = await db
+        .insert(destination)
+        .values({ workspaceId: seeded.workspaceId, type: "email", name: "Work inbox", config: { address: "w@example.com" }, confirmedAt: new Date() })
+        .returning();
+      await db.insert(actionDestination).values({ actionId, destinationId: present(later).id });
+      await db.update(action).set({ updatedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) }).where(eq(action.id, actionId));
+      const [itemId = ""] = await insertItems(seeded, [{ title: "A launch" }]);
+      await processItem(db, itemId, pipelineDeps);
+      const sentAt = new Date();
+      // One mail left in the local day, which the first address by name takes.
+      await db.insert(sentMessage).values(
+        Array.from({ length: 49 }, () => ({ workspaceId: seeded.workspaceId, type: "email" as const, sentAt })),
+      );
+
+      await sendDigest(db, actionId, {
+        ...deliverDeps,
+        secret: "a-better-auth-secret-of-at-least-32-chars",
+        now: () => sentAt,
+        emailCap: { queueNotice: () => Promise.resolve() },
+      });
+
+      const [fired] = await itemActions(db, seeded.workspaceId, itemId);
+      expect(present(fired).digestSent).toMatchObject([{ destination: "Team inbox", failed: false }]);
+      // The Workspace's timezone, where the cap's day ends, as Item detail writes it.
+      const dayEnd = new Date(Date.UTC(sentAt.getUTCFullYear(), sentAt.getUTCMonth(), sentAt.getUTCDate() + 1));
+      expect(present(fired).digestTo).toMatchObject([{ destination: "Work inbox", heldUntil: dayEnd }]);
     });
 
     it("still lists a Digest after it sends, with each Destination it went to and when", async () => {
