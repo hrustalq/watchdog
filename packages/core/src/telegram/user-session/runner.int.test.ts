@@ -49,6 +49,9 @@ describe("a Telegram user session's runner", () => {
   let historyAsked: { minId: number; limit: number }[];
   let enqueued: string[];
   let failCaptures: boolean;
+  /** The capture whose turn it is, counted across a test, and the one to fail, if any. */
+  let captures: number;
+  let failCaptureAt: number;
   let stopping: AbortController;
 
   beforeAll(async () => {
@@ -71,6 +74,8 @@ describe("a Telegram user session's runner", () => {
     historyAsked = [];
     enqueued = [];
     failCaptures = false;
+    captures = 0;
+    failCaptureAt = 0;
     stopping = new AbortController();
     // Node's crypto, because the stub's default is the browser's, which loads its WebAssembly through fetch.
     telegram = new StubTelegramClient({ crypto: new NodeCryptoProvider() });
@@ -112,7 +117,8 @@ describe("a Telegram user session's runner", () => {
     encryptionKey,
     createClient: () => telegram,
     enqueueItems: (_tx: unknown, ids: string[]) => {
-      if (failCaptures) {
+      captures += 1;
+      if (failCaptures || captures === failCaptureAt) {
         failCaptures = false;
         return Promise.reject(new Error("the database went away"));
       }
@@ -215,6 +221,53 @@ describe("a Telegram user session's runner", () => {
     await vi.waitFor(async () => {
       expect((await db.select().from(source).where(eq(source.id, watching.id)))[0]?.fetchState).toEqual({ lastMessageId: "160" });
     }, waitLong);
+    stopping.abort();
+    await turn;
+  });
+
+  it("catches up on more than a thousand messages in a gap, a page at a time, capturing every one", async () => {
+    const watching = await sessionSource({ backfilledAt: new Date(), fetchState: { lastMessageId: "10" } });
+    history = Array.from({ length: 1_500 }, (_, index) => message(index + 11, `Message ${String(index + 11)}`));
+
+    const turn = run();
+
+    await vi.waitFor(async () => {
+      expect(await itemsOf(watching.id)).toHaveLength(1_500);
+    }, waitEnd);
+    const captured = await itemsOf(watching.id);
+    // All of them, and nothing read before the gap: the old 1,000-message cap kept only the newest.
+    expect(new Set(captured.map(({ externalId }) => externalId)).size).toBe(1_500);
+    expect(captured.map(({ title }) => title)).toContain("Message 11");
+    expect(captured.map(({ title }) => title)).toContain("Message 1510");
+    expect(captured.map(({ title }) => title)).not.toContain("Message 10");
+    // Fifteen full pages and the empty one that says Telegram has nothing older.
+    expect(historyAsked).toEqual(Array.from({ length: 16 }, () => ({ minId: 10, limit: 100 })));
+    await vi.waitFor(async () => {
+      expect((await db.select().from(source).where(eq(source.id, watching.id)))[0]?.fetchState).toEqual({ lastMessageId: "1510" });
+    }, waitLong);
+    stopping.abort();
+    await turn;
+  });
+
+  it("keeps the pages a catch-up captured when a capture fails, and reads the rest next turn", async () => {
+    const watching = await sessionSource({ backfilledAt: new Date(), fetchState: { lastMessageId: "10" } });
+    history = Array.from({ length: 250 }, (_, index) => message(index + 11, `Message ${String(index + 11)}`));
+    // The catch-up captures the oldest page first, so the second capture is the middle page.
+    failCaptureAt = 2;
+
+    await expect(run()).rejects.toThrow(/the database went away/);
+    const [stopped] = await db.select().from(source).where(eq(source.id, watching.id));
+    expect(stopped?.fetchState).toEqual({ lastMessageId: "60" });
+    expect(await itemsOf(watching.id)).toHaveLength(50);
+
+    stopping = new AbortController();
+    const turn = run();
+    await vi.waitFor(async () => {
+      expect(await itemsOf(watching.id)).toHaveLength(250);
+    }, waitEnd);
+    const captured = await itemsOf(watching.id);
+    expect(new Set(captured.map(({ externalId }) => externalId)).size).toBe(250);
+    expect(captured.map(({ title }) => title)).toContain("Message 11");
     stopping.abort();
     await turn;
   });
