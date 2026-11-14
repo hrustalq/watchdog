@@ -5,7 +5,7 @@ import { decryptSecret, encryptSecret } from "../secrets/secrets.ts";
 import type { AlertMessage } from "./content.ts";
 import { type Destination, FinalSendError, NotYetSendError, RetryAfterSendError } from "./deliver.ts";
 import { groupedAlert } from "./group.ts";
-import { sourceAlertContent } from "./source-alert-content.ts";
+import { groupedSourceAlertContent, sourceAlertContent } from "./source-alert-content.ts";
 import { createFloodLimiter, createTelegramSender } from "./telegram.ts";
 
 const encryptionKey = Buffer.alloc(32, 7);
@@ -491,6 +491,32 @@ describe("createTelegramSender", () => {
       "Source Release feed is failing\nconnect ECONNREFUSED\nhttps://watchdog.test/sources",
       "Source Release feed recovered\nhttps://watchdog.test/sources",
     ]);
+  });
+
+  it("sends the Sources one change took as one Health alert that names them (GitHub issue #323)", async () => {
+    const telegram = fakeTelegram();
+    const grouped = (health: "failing" | "recovered", sources: string[], error: string | null) =>
+      groupedSourceAlertContent(health, sources, error, "https://watchdog.test");
+    await sender(telegram).send(
+      chat(),
+      grouped("failing", ["Release feed", "Ops chat"], "The Telegram session was revoked"),
+    );
+    await sender(telegram).send(
+      chat(),
+      grouped(
+        "recovered",
+        Array.from({ length: 30 }, (_, index) => `Chat ${String(index)}`),
+        null,
+      ),
+    );
+
+    const [failing, recovered] = telegram.requests.map(({ body }) => body.text);
+    expect(failing).toBe(
+      "2 Sources are failing\nThe Telegram session was revoked\n· Release feed\n· Ops chat\nhttps://watchdog.test/sources",
+    );
+    // Ten names, then the count of the rest, then the link: the message stays inside Telegram's limit.
+    const named = Array.from({ length: 10 }, (_, index) => `· Chat ${String(index)}`).join("\n");
+    expect(recovered).toBe(`30 Sources recovered\n${named}\nand 20 more\nhttps://watchdog.test/sources`);
   });
 
   it("cuts a Health alert's error so the message fits", async () => {

@@ -70,19 +70,22 @@ export function sourceAlertSubject(message: SourceAlertMessage) {
 
 /** The error line, which a recovery has none of. */
 const why = (error: string | null) =>
-  error === null || error === "" ? "" : `${error.slice(0, maxError).replace(/[\uD800-\uDBFF]$/, "")}\n`;
+  error === null || error === "" ? "" : error.slice(0, maxError).replace(/[\uD800-\uDBFF]$/, "");
 
 /** Plain text, the same lines in Telegram and in a mail. */
 export function sourceAlertText(message: SourceAlertMessage) {
   const { health, sources, unnamed, link } = message;
   const only = alone(message);
+  const error = why(message.error);
   if (only !== undefined) {
     if (health === "recovered") return `Source ${only} recovered\n${link}`;
-    return `Source ${only} is failing\n${why(message.error)}${link}`;
+    return `Source ${only} is failing\n${error === "" ? "" : `${error}\n`}${link}`;
   }
   const count = String(sourceAlertCount(message));
-  const heading = health === "recovered" ? `${count} Sources recovered` : `${count} Sources are failing`;
-  const names = sources.map((name) => `\n· ${name}`).join("");
-  const rest = unnamed === 0 ? "" : `\nand ${String(unnamed)} more`;
-  return `${heading}\n${why(message.error)}${names}${rest}\n${link}`;
+  const lines = [health === "recovered" ? `${count} Sources recovered` : `${count} Sources are failing`];
+  if (error !== "") lines.push(error);
+  lines.push(...sources.map((name) => `· ${name}`));
+  if (unnamed > 0) lines.push(`and ${String(unnamed)} more`);
+  lines.push(link);
+  return lines.join("\n");
 }
