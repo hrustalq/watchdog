@@ -13,7 +13,20 @@ export interface Rendered {
   blocked?: string[];
 }
 
+export interface RenderOptions {
+  /** The longest the whole render may take, from connecting to reading the page. */
+  timeout: number;
+  /** Ends the render early, as a poll stopped because its worker is stopping does. */
+  signal?: AbortSignal;
+  /**
+   * The Source's Region, as a CSS selector: the page is read once it matches. Without one the render
+   * waits for the page to stand still after `load`, so a page its scripts build is read once, not
+   * half built.
+   */
+  region?: string;
+}
+
 export interface Renderer {
   /** Throws why the page couldn't be rendered. The browser's page and context are closed either way. */
-  render: (url: string, options: { timeout: number; signal?: AbortSignal }) => Promise<Rendered>;
+  render: (url: string, options: RenderOptions) => Promise<Rendered>;
 }
