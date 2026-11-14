@@ -46,11 +46,28 @@ function pgbossState({ columns, indexes }: Awaited<ReturnType<typeof databaseSta
   };
 }
 
+/**
+ * What one `pnpm` start may take here. Each call is a pnpm and drizzle-kit start; a loaded runner charged
+ * two of them more than the 120 s a whole test was given, while the file ran in 29.2 s idle and a single
+ * `generate` took 34 s (#433). The call is bounded by this, so a start that really hangs fails as the
+ * call that hung, with its own error.
+ */
+const callBudget = 120_000;
+
+/**
+ * A test's deadline, counted from the calls it makes rather than picked: every `pnpm` call it waits for
+ * gets `callBudget`, and the test outlives them by a margin, so load may slow the work the test names and
+ * a hang still fails it. Both tests here make two calls, so each gets 250 s rather than a flat number the
+ * next loaded run outgrows.
+ */
+const testBudget = (calls: number) => calls * callBudget + 10_000;
+
 /** Runs pnpm in packages/db against the given database, the way a developer would. */
 async function pnpm(args: string[], databaseUrl: string) {
   return promisify(execFile)("pnpm", args, {
     cwd: packageDir,
     env: { ...process.env, DATABASE_URL: databaseUrl },
+    timeout: callBudget,
   });
 }
 
@@ -73,15 +90,9 @@ describe("migrate", () => {
 });
 
 /**
- * A test's deadline here. Its work is a pnpm and drizzle-kit start per invocation, which a loaded runner
- * charges to the test: "leaves the pgboss schema alone on generate and push" took 60.45 s on the branch-#180
- * run and "db:migrate applies every migration" timed out twice in a row on the #246 one, against the 60 s this
- * file allowed, while the file ran in 29.86 s idle and one `generate` took 34 s. The hooks already allow
- * 120_000 for a container start, and the file's vitest config says the timeout only catches a hang, so the
- * tests get that budget too: load may slow them, a hang still fails them.
+ * The drizzle-kit starts are the file's own work: they warm the cold pnpm start on the hook's budget, and
+ * each test's deadline counts the calls it makes (`testBudget`), so load may slow them, a hang still fails.
  */
-const testBudget = 120_000;
-
 describe("drizzle-kit", () => {
   let postgres: TestPostgres;
 
@@ -105,7 +116,7 @@ describe("drizzle-kit", () => {
     // migrate() at worker boot reads the same log, so it finds nothing to apply either.
     await migrate(postgres.url);
     expect(await databaseState(postgres.url)).toEqual(first);
-  }, testBudget);
+  }, testBudget(2));
 
   it("leaves the pgboss schema alone on generate and push", async () => {
     await migrate(postgres.url);
@@ -125,5 +136,5 @@ describe("drizzle-kit", () => {
     // re-creates them on push, which can leave one dropped. Public changes go through migrations.
     await pnpm(["exec", "drizzle-kit", "push", "--force"], postgres.url);
     expect(pgbossState(await databaseState(postgres.url))).toEqual(pgbossState(before));
-  }, testBudget);
+  }, testBudget(2));
 });
