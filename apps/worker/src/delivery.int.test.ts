@@ -914,6 +914,36 @@ describe("the deliver queue", () => {
     });
   });
 
+  it("purges Items past the Workspace's retention in the sweep", async () => {
+    const ownerId = crypto.randomUUID();
+    await db.insert(user).values({ id: ownerId, name: "Owner", email: `${ownerId}@example.com` });
+    const [ws] = await db.insert(workspace).values({ name: "Workspace", ownerUserId: ownerId }).returning();
+    const workspaceId = present(ws).id;
+    const [src] = await db
+      .insert(source)
+      .values({ workspaceId, type: "rss", name: "Feed", config: { url: "https://feeds.test/feed.rss" }, schedule: "*/15 * * * *" })
+      .returning();
+    const sourceId = present(src).id;
+    const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const [past] = await db
+      .insert(item)
+      .values({ workspaceId, sourceId, externalId: "past", title: "Past", body: "An entry.", raw: {}, capturedAt: daysAgo(100) })
+      .returning();
+    const [inside] = await db
+      .insert(item)
+      .values({ workspaceId, sourceId, externalId: "inside", title: "Inside", body: "An entry.", raw: {}, capturedAt: daysAgo(10) })
+      .returning();
+    const kept = async (id: string) => (await db.select({ id: item.id }).from(item).where(eq(item.id, id))).length;
+
+    // The sweep runs once when the worker starts, and the Workspace's 90-day default is what it reads.
+    await startWorker(vi.fn<AlertSender["send"]>(() => Promise.resolve()));
+
+    await vi.waitFor(async () => {
+      expect(await kept(present(past).id)).toBe(0);
+    }, waitLong);
+    expect(await kept(present(inside).id)).toBe(1);
+  });
+
   it("ends the job quietly when the Delivery is gone", async () => {
     const { deliveryId, itemId } = await seed();
     await db.delete(item).where(eq(item.id, itemId));
