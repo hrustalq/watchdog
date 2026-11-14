@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { Suspense } from "react";
 import { type Config, releasesFeedUrl, sessionOf, signInToken } from "@watchdog/core";
 import { buttonVariants } from "@/components/ui/button";
 import { dataBox, field, fieldError, label, textBox, textLink } from "@/components/field-classes";
@@ -29,7 +28,13 @@ import { DueRefresher } from "./due-refresher";
 
 export const metadata: Metadata = { title: "Sources · Watchdog" };
 
-export default function SourcesPage({ searchParams }: PageProps<"/sources">) {
+// The list is read without Suspense, so every row, with its Check now, Remove and Get a new link
+// forms, is in the first HTML, which is how they work without JavaScript. Streamed into a Suspense
+// boundary they are in the HTML too, but in a hidden div only React's script swaps in.
+export const instant = false;
+
+export default async function SourcesPage({ searchParams }: PageProps<"/sources">) {
+  const params = await searchParams;
   return (
     <div className="flex flex-1 flex-col">
       <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
@@ -50,22 +55,17 @@ export default function SourcesPage({ searchParams }: PageProps<"/sources">) {
           <h2 id="add-source" className="text-title">
             Add a Source
           </h2>
-          {/* The form is in the static shell, so it submits without JavaScript. What the last submit
-              said, read from the URL, streams in over it, which takes JavaScript to show. */}
-          <Suspense fallback={<AddSourceForm />}>
-            <AddSourceFormWithOutcome searchParams={searchParams} />
-          </Suspense>
+          {/* The form and what the last submit said, read from the URL, are both in the first HTML, so
+              the form submits and its outcome shows without JavaScript. */}
+          <AddSourceFormWithOutcome params={params} />
         </section>
-        <Suspense fallback={<div aria-busy="true" className="h-32 rounded-lg bg-muted" />}>
-          <SourceList searchParams={searchParams} />
-        </Suspense>
+        <SourceList params={params} />
       </main>
     </div>
   );
 }
 
-async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sources">, "searchParams">) {
-  const params = await searchParams;
+async function AddSourceFormWithOutcome({ params }: { params: Awaited<PageProps<"/sources">["searchParams"]> }) {
   const param = (name: string) => {
     const value = params[name];
     return typeof value === "string" ? value : "";
@@ -108,8 +108,7 @@ async function AddSourceFormWithOutcome({ searchParams }: Pick<PageProps<"/sourc
   );
 }
 
-async function SourceList({ searchParams }: Pick<PageProps<"/sources">, "searchParams">) {
-  const params = await searchParams;
+async function SourceList({ params }: { params: Awaited<PageProps<"/sources">["searchParams"]> }) {
   // A replace form's redirect carries its Source's id and how it went, so the outcome shows on that
   // row. Only a known id of a row this page renders can match.
   const replacedFor = typeof params.replaced === "string" ? params.replaced : "";
