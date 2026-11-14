@@ -203,9 +203,12 @@ async function claim(db: Db, actionId: string, deps: DigestDeps, startedAt: Date
     if (deps.emailCap !== undefined && sendable.some((target) => target.type === "email")) {
       // As many addresses as the local day has room for, in name order, and the rest held until it ends,
       // as this Digest. Telegram isn't counted against the cap, so it goes whatever the day holds. The
-      // turn is taken before the count, so two senders can't both take the day's last place.
+      // turn is taken before the count, so two senders can't both take the day's last place, and the
+      // settings are read after it, as `deliver` does, so a notice another send just recorded is seen.
       await takeEmailCapTurn(tx, settings.id);
-      const { room, dayEnd } = await emailCapRoom(tx, settings, startedAt);
+      const [current] = await tx.select().from(workspace).where(eq(workspace.id, settings.id));
+      if (current === undefined) return undefined;
+      const { room, dayEnd } = await emailCapRoom(tx, current, startedAt);
       let left = room;
       const sending: Sendable[] = [];
       const held: Sendable[] = [];
@@ -223,7 +226,7 @@ async function claim(db: Db, actionId: string, deps: DigestDeps, startedAt: Date
           .set({ heldUntil: dayEnd })
           .where(and(eq(digestItem.actionId, actionId), eq(digestItem.destinationId, target.id)));
       }
-      if (held.length > 0) await queueCapNoticeOnce(tx, settings, dayEnd, deps.emailCap);
+      if (held.length > 0) await queueCapNoticeOnce(tx, current, dayEnd, deps.emailCap);
       sendable = sending;
     }
 
