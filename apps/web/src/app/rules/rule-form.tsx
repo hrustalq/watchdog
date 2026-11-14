@@ -2,7 +2,7 @@
 
 import { draftToYaml } from "@watchdog/core/rules/draft";
 import Link from "next/link";
-import { createContext, use, useEffect, useMemo, useRef } from "react";
+import { createContext, use, useEffect, useMemo, useRef, useState } from "react";
 import { dataBox, field as fieldClass, fieldError, label, textBox, textLink } from "@/components/field-classes";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -17,6 +17,8 @@ import {
   type DeclaredField,
   destinationFits,
   type DestinationChoice,
+  digestScheduleName,
+  digestSchedules,
   type Draft,
   fieldPart,
   fieldReading,
@@ -271,15 +273,7 @@ export function RuleForm({
 
         {type === "action" ? (
           <>
-            {draft.kind === "digest" ? (
-              <TextField
-                path={["schedule"]}
-                labelText="Schedule"
-                hidden={hidden.includes("schedule")}
-                data
-                help={scheduleHelp}
-              />
-            ) : null}
+            {draft.kind === "digest" ? <ScheduleField hidden={hidden.includes("schedule")} help={scheduleHelp} /> : null}
             <DestinationList hidden={hidden.includes("destinations")} />
           </>
         ) : null}
@@ -316,6 +310,7 @@ function TextField({
   multiline = false,
   data = false,
   help,
+  problemsShown = true,
 }: {
   path: Path;
   labelText: string;
@@ -324,6 +319,8 @@ function TextField({
   /** Text a person reads as data, such as a cron expression. */
   data?: boolean;
   help?: string;
+  /** A control whose owner shows the problems, so the box doesn't repeat them. */
+  problemsShown?: boolean;
 }) {
   const { draft, edit } = useEditing();
   const invalid = useInvalid(path);
@@ -362,7 +359,7 @@ function TextField({
           )}
         </>
       )}
-      <Problems at={path} />
+      {problemsShown ? <Problems at={path} /> : null}
     </div>
   );
 }
@@ -495,6 +492,53 @@ function KindField({ hidden }: { hidden: boolean }) {
         </FieldLabel>
       )}
       <Problems at={["kind"]} />
+    </div>
+  );
+}
+
+/** The value of the form's Custom Schedule option, which no cron expression can be. */
+const customSchedule = "custom";
+
+/**
+ * A Digest's schedule: a named one, which writes its cron expression into the draft, or Custom,
+ * which shows the box for one. A value the YAML holds shows as its name, and stays as Custom with
+ * its text otherwise. A new Digest has chosen nothing.
+ */
+function ScheduleField({ hidden, help }: { hidden: boolean; help: string }) {
+  const { draft, edit } = useEditing();
+  const invalid = useInvalid(["schedule"]);
+  const schedule = textOf(valueAt(draft, ["schedule"]));
+  // Custom is a choice the draft can't hold while its box is empty, so the field remembers it.
+  const [custom, setCustom] = useState(false);
+  const chosen = custom || (schedule !== "" && digestScheduleName(schedule) === undefined) ? customSchedule : schedule;
+  const options: Options = [
+    ["", "Choose…"],
+    ...digestSchedules.map(({ cron, label: name }) => [cron, name] as const),
+    [customSchedule, "Custom"],
+  ];
+  return (
+    <div className="flex flex-col gap-2">
+      {hidden ? null : (
+        <>
+          <FieldLabel text="Schedule">
+            <Choice
+              labelText="Schedule"
+              value={chosen}
+              options={options}
+              invalid={invalid}
+              className="sm:w-64"
+              onChange={(next) => {
+                setCustom(next === customSchedule);
+                edit(["schedule"], next === customSchedule ? "" : next);
+              }}
+            />
+          </FieldLabel>
+          {chosen === customSchedule ? (
+            <TextField path={["schedule"]} labelText="Cron expression" hidden={false} data help={help} problemsShown={false} />
+          ) : null}
+        </>
+      )}
+      <Problems at={["schedule"]} />
     </div>
   );
 }

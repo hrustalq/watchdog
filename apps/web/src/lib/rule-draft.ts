@@ -100,6 +100,22 @@ export function changeKind({ schedule, ...draft }: Draft, kind: string): Draft {
   return inActionOrder(kind === "digest" ? { ...draft, kind, schedule: schedule ?? "" } : { ...draft, kind });
 }
 
+/**
+ * The schedules the Rules editor offers a Digest by name, in the Workspace's timezone. Every one
+ * meets hosted's minimum interval, so neither mode refuses it, and the form is rendered before the
+ * mode is known.
+ */
+export const digestSchedules: readonly { cron: string; label: string }[] = [
+  { cron: "0 * * * *", label: "Every hour" },
+  { cron: "0 9 * * *", label: "Every day at 09:00" },
+  { cron: "0 9 * * 1", label: "Every Monday at 09:00" },
+];
+
+/** A Digest's schedule as its name, or nothing when it's a cron expression the form doesn't offer. */
+export function digestScheduleName(cron: string) {
+  return digestSchedules.find((schedule) => schedule.cron === cron)?.label;
+}
+
 /** A webhook Action takes webhook Destinations only, and an alert or Digest takes the others. */
 export const destinationFits = (kind: unknown, type: DestinationChoice["type"]) =>
   (type === "webhook") === (kind === "webhook");
