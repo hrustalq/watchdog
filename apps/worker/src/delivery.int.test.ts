@@ -1,5 +1,5 @@
-import { createTelegramSender, encryptSecret } from "@watchdog/core";
-import type { AlertSender } from "@watchdog/core";
+import { createFloodLimiter, createTelegramSender, encryptSecret } from "@watchdog/core";
+import type { AlertSender, FloodLimiter } from "@watchdog/core";
 import {
   action,
   actionDestination,
@@ -58,6 +58,37 @@ function chatIdOf(body: unknown) {
     return parsed.chat_id;
   }
   throw new Error("Expected a chat_id in the request body");
+}
+
+/**
+ * A sender's flood limiter, keeping the moment it took each chat's turn: the reading of its own clock, which
+ * is where the gap that keeps Telegram's flood limit is stamped. Read at the transport, the gap also counts
+ * how long the runner took between taking the turn and calling `fetch`, which a loaded machine stretched
+ * until two sends dispatched a second apart landed 968 ms apart (#445).
+ */
+function limiterWithTurns() {
+  const reads: number[] = [];
+  const taken: { chatId: string; at: number }[] = [];
+  const limiter = createFloodLimiter(() => {
+    const at = Date.now();
+    reads.push(at);
+    return at;
+  });
+  return {
+    taken,
+    limiter: {
+      ...limiter,
+      // `nextTurn` reads its clock before anything else and only the call that owes no wait takes a turn, so
+      // that call's first reading is the moment the chat's turn began.
+      nextTurn: (chatId: string, deferTurn: boolean) => {
+        const from = reads.length;
+        const wait = limiter.nextTurn(chatId, deferTurn);
+        const at = reads[from];
+        if (wait === 0 && at !== undefined) taken.push({ chatId, at });
+        return wait;
+      },
+    } satisfies FloodLimiter,
+  };
 }
 
 describe("the deliver queue", () => {
@@ -669,14 +700,17 @@ describe("the deliver queue", () => {
       .returning({ id: delivery.id });
     const ids = [deliveryId, ...burst.map(({ id }) => id)];
 
-    // The real sender, so the flood limiter this measures is the one the worker sends through.
+    // The real sender, so the flood limiter this measures is the one the worker sends through, with its turns
+    // kept to read the spacing it gave the chat.
     const arrivals: { chatId: string; at: number }[] = [];
+    const turns = limiterWithTurns();
     const telegram = createTelegramSender(botToken, {
       fetch: (_input, init) => {
         arrivals.push({ chatId: chatIdOf(init?.body), at: Date.now() });
         return Promise.resolve(Response.json({ ok: true, result: {} }));
       },
       encryptionKey,
+      limiter: turns.limiter,
     });
     worker = new PgBoss({ connectionString: postgres.url, schedule: false, supervise: false });
     await worker.start();
@@ -733,8 +767,10 @@ describe("the deliver queue", () => {
     const elsewhereAt = present(arrivals.find(({ chatId }) => chatId === otherChat)).at;
     expect(elsewhereAt - elsewhereQueuedAt).toBeLessThan(5_000);
 
-    // The 50 reached that chat no faster than one a second, and waiting for a turn was no attempt of
-    // theirs: each went once, on its own, with one Log row saying so.
+    // The 50 reached that chat no faster than one a second, as the limiter stamped each turn it gave them:
+    // the gap is read there rather than at the transport, which also counts the runner's own time between
+    // taking the turn and calling `fetch` (#445). Waiting for a turn was no attempt of theirs either: each
+    // went once, on its own, with one Log row saying so.
     const burstTimes = arrivals
       .filter(({ chatId }) => chatId === burstChat)
       .map(({ at }) => at)
@@ -743,8 +779,12 @@ describe("the deliver queue", () => {
     // And it went before the last of them: queued behind the turns still waiting here, it would have been
     // half a minute off.
     expect(elsewhereAt).toBeLessThan(present(burstTimes.at(-1)));
-    const gapsMs = burstTimes.reduce<number[]>((gaps, at, index) => {
-      const before = burstTimes[index - 1];
+    const turnTimes = turns.taken
+      .filter(({ chatId }) => chatId === burstChat)
+      .map(({ at }) => at)
+      .sort((a, b) => a - b);
+    const gapsMs = turnTimes.reduce<number[]>((gaps, at, index) => {
+      const before = turnTimes[index - 1];
       if (before !== undefined) gaps.push(at - before);
       return gaps;
     }, []);
