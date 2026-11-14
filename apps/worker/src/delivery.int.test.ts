@@ -1005,8 +1005,11 @@ describe("the deliver queue", () => {
     const states = async () =>
       (
         await db.$client.query<{ name: string; state: string; retry_count: number }>(
-          "select name, state, retry_count from pgboss.job where name = any($1)",
-          [[deliverQueue, sourceAlertQueue, digestQueue]],
+          `select name, state, retry_count from pgboss.job
+           where (name = $1 and data->>'deliveryId' = $4)
+              or (name = $2 and data->>'alertId' = $5)
+              or (name = $3 and data->>'actionId' = $6)`,
+          [deliverQueue, sourceAlertQueue, digestQueue, deliveryId, present(health).id, digestId],
         )
       ).rows;
 
