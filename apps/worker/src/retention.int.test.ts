@@ -14,6 +14,7 @@ import {
   itemLog,
   migrate,
   source,
+  sourceAlert,
   sql,
   user,
   workspace,
@@ -117,6 +118,22 @@ describe("the sweep's retention purge", () => {
   const itemExists = async (id: string) => (await db.select({ id: item.id }).from(item).where(eq(item.id, id))).length > 0;
   const deliveryExists = async (id: string) =>
     (await db.select({ id: delivery.id }).from(delivery).where(eq(delivery.id, id))).length > 0;
+  const alertExists = async (id: string) =>
+    (await db.select({ id: sourceAlert.id }).from(sourceAlert).where(eq(sourceAlert.id, id))).length > 0;
+
+  /** A Source Health alert to the sign-in address, written in this status this many days ago. */
+  async function addAlert(
+    workspaceId: string,
+    sourceId: string,
+    status: "queued" | "held" | "sent" | "failed",
+    days: number,
+  ) {
+    const [row] = await db
+      .insert(sourceAlert)
+      .values({ workspaceId, sourceId, kind: "failing", error: "Feed timed out", status, createdAt: daysAgo(days) })
+      .returning();
+    return present(row).id;
+  }
 
   it("purges each table past its Workspace's window and leaves what is inside it", async () => {
     const { workspaceId, sourceId } = await newWorkspace(90, 30);
@@ -145,7 +162,7 @@ describe("the sweep's retention purge", () => {
 
     const purged = await purgeExpiredRows(db);
 
-    expect(purged).toEqual({ items: 1, logs: 1, deliveries: 1 });
+    expect(purged).toEqual({ items: 1, logs: 1, deliveries: 1, sourceAlerts: 0 });
     expect(await itemExists(old)).toBe(false);
     expect(await itemExists(live)).toBe(true);
     expect(await messagesOf(old)).toEqual([]);
@@ -170,11 +187,35 @@ describe("the sweep's retention purge", () => {
     const old = await addItem(workspaceId, sourceId, "unlimited", 4000);
     await addLog(old, 4000, "Captured long ago");
     const kept = await addDelivery(workspaceId, old, 4000);
+    const keptAlert = await addAlert(workspaceId, sourceId, "sent", 4000);
 
-    expect(await purgeExpiredRows(db)).toEqual({ items: 0, logs: 0, deliveries: 0 });
+    expect(await purgeExpiredRows(db)).toEqual({ items: 0, logs: 0, deliveries: 0, sourceAlerts: 0 });
     expect(await itemExists(old)).toBe(true);
     expect(await messagesOf(old)).toEqual(["Captured long ago"]);
     expect(await deliveryExists(kept)).toBe(true);
+    expect(await alertExists(keptAlert)).toBe(true);
+  });
+
+  it("purges a sent or a failed Health alert past the Log window, and never one still waiting", async () => {
+    const { workspaceId, sourceId } = await newWorkspace(90, 30);
+    const oldSent = await addAlert(workspaceId, sourceId, "sent", 31);
+    const oldFailed = await addAlert(workspaceId, sourceId, "failed", 31);
+    // Nothing deletes an alert that hasn't gone, however long it has waited.
+    const oldHeld = await addAlert(workspaceId, sourceId, "held", 31);
+    const oldQueued = await addAlert(workspaceId, sourceId, "queued", 400);
+    const freshSent = await addAlert(workspaceId, sourceId, "sent", 1);
+    // A second Workspace whose Log window is longer than every one of those ages: nothing of it goes.
+    const other = await newWorkspace(200, 200);
+    const otherSent = await addAlert(other.workspaceId, other.sourceId, "sent", 31);
+
+    expect(await purgeExpiredRows(db)).toEqual({ items: 0, logs: 0, deliveries: 0, sourceAlerts: 2 });
+
+    expect(await alertExists(oldSent)).toBe(false);
+    expect(await alertExists(oldFailed)).toBe(false);
+    expect(await alertExists(oldHeld)).toBe(true);
+    expect(await alertExists(oldQueued)).toBe(true);
+    expect(await alertExists(freshSent)).toBe(true);
+    expect(await alertExists(otherSent)).toBe(true);
   });
 
   it("applies a changed window on the next sweep", async () => {
@@ -182,13 +223,13 @@ describe("the sweep's retention purge", () => {
     const old = await addItem(workspaceId, sourceId, "changed", 91);
     await addLog(old, 31, "Delivered 31 days ago");
 
-    expect(await purgeExpiredRows(db)).toEqual({ items: 0, logs: 0, deliveries: 0 });
+    expect(await purgeExpiredRows(db)).toEqual({ items: 0, logs: 0, deliveries: 0, sourceAlerts: 0 });
     expect(await itemExists(old)).toBe(true);
 
     await db.update(workspace).set({ itemsRetentionDays: 30, logRetentionDays: 10 }).where(eq(workspace.id, workspaceId));
 
     // The Item goes with its Log row, which the cascade takes before the Log window is asked about.
-    expect(await purgeExpiredRows(db)).toEqual({ items: 1, logs: 0, deliveries: 0 });
+    expect(await purgeExpiredRows(db)).toEqual({ items: 1, logs: 0, deliveries: 0, sourceAlerts: 0 });
     expect(await itemExists(old)).toBe(false);
     expect(await messagesOf(old)).toEqual([]);
   });
@@ -209,7 +250,7 @@ describe("the sweep's retention purge", () => {
     const purged = await purgeExpiredRows(db);
     const elapsed = Math.round(performance.now() - started);
 
-    expect(purged).toEqual({ items: backlog, logs: 0, deliveries: 0 });
+    expect(purged).toEqual({ items: backlog, logs: 0, deliveries: 0, sourceAlerts: 0 });
     expect(await itemExists(fresh)).toBe(true);
     expect(elapsed, `purged ${String(backlog)} Items in ${String(elapsed)} ms`).toBeLessThan(60_000);
   }, 120_000);
