@@ -136,6 +136,8 @@ Watchdog is an instrument panel for one person keeping watch over many sources. 
 
 The system is built on the project's shadcn/ui theme (`apps/web/src/app/globals.css`, style `base-rhea`, Base UI primitives) and keeps its token names and structure. Dark is the default and the reference theme; light is derived from it and kept for parity. The 2D chrome (panels, feed, inputs, buttons) is flat and tonal. Real depth belongs to one place only: the three.js pipeline scene, where sources, classifiers, extractor rules and actions sit in space and items flow between them.
 
+The theme follows the OS colour scheme, with no switch in the app and no stored choice: `prefers-color-scheme` in `apps/web/src/app/globals.css` selects the tokens, as a media query rather than a class set by script, so the first paint already has the right theme and it holds with JavaScript off. Dark is the base and the reference theme: an explicit light appearance renders the light one, and anything else — an explicit dark appearance, or a browser with no preference to report — keeps dark. `color-scheme` follows the same query, so form controls (time inputs, checkboxes, number spinners) and scrollbars match the theme.
+
 Density is compact (32px controls, 4px grid) because the job is scanning many items quickly. Type comes from a single variable family, Recursive, whose MONO axis switches between the UI voice and the data voice, so labels and readings always look like the same instrument.
 
 **Key Characteristics:**
