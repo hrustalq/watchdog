@@ -80,6 +80,10 @@ function differs(form: HTMLFormElement, initial: AlertSettingsForm) {
     text("quietHoursEnd") !== initial.quietHoursEnd ||
     data.has("severity5Bypasses") !== initial.severity5Bypasses ||
     text("alertsPerHour") !== initial.alertsPerHour ||
-    text("burstWindowSeconds") !== initial.burstWindowSeconds
+    text("burstWindowSeconds") !== initial.burstWindowSeconds ||
+    text("itemsRetentionDays") !== initial.itemsRetentionDays ||
+    data.has("itemsUnlimited") !== initial.itemsUnlimited ||
+    text("logRetentionDays") !== initial.logRetentionDays ||
+    data.has("logUnlimited") !== initial.logUnlimited
   );
 }

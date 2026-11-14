@@ -19,8 +19,11 @@ import {
  */
 export async function saveSettingsAction(formData: FormData) {
   const { workspace } = await requireWorkspace();
+  const { db, mode } = server();
   const form = readAlertSettingsForm((name) => formData.get(name));
-  const result = await saveAlertSettings(server().db, workspace.id, form);
+  // Unlimited retention is a self-hosted install's to choose, so a posted null is refused on hosted here
+  // too, not only by the screen not offering it.
+  const result = await saveAlertSettings(db, workspace.id, form, { selfHosted: mode === "self-hosted" });
   // Replaced, because Back to the page before the save could save its old values over the new ones. A
   // refusal is replaced too, or a save after it would leave that page one Back away.
   if ("saved" in result) redirect("/settings?saved=1", RedirectType.replace);

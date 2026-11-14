@@ -12,6 +12,7 @@ import {
   parseAlertSettings,
   quietHoursSentence,
   readAlertSettingsForm,
+  retentionRange,
   timezones,
 } from "@/lib/settings";
 import { cn } from "@/lib/utils";
@@ -35,12 +36,13 @@ const help = "text-xs text-muted-foreground";
 export default async function SettingsPage({ searchParams }: PageProps<"/settings">) {
   const [{ user, workspace, admin }, params] = await Promise.all([requireWorkspace(), searchParams]);
   const { db, mode } = server();
+  const selfHosted = mode === "self-hosted";
   const saved = await loadAlertSettings(db, workspace.id);
 
   // A refused save comes back with the form as it was posted, and what's wrong is read from it again.
   // A link whose values pass the check isn't a refusal, so the form shows what's saved, not its values.
   const posted = params.refused === "1" ? readAlertSettingsForm((name) => params[name]) : undefined;
-  const parsed = posted === undefined ? undefined : parseAlertSettings(posted);
+  const parsed = posted === undefined ? undefined : parseAlertSettings(posted, { selfHosted });
   const errors = parsed !== undefined && "errors" in parsed ? parsed.errors : {};
   const refused = Object.keys(errors).length > 0 ? posted : undefined;
   const values: AlertSettingsForm = refused ?? {
@@ -52,6 +54,11 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
     severity5Bypasses: saved.severity5BypassesQuietHours,
     alertsPerHour: String(saved.alertsPerHour),
     burstWindowSeconds: String(saved.burstWindowSeconds),
+    // Unlimited leaves the day count inert, so it shows what a window would start from.
+    itemsRetentionDays: String(saved.itemsRetentionDays ?? 90),
+    itemsUnlimited: saved.itemsRetentionDays === null,
+    logRetentionDays: String(saved.logRetentionDays ?? 30),
+    logUnlimited: saved.logRetentionDays === null,
   };
   // The check finds problems in the form's order.
   const firstError = Object.keys(errors)[0];
@@ -267,6 +274,65 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
                   </p>
                 </div>
               </div>
+            </section>
+
+            <section aria-labelledby="retention-heading" className="flex flex-col gap-4 p-4">
+              <div className="flex flex-col gap-1">
+                <h2 id="retention-heading" className="text-title">
+                  Retention
+                </h2>
+                <p className="max-w-[70ch] text-sm text-muted-foreground">
+                  The worker&apos;s sweep, once a minute, deletes what is older than these windows. A saved
+                  window applies on the next sweep.{selfHosted ? " A self-hosted install can keep everything." : ""}
+                </p>
+              </div>
+              {(
+                [
+                  ["itemsRetentionDays", "itemsUnlimited", "items-retention", "Items, in days"],
+                  ["logRetentionDays", "logUnlimited", "log-retention", "Log, in days"],
+                ] as const
+              ).map(([name, unlimitedName, id, title]) => (
+                <div key={id} className="flex flex-col gap-2">
+                  <label htmlFor={id} className={label}>
+                    {title}
+                  </label>
+                  <input
+                    {...fieldProps(name, id, `${id}-help`)}
+                    type="number"
+                    min={retentionRange.min}
+                    max={retentionRange.max}
+                    step={1}
+                    inputMode="numeric"
+                    className={cn(field, dataBox, "tabular-nums sm:max-w-40")}
+                  />
+                  {errorFor(name, id)}
+                  <p id={`${id}-help`} className={help}>
+                    {/* Both windows hold what is inside them, so the wording names what goes. */}
+                    {name === "itemsRetentionDays"
+                      ? "Older Items go, with their Log rows, Deliveries and Ratings. A Correction of one keeps the title and summary it copied."
+                      : "Older Log rows go, even when their Item is newer. Deliveries follow this window."}{" "}
+                    From 1 to 3,650 days.
+                  </p>
+                  {selfHosted ? (
+                    <div className="flex flex-col gap-1">
+                      <label htmlFor={`${id}-unlimited`} className={cn(label, "flex min-h-6 items-center gap-2")}>
+                        <input
+                          id={`${id}-unlimited`}
+                          name={unlimitedName}
+                          type="checkbox"
+                          defaultChecked={values[unlimitedName]}
+                          aria-describedby={`${id}-unlimited-help`}
+                          className={checkbox}
+                        />
+                        Unlimited: keep everything
+                      </label>
+                      <p id={`${id}-unlimited-help`} className={cn(help, "pl-6")}>
+                        Nothing of this is ever purged.
+                      </p>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
             </section>
           </div>
         </SettingsForm>

@@ -211,6 +211,13 @@
       "when": 1794675424734,
       "tag": "0029_worthless_lady_mastermind",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794683768390,
+      "tag": "0030_complete_firedrake",
+      "breakpoints": true
     }
   ]
 }

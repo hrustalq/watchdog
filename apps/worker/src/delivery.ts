@@ -14,7 +14,7 @@ import {
   sendSourceAlert,
   type SourceAlertDeps,
 } from "@watchdog/core";
-import { type Db, sql } from "@watchdog/db";
+import { type Db, type SQL, sql, workspace } from "@watchdog/db";
 import { fromDrizzle, type JobResult, type PgBoss } from "pg-boss";
 
 export const deliverQueue = "deliver";
@@ -113,6 +113,104 @@ export async function enqueueDueDigests(db: Db, boss: PgBoss) {
     digestQueue,
     due.map((actionId) => ({ data: { actionId }, singletonKey: actionId })),
   );
+}
+
+/** Rows one delete takes, so the first sweep over a year of Items never holds the sweep for a backlog. */
+export const purgeBatchSize = 5_000;
+
+export interface PurgedRows {
+  items: number;
+  logs: number;
+  deliveries: number;
+}
+
+async function deletedRows(db: Db, statement: SQL) {
+  const result = await db.execute(statement);
+  return result.rowCount ?? 0;
+}
+
+/**
+ * Takes one batch at a time: Postgres has no LIMIT on DELETE, so each statement names the rows it means by
+ * their ctid, and the caller asks again while a batch came back full.
+ */
+async function purgeInBatches(db: Db, deleteBatch: (limit: number) => Promise<number>) {
+  let purged = 0;
+  for (;;) {
+    const deleted = await deleteBatch(purgeBatchSize);
+    purged += deleted;
+    if (deleted < purgeBatchSize) return purged;
+  }
+}
+
+/**
+ * Deletes what each Workspace's retention windows no longer cover (docs: Processing pipeline,
+ * "Retention"): Items captured before its Items window, with the Log, Deliveries and Ratings that cascade
+ * from them; the Log rows older than its Log window; and the Deliveries older than that window, reached
+ * through their Destination. A null window is unlimited, so nothing of that kind goes.
+ *
+ * Each batch is its own statement, so a year of Items goes without holding the sweep, and the delivery
+ * queue keeps its jobs: a Delivery purged before its job runs is one `deliver` finds and returns on.
+ */
+export async function purgeExpiredRows(db: Db): Promise<PurgedRows> {
+  const windows = await db
+    .select({
+      id: workspace.id,
+      itemsDays: workspace.itemsRetentionDays,
+      logDays: workspace.logRetentionDays,
+    })
+    .from(workspace);
+  const purged: PurgedRows = { items: 0, logs: 0, deliveries: 0 };
+  for (const window of windows) {
+    // A const apiece, so the null check holds inside the closures below.
+    const itemsDays = window.itemsDays;
+    const logDays = window.logDays;
+    if (itemsDays !== null) {
+      purged.items += await purgeInBatches(db, (limit) =>
+        deletedRows(
+          db,
+          sql`
+            delete from item where ctid in (
+              select ctid from item
+              where workspace_id = ${window.id} and captured_at < now() - make_interval(days => ${itemsDays})
+              limit ${limit}
+            )
+          `,
+        ),
+      );
+    }
+    if (logDays === null) continue;
+    purged.logs += await purgeInBatches(db, (limit) =>
+      deletedRows(
+        db,
+        sql`
+          delete from item_log where ctid in (
+            select l.ctid from item_log l join item i on i.id = l.item_id
+            where i.workspace_id = ${window.id} and l.at < now() - make_interval(days => ${logDays})
+            limit ${limit}
+          )
+        `,
+      ),
+    );
+    purged.deliveries += await purgeInBatches(db, (limit) =>
+      deletedRows(
+        db,
+        sql`
+          delete from delivery where ctid in (
+            select d.ctid from delivery d join destination dest on dest.id = d.destination_id
+            where dest.workspace_id = ${window.id} and d.created_at < now() - make_interval(days => ${logDays})
+            limit ${limit}
+          )
+        `,
+      ),
+    );
+  }
+  if (purged.items + purged.logs + purged.deliveries > 0) {
+    console.log(
+      `Retention purged ${String(purged.items)} Items, ${String(purged.logs)} Log rows and ` +
+        `${String(purged.deliveries)} Deliveries`,
+    );
+  }
+  return purged;
 }
 
 /** Call before the pipeline starts: queueing a job fails on a queue that doesn't exist. */
@@ -219,6 +317,7 @@ export async function startDelivery(
     await enqueueDueDeliveries(db, boss);
     await enqueueDueSourceAlerts(db, boss);
     await enqueueDueDigests(db, boss);
+    await purgeExpiredRows(db);
     await purgeSentMessages(db);
     await purgeExpiredLinkCodes(db);
   });
