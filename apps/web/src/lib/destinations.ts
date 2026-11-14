@@ -20,6 +20,7 @@ import {
   delivery,
   destination,
   destinationConfirmation,
+  digestItem,
   eq,
   gt,
   healthAlertDestination,
@@ -451,6 +452,22 @@ export async function removeDestination(db: Db, workspaceId: string, destination
     }
 
     await tx.delete(delivery).where(eq(delivery.destinationId, destinationId));
+    // What the Destinations' Digests had collected for it goes with it, and each Item's Log says so, so
+    // none of it waits for a Destination that is gone.
+    const collected = await tx
+      .delete(digestItem)
+      .where(eq(digestItem.destinationId, destinationId))
+      .returning({ itemId: digestItem.itemId, actionId: digestItem.actionId });
+    if (collected.length > 0) {
+      await tx.insert(itemLog).values(
+        collected.map(({ itemId, actionId }) => ({
+          itemId,
+          stage: "act" as const,
+          message: `Not sent: the Destination ${target.name} was removed`,
+          data: { actionId, destinationId, destination: target.name },
+        })),
+      );
+    }
     await tx.delete(actionDestination).where(eq(actionDestination.destinationId, destinationId));
     await tx.delete(destination).where(eq(destination.id, destinationId));
     return { changed };

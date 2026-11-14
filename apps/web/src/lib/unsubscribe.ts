@@ -1,7 +1,7 @@
 // One-click unsubscribe from a Digest mail (docs: Actions and delivery, "Digests"; Security and privacy,
 // "The unsubscribe URL"). No session: the token's signature is the check.
 import { checkUnsubscribeToken } from "@watchdog/core";
-import { action, actionDestination, and, type Db, eq, sql } from "@watchdog/db";
+import { action, actionDestination, and, type Db, digestItem, eq, sql } from "@watchdog/db";
 import { definitionWithout } from "./destinations.ts";
 
 export type UnsubscribeResult = "invalid" | "removed" | "disabled" | "already";
@@ -38,6 +38,10 @@ export async function unsubscribe(db: Db, token: string, secret: string): Promis
     await tx
       .delete(actionDestination)
       .where(and(eq(actionDestination.actionId, actionId), eq(actionDestination.destinationId, destinationId)));
+    // It said stop, so what this Digest had collected for it isn't kept for it.
+    await tx
+      .delete(digestItem)
+      .where(and(eq(digestItem.actionId, actionId), eq(digestItem.destinationId, destinationId)));
     await tx
       .update(action)
       .set({

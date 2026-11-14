@@ -22,11 +22,11 @@ export async function takeEmailCapTurn(tx: Tx, workspaceId: string) {
 }
 
 /**
- * When a Workspace's next mail can go, if it has reached the cap, or when `adding` mails, such as a
- * Digest's to each of its addresses, wouldn't fit under it. The local day comes from Postgres,
- * because a cron iterator throws on a day whose midnight doesn't exist.
+ * The mails a Workspace has sent in its local day so far, and when that day ends. The local day comes
+ * from Postgres, because a cron iterator throws on a day whose midnight doesn't exist. A group-less
+ * `count(*)` always gives one row; the fallback is for the type, and claims no room.
  */
-export async function emailCapEnd(tx: Tx, settings: typeof workspace.$inferSelect, now: Date, adding = 1) {
+async function emailCapDay(tx: Tx, settings: typeof workspace.$inferSelect, now: Date) {
   const timezone = sql`${settings.timezone}::text`;
   const today = sql`(${now.toISOString()}::timestamptz at time zone ${timezone})::date`;
   const [sent] = await tx
@@ -42,7 +42,25 @@ export async function emailCapEnd(tx: Tx, settings: typeof workspace.$inferSelec
         sql`${sentMessage.sentAt} >= (${today}::timestamp at time zone ${timezone})`,
       ),
     );
-  return sent === undefined || sent.mails + adding <= mailsPerDay ? undefined : sent.dayEnd;
+  return sent ?? { mails: mailsPerDay, dayEnd: now };
+}
+
+/**
+ * When a Workspace's next mail can go, if it has reached the cap, or when `adding` mails, such as a
+ * Digest's to each of its addresses, wouldn't fit under it.
+ */
+export async function emailCapEnd(tx: Tx, settings: typeof workspace.$inferSelect, now: Date, adding = 1) {
+  const { mails, dayEnd } = await emailCapDay(tx, settings, now);
+  return mails + adding <= mailsPerDay ? undefined : dayEnd;
+}
+
+/**
+ * How many more mails the Workspace's local day has room for, and when it ends: a Digest sends to as many
+ * of its addresses as fit, rather than holding them all (Actions and delivery, "Sending a Digest").
+ */
+export async function emailCapRoom(tx: Tx, settings: typeof workspace.$inferSelect, now: Date) {
+  const { mails, dayEnd } = await emailCapDay(tx, settings, now);
+  return { room: Math.max(mailsPerDay - mails, 0), dayEnd };
 }
 
 /** Queues the day's notice unless it has been queued already. */
@@ -72,7 +90,8 @@ export async function sendEmailCapNotice(db: Db, workspaceId: string, mailer: Ma
       `Your Workspace has sent its ${String(mailsPerDay)} alert mails for today.`,
       `Further alert mail is held until midnight (${found.timezone}), then goes out as one message per address.`,
       "Nothing is lost, and Telegram alerts and webhooks aren't affected.",
-      "A Digest that goes to an address waits with its mail, at its Telegram chats too, and goes out as one Digest.",
+      "A Digest still goes to its Telegram chats at its time, and to the addresses the day has room for.",
+      "Each of its other addresses gets that Digest after midnight, as one Digest.",
     ].join("\n"),
     ...(from !== undefined && { from }),
   });

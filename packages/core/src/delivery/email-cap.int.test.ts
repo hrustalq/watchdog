@@ -293,6 +293,9 @@ describe("alert email", () => {
       expect(notice.text).toContain("50");
       expect(notice.text).toContain("Asia/Tokyo");
       expect(notice.text).toContain("Nothing is lost");
+      // A Digest no longer waits whole: its chats go at its time, and only its held addresses wait.
+      expect(notice.text).toContain("A Digest still goes to its Telegram chats at its time");
+      expect(notice.text).not.toContain("waits with its mail");
     });
 
     it("sends no notice for a Workspace that has gone", async () => {
