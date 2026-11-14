@@ -16,6 +16,10 @@ const form = (values: Partial<AlertSettingsForm> = {}): AlertSettingsForm => ({
   severity5Bypasses: false,
   alertsPerHour: "20",
   burstWindowSeconds: "60",
+  itemsRetentionDays: "90",
+  itemsUnlimited: false,
+  logRetentionDays: "30",
+  logUnlimited: false,
   ...values,
 });
 
@@ -35,6 +39,8 @@ describe("parseAlertSettings", () => {
         severity5BypassesQuietHours: true,
         alertsPerHour: 20,
         burstWindowSeconds: 60,
+        itemsRetentionDays: 90,
+        logRetentionDays: 30,
       },
     });
   });
@@ -90,6 +96,45 @@ describe("parseAlertSettings", () => {
     ["burstWindowSeconds", "600", 600],
   ] as const)("accepts %s at the edge %j", (name, value, parsed) => {
     expect(parseAlertSettings(form({ [name]: value }))).toMatchObject({ values: { [name]: parsed } });
+  });
+
+  it.each([
+    ["itemsRetentionDays", "1"],
+    ["itemsRetentionDays", "3650"],
+    ["logRetentionDays", "7"],
+  ] as const)("accepts %s of %j days", (name, value) => {
+    expect(parseAlertSettings(form({ [name]: value }))).toMatchObject({ values: { [name]: Number(value) } });
+  });
+
+  it.each([
+    ["itemsRetentionDays", "0"],
+    ["itemsRetentionDays", "3651"],
+    ["itemsRetentionDays", ""],
+    ["logRetentionDays", "1.5"],
+    ["logRetentionDays", "-30"],
+  ] as const)("refuses %s of %j beside its field", (name, value) => {
+    expect(refusedOn(form({ [name]: value }))).toEqual([name]);
+  });
+
+  it("reads a ticked Unlimited as no window at all on a self-hosted install", () => {
+    expect(parseAlertSettings(form({ itemsUnlimited: true, logUnlimited: true }), { selfHosted: true })).toMatchObject({
+      values: { itemsRetentionDays: null, logRetentionDays: null },
+    });
+  });
+
+  it("ignores the day count a ticked Unlimited leaves behind", () => {
+    expect(
+      parseAlertSettings(form({ itemsUnlimited: true, itemsRetentionDays: "", logRetentionDays: "60" }), {
+        selfHosted: true,
+      }),
+    ).toMatchObject({ values: { itemsRetentionDays: null, logRetentionDays: 60 } });
+  });
+
+  it.each([
+    ["itemsUnlimited", "itemsRetentionDays"],
+    ["logUnlimited", "logRetentionDays"],
+  ] as const)("refuses %s on hosted, which keeps the defaults as its free limits", (name, field) => {
+    expect(refusedOn(form({ [name]: true }))).toEqual([field]);
   });
 
   it("reports every field that's wrong at once", () => {

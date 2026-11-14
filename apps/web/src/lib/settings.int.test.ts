@@ -42,6 +42,10 @@ const form = (values: Partial<AlertSettingsForm> = {}): AlertSettingsForm => ({
   severity5Bypasses: false,
   alertsPerHour: "20",
   burstWindowSeconds: "60",
+  itemsRetentionDays: "90",
+  itemsUnlimited: false,
+  logRetentionDays: "30",
+  logUnlimited: false,
   ...values,
 });
 
@@ -167,7 +171,41 @@ describe("the Settings screen's alert settings", () => {
       severity5BypassesQuietHours: false,
       alertsPerHour: 20,
       burstWindowSeconds: 60,
+      itemsRetentionDays: 90,
+      logRetentionDays: 30,
     });
+  });
+
+  it("saves both retention windows, and Unlimited on a self-hosted install", async () => {
+    const workspaceId = await newWorkspace();
+
+    const result = await saveAlertSettings(db, workspaceId, form({ itemsRetentionDays: "180", logRetentionDays: "14" }));
+
+    expect(result).toEqual({ saved: true });
+    expect(await loadAlertSettings(db, workspaceId)).toMatchObject({ itemsRetentionDays: 180, logRetentionDays: 14 });
+
+    const unlimited = await saveAlertSettings(
+      db,
+      workspaceId,
+      form({ itemsUnlimited: true, logUnlimited: true }),
+      { selfHosted: true },
+    );
+
+    expect(unlimited).toEqual({ saved: true });
+    expect(await loadAlertSettings(db, workspaceId)).toMatchObject({
+      itemsRetentionDays: null,
+      logRetentionDays: null,
+    });
+  });
+
+  it("refuses unlimited on hosted, which keeps the defaults, and changes nothing", async () => {
+    const workspaceId = await newWorkspace();
+    const before = await loadAlertSettings(db, workspaceId);
+
+    const result = await saveAlertSettings(db, workspaceId, form({ itemsUnlimited: true, logUnlimited: true }));
+
+    expect("errors" in result && Object.keys(result.errors).sort()).toEqual(["itemsRetentionDays", "logRetentionDays"]);
+    expect(await loadAlertSettings(db, workspaceId)).toEqual(before);
   });
 
   it("saves Europe/Moscow 22:00 to 07:00, says so, and holds a Severity 4 alert sent at 23:00 Moscow time", async () => {

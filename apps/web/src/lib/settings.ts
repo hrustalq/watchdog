@@ -43,6 +43,8 @@ function listedTimezone(name: string) {
 
 export const alertsPerHourRange = { min: 1, max: 1000 } as const;
 export const burstWindowRange = { min: 0, max: 600 } as const;
+/** A retention window in days: ten years is long enough that nothing real needs more. */
+export const retentionRange = { min: 1, max: 3650 } as const;
 
 /** What the form posts, as text, with each checkbox as whether it was ticked. */
 export interface AlertSettingsForm {
@@ -53,9 +55,21 @@ export interface AlertSettingsForm {
   severity5Bypasses: boolean;
   alertsPerHour: string;
   burstWindowSeconds: string;
+  /** The day counts are inert while the matching "unlimited" box is ticked. */
+  itemsRetentionDays: string;
+  itemsUnlimited: boolean;
+  logRetentionDays: string;
+  logUnlimited: boolean;
 }
 
-export type AlertSettingsField = "timezone" | "quietHoursStart" | "quietHoursEnd" | "alertsPerHour" | "burstWindowSeconds";
+export type AlertSettingsField =
+  | "timezone"
+  | "quietHoursStart"
+  | "quietHoursEnd"
+  | "alertsPerHour"
+  | "burstWindowSeconds"
+  | "itemsRetentionDays"
+  | "logRetentionDays";
 
 export interface AlertSettings {
   timezone: string;
@@ -65,6 +79,9 @@ export interface AlertSettings {
   severity5BypassesQuietHours: boolean;
   alertsPerHour: number;
   burstWindowSeconds: number;
+  /** How long the Workspace keeps its Items and its Log, in days. Null is unlimited. */
+  itemsRetentionDays: number | null;
+  logRetentionDays: number | null;
 }
 
 const time = /^([01]\d|2[0-3]):[0-5]\d$/;
@@ -75,9 +92,28 @@ function whole(text: string, { min, max }: { min: number; max: number }) {
   return value >= min && value <= max ? value : undefined;
 }
 
+/**
+ * A retention window, in whole days, or null for unlimited. Unlimited is a self-hosted install's to
+ * choose: a hosted plan keeps the defaults as its free limits, so a posted null there is refused.
+ */
+function retentionDays(days: string, unlimited: boolean, selfHosted: boolean) {
+  if (unlimited) {
+    if (!selfHosted) {
+      return { error: "Unlimited is only for a self-hosted install: choose a number of days." };
+    }
+    return { days: null };
+  }
+  const value = whole(days, retentionRange);
+  if (value === undefined) {
+    return { error: "Enter a whole number of days from 1 to 3,650, or tick Unlimited." };
+  }
+  return { days: value };
+}
+
 /** The form as the Workspace's columns, or what's wrong with each field that's wrong. */
 export function parseAlertSettings(
   form: AlertSettingsForm,
+  { selfHosted = false }: { selfHosted?: boolean } = {},
 ): { values: AlertSettings } | { errors: Partial<Record<AlertSettingsField, string>> } {
   const errors: Partial<Record<AlertSettingsField, string>> = {};
   const timezone = listedTimezone(form.timezone.trim());
@@ -96,8 +132,19 @@ export function parseAlertSettings(
   if (alertsPerHour === undefined) errors.alertsPerHour = "Enter a whole number from 1 to 1,000.";
   const burstWindowSeconds = whole(form.burstWindowSeconds, burstWindowRange);
   if (burstWindowSeconds === undefined) errors.burstWindowSeconds = "Enter a whole number of seconds from 0 to 600.";
+  const items = retentionDays(form.itemsRetentionDays, form.itemsUnlimited, selfHosted);
+  if ("error" in items) errors.itemsRetentionDays = items.error;
+  const log = retentionDays(form.logRetentionDays, form.logUnlimited, selfHosted);
+  if ("error" in log) errors.logRetentionDays = log.error;
 
-  if (timezone === undefined || alertsPerHour === undefined || burstWindowSeconds === undefined || Object.keys(errors).length > 0) {
+  if (
+    timezone === undefined ||
+    alertsPerHour === undefined ||
+    burstWindowSeconds === undefined ||
+    "error" in items ||
+    "error" in log ||
+    Object.keys(errors).length > 0
+  ) {
     return { errors };
   }
   return {
@@ -108,6 +155,8 @@ export function parseAlertSettings(
       severity5BypassesQuietHours: form.severity5Bypasses,
       alertsPerHour,
       burstWindowSeconds,
+      itemsRetentionDays: items.days,
+      logRetentionDays: log.days,
     },
   };
 }
@@ -121,6 +170,8 @@ export async function loadAlertSettings(db: Db | Tx, workspaceId: string): Promi
       severity5BypassesQuietHours: workspace.severity5BypassesQuietHours,
       alertsPerHour: workspace.alertsPerHour,
       burstWindowSeconds: workspace.burstWindowSeconds,
+      itemsRetentionDays: workspace.itemsRetentionDays,
+      logRetentionDays: workspace.logRetentionDays,
     })
     .from(workspace)
     .where(eq(workspace.id, workspaceId));
@@ -129,8 +180,13 @@ export async function loadAlertSettings(db: Db | Tx, workspaceId: string): Promi
 }
 
 /** Saves all of the form, or none of it when a field is wrong. */
-export async function saveAlertSettings(db: Db, workspaceId: string, form: AlertSettingsForm) {
-  const parsed = parseAlertSettings(form);
+export async function saveAlertSettings(
+  db: Db,
+  workspaceId: string,
+  form: AlertSettingsForm,
+  { selfHosted = false }: { selfHosted?: boolean } = {},
+) {
+  const parsed = parseAlertSettings(form, { selfHosted });
   if ("errors" in parsed) return parsed;
   await db.transaction(async (tx) => {
     const before = await loadAlertSettings(tx, workspaceId);
@@ -196,7 +252,15 @@ export function quietHoursSentence(
   return settings.severity5BypassesQuietHours ? `${held} Severity 5 alerts still go at once.` : held;
 }
 
-const formFields = ["timezone", "quietHoursStart", "quietHoursEnd", "alertsPerHour", "burstWindowSeconds"] as const;
+const formFields = [
+  "timezone",
+  "quietHoursStart",
+  "quietHoursEnd",
+  "alertsPerHour",
+  "burstWindowSeconds",
+  "itemsRetentionDays",
+  "logRetentionDays",
+] as const;
 
 /** The form from what it posted, or from the query a refused save sends it back with. */
 export function readAlertSettingsForm(get: (name: string) => unknown): AlertSettingsForm {
@@ -210,8 +274,12 @@ export function readAlertSettingsForm(get: (name: string) => unknown): AlertSett
     quietHoursEnd: text("quietHoursEnd"),
     alertsPerHour: text("alertsPerHour"),
     burstWindowSeconds: text("burstWindowSeconds"),
+    itemsRetentionDays: text("itemsRetentionDays"),
+    logRetentionDays: text("logRetentionDays"),
     quietHours: text("quietHours") === "on",
     severity5Bypasses: text("severity5Bypasses") === "on",
+    itemsUnlimited: text("itemsUnlimited") === "on",
+    logUnlimited: text("logUnlimited") === "on",
   };
 }
 
@@ -222,6 +290,8 @@ export function alertSettingsQuery(form: AlertSettingsForm) {
     ...Object.fromEntries(formFields.map((name) => [name, form[name]])),
     ...(form.quietHours ? { quietHours: "on" } : {}),
     ...(form.severity5Bypasses ? { severity5Bypasses: "on" } : {}),
+    ...(form.itemsUnlimited ? { itemsUnlimited: "on" } : {}),
+    ...(form.logUnlimited ? { logUnlimited: "on" } : {}),
   }).toString();
 }
 
