@@ -1,0 +1,1 @@
+CREATE INDEX "source_alert_workspace_id_created_at_idx" ON "source_alert" USING btree ("workspace_id","created_at");

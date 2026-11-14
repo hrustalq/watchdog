@@ -122,6 +122,7 @@ export interface PurgedRows {
   items: number;
   logs: number;
   deliveries: number;
+  sourceAlerts: number;
 }
 
 async function deletedRows(db: Db, statement: SQL) {
@@ -145,8 +146,8 @@ async function purgeInBatches(db: Db, deleteBatch: (limit: number) => Promise<nu
 /**
  * Deletes what each Workspace's retention windows no longer cover (docs: Processing pipeline,
  * "Retention"): Items captured before its Items window, with the Log, Deliveries and Ratings that cascade
- * from them; the Log rows older than its Log window; and the Deliveries older than that window, reached
- * through their Destination. A null window is unlimited, so nothing of that kind goes.
+ * from them; the Log rows older than its Log window; and the Deliveries and Source Health alerts older
+ * than that window. A null window is unlimited, so nothing of that kind goes.
  *
  * Each batch is its own statement, so a year of Items goes without holding the sweep, and the delivery
  * queue keeps its jobs: a Delivery purged before its job runs is one `deliver` finds and returns on.
@@ -159,7 +160,7 @@ export async function purgeExpiredRows(db: Db): Promise<PurgedRows> {
       logDays: workspace.logRetentionDays,
     })
     .from(workspace);
-  const purged: PurgedRows = { items: 0, logs: 0, deliveries: 0 };
+  const purged: PurgedRows = { items: 0, logs: 0, deliveries: 0, sourceAlerts: 0 };
   for (const window of windows) {
     // A const apiece, so the null check holds inside the closures below.
     const itemsDays = window.itemsDays;
@@ -203,11 +204,26 @@ export async function purgeExpiredRows(db: Db): Promise<PurgedRows> {
         `,
       ),
     );
+    // A Health alert is not a Delivery, and only one that went is history: a queued or held row is still
+    // waiting to go, at any age.
+    purged.sourceAlerts += await purgeInBatches(db, (limit) =>
+      deletedRows(
+        db,
+        sql`
+          delete from source_alert where ctid in (
+            select ctid from source_alert
+            where workspace_id = ${window.id} and status in ('sent', 'failed')
+              and created_at < now() - make_interval(days => ${logDays})
+            limit ${limit}
+          )
+        `,
+      ),
+    );
   }
-  if (purged.items + purged.logs + purged.deliveries > 0) {
+  if (purged.items + purged.logs + purged.deliveries + purged.sourceAlerts > 0) {
     console.log(
-      `Retention purged ${String(purged.items)} Items, ${String(purged.logs)} Log rows and ` +
-        `${String(purged.deliveries)} Deliveries`,
+      `Retention purged ${String(purged.items)} Items, ${String(purged.logs)} Log rows, ` +
+        `${String(purged.deliveries)} Deliveries and ${String(purged.sourceAlerts)} Health alerts`,
     );
   }
   return purged;
