@@ -203,10 +203,13 @@ describe("Sources", () => {
       schedule: "*/15 * * * *",
       lastPolledAt: null,
     });
-    // The tick enqueues every Source with next_poll_at <= now().
-    expect(saved?.nextPollAt?.getTime()).toBeLessThanOrEqual(Date.now());
-    const due = await db.select({ id: source.id }).from(source).where(lte(source.nextPollAt, new Date()));
-    expect(due.map((row) => row.id)).toContain(id);
+    // The tick enqueues every Source with next_poll_at <= now(). next_poll_at is Postgres's clock,
+    // and this process's Date.now() was 2 ms behind it in a loaded full run, so ask Postgres (#375).
+    const due = await db
+      .select({ id: source.id })
+      .from(source)
+      .where(and(eq(source.id, id), lte(source.nextPollAt, sql`now()`)));
+    expect(due).toHaveLength(1);
     expect(saved?.createdAt.getTime()).toBeGreaterThanOrEqual(before.getTime() - 1000);
   });
 
@@ -445,7 +448,13 @@ describe("Sources", () => {
         schedule: every15,
         lastError: null,
       });
-      expect(saved?.nextPollAt?.getTime()).toBeLessThanOrEqual(Date.now());
+      // Due at once: next_poll_at is Postgres's clock, so the bound is Postgres's too (#375).
+      expect(
+        await db
+          .select({ id: source.id })
+          .from(source)
+          .where(and(eq(source.id, id), lte(source.nextPollAt, sql`now()`))),
+      ).toHaveLength(1);
 
       expect(await pollSource(db, id, pollDeps)).toEqual({ captured: 3 });
       const { items } = await feedPage(db, ours);
