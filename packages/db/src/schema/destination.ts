@@ -117,6 +117,12 @@ export const sourceAlert = pgTable(
       .references(() => source.id, { onDelete: "cascade" }),
     /** An alert still waiting for a removed Destination goes with it, unsent. */
     destinationId: uuid("destination_id").references(() => destination.id, { onDelete: "cascade" }),
+    /**
+     * The change that wrote this alert: every row one Health change writes shares it, and they go to
+     * their recipients as one message (docs: Actions and delivery, "Source Health alerts"). A row
+     * written on its own gets an id of its own, and goes alone.
+     */
+    eventId: uuid("event_id").notNull().defaultRandom(),
     kind: text("kind", { enum: ["failing", "recovered"] }).notNull(),
     /** The Source's last error when it became failing, which a later success clears from the Source. */
     error: text("error"),
@@ -144,5 +150,7 @@ export const sourceAlert = pgTable(
     // The cascades when a Source or a Destination is deleted.
     index("source_alert_source_id_idx").on(table.sourceId),
     index("source_alert_destination_id_idx").on(table.destinationId),
+    // The send, which reads an event's alerts for one recipient together.
+    index("source_alert_event_id_idx").on(table.eventId),
   ],
 );

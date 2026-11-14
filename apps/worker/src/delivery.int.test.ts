@@ -855,7 +855,8 @@ describe("the deliver queue", () => {
     expect(send.mock.calls[0]?.[0]).toMatchObject({ type: "email", config: { address: `${ownerId}@example.com` } });
     expect(send.mock.calls[0]?.[1]).toEqual({
       health: "failing",
-      source: "Feed",
+      sources: ["Feed"],
+      unnamed: 0,
       error: "The feed answered 500",
       link: "https://watchdog.test/sources",
     });

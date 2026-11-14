@@ -5,6 +5,7 @@ import {
   destination,
   eq,
   healthAlertDestination,
+  inArray,
   migrate,
   sentMessage,
   source,
@@ -120,6 +121,17 @@ describe("Source Health alerts", () => {
     for (const { id } of released) if (mine.has(id)) await sendSourceAlert(db, id, deps);
   }
 
+  /** The same for every due alert of one Workspace, which is how an event's rows reach one send. */
+  async function deliverEvery(workspaceId: string, deps: SourceAlertDeps) {
+    const released = await db.transaction((tx) => releaseDueSourceAlerts(tx));
+    const mine = new Set(
+      (await db.select({ id: sourceAlert.id }).from(sourceAlert).where(eq(sourceAlert.workspaceId, workspaceId))).map(
+        ({ id }) => id,
+      ),
+    );
+    for (const { id } of released) if (mine.has(id)) await sendSourceAlert(db, id, deps);
+  }
+
   it("delivers exactly one failing alert and one recovered alert across a long failure", async () => {
     const seeded = await seed();
     const chat = await seeded.name({ name: "ops-chat" });
@@ -136,7 +148,7 @@ describe("Source Health alerts", () => {
     await deliverDue(seeded.sourceId, deps);
     await deliverDue(seeded.sourceId, deps);
     expect(sent.map(({ message }) => message)).toEqual([
-      { health: "failing", source: "Release feed", error: "connect ECONNREFUSED", link: `${appUrl}/sources` },
+      { health: "failing", sources: ["Release feed"], unnamed: 0, error: "connect ECONNREFUSED", link: `${appUrl}/sources` },
     ]);
 
     seeded.state.feedUp = true;
@@ -382,5 +394,90 @@ describe("Source Health alerts", () => {
       { kind: "failing", error: "The bot was removed from this chat, or left it." },
       { kind: "recovered", error: null },
     ]);
+  });
+  it("sends one message for the Sources one change fails, and counts it once per recipient (#323)", async () => {
+    const seeded = await seed();
+    const chat = await seeded.name({ name: "ops-chat" });
+    const inbox = await seeded.name({ name: "Team inbox", type: "email", config: { address: "team@example.com" } });
+    // The chats one session reads: revoked, every Source that reads through it fails at once.
+    const ids: string[] = [];
+    for (let index = 0; index < 30; index += 1) {
+      const [row] = await db
+        .insert(source)
+        .values({
+          workspaceId: seeded.workspaceId,
+          type: "telegram",
+          name: `Chat ${String(index)}`,
+          config: { via: "session", chatId: -100 - index },
+          schedule: null,
+          nextPollAt: null,
+        })
+        .returning();
+      ids.push(present(row).id);
+    }
+    const lost = "The Telegram session was revoked";
+    const set = (error: string | null) =>
+      db.transaction((tx) => setPushSourceHealth(tx, inArray(source.id, ids), error, start));
+    const { deps, sent } = recording();
+
+    await set(lost);
+    await deliverEvery(seeded.workspaceId, deps);
+
+    // One message per recipient, naming ten of the thirty and leaving the rest to the Sources screen.
+    expect(sent.map(({ type, destination: to }) => [type, to.id]).sort()).toEqual(
+      [
+        ["telegram", chat],
+        ["email", inbox],
+      ].sort(),
+    );
+    for (const { message } of sent) {
+      expect(message).toMatchObject({ health: "failing", unnamed: 20, error: lost });
+      expect(message.sources).toHaveLength(10);
+    }
+    // One `sent_message` row per recipient: the change took one place of each recipient's hourly limit.
+    expect(await db.select().from(sentMessage).where(eq(sentMessage.destinationId, chat))).toHaveLength(1);
+    expect(await db.select().from(sentMessage).where(eq(sentMessage.destinationId, inbox))).toHaveLength(1);
+    const failing = await db.select().from(sourceAlert).where(inArray(sourceAlert.sourceId, ids));
+    expect(failing).toHaveLength(60);
+    for (const row of failing) expect(row).toMatchObject({ kind: "failing", status: "sent", attempts: 1 });
+
+    // Signing in again recovers them together, as one message per recipient.
+    await set(null);
+    await deliverEvery(seeded.workspaceId, deps);
+
+    expect(sent).toHaveLength(4);
+    expect(sent.map(({ message }) => `${message.health}:${String(message.sources.length)}`).sort()).toEqual([
+      "failing:10",
+      "failing:10",
+      "recovered:10",
+      "recovered:10",
+    ]);
+    expect(await db.select().from(sentMessage).where(eq(sentMessage.destinationId, chat))).toHaveLength(2);
+    expect(await db.select().from(sentMessage).where(eq(sentMessage.destinationId, inbox))).toHaveLength(2);
+  });
+
+  it("sends a message per change, so Sources that fail apart keep their own alerts", async () => {
+    const seeded = await seed();
+    await seeded.name({ name: "ops-chat" });
+    const [second] = await db
+      .insert(source)
+      .values({
+        workspaceId: seeded.workspaceId,
+        type: "telegram",
+        name: "Second chat",
+        config: { via: "session", chatId: -100999 },
+        schedule: null,
+        nextPollAt: null,
+      })
+      .returning();
+    const lost = "The Telegram session was revoked";
+    const { deps, sent } = recording();
+
+    await db.transaction((tx) => setPushSourceHealth(tx, eq(source.id, seeded.sourceId), lost, start));
+    await db.transaction((tx) => setPushSourceHealth(tx, eq(source.id, present(second).id), lost, start));
+    await deliverEvery(seeded.workspaceId, deps);
+
+    // The sweep releases them in no order, so the messages are compared as a set.
+    expect(sent.map(({ message }) => message.sources).sort()).toEqual([["Release feed"], ["Second chat"]]);
   });
 });
