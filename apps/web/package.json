@@ -17,6 +17,7 @@
     "@shadcn/react": "^0.3.1",
     "@watchdog/core": "workspace:*",
     "@watchdog/db": "workspace:*",
+    "@watchdog/shared": "workspace:*",
     "better-auth": "^1.7.15",
     "class-variance-authority": "^0.7.1",
     "cmdk": "^1.1.1",

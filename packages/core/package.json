@@ -35,6 +35,7 @@
     "@date-fns/tz": "^1.5.0",
     "@mtcute/node": "0.32.8",
     "@watchdog/db": "workspace:*",
+    "@watchdog/shared": "workspace:*",
     "ai": "^7.0.162",
     "better-auth": "^1.7.15",
     "cron-parser": "^5.10.3",

@@ -3,6 +3,6 @@
 export default {
   extends: ["@commitlint/config-conventional"],
   rules: {
-    "scope-enum": [2, "always", ["web", "worker", "core", "db", "docs", "deps", "ci", "release"]],
+    "scope-enum": [2, "always", ["web", "worker", "core", "db", "shared", "docs", "deps", "ci", "release"]],
   },
 };
