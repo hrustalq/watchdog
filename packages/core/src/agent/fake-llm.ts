@@ -1,6 +1,7 @@
 // A fake model behind the provider's `fetch` option, so tests run the real provider code with no
 // network and no model bill (Testing and CI, "Rules for tests"). Answers use each family's wire format.
 import type { modelConfig } from "@watchdog/db";
+import { isRecord } from "@watchdog/shared/utils/is-record";
 import { Headers, type RequestInit, Response } from "undici";
 
 type Usage = { inputTokens: number; outputTokens: number } | null;
@@ -23,9 +24,6 @@ export interface FakeRequest {
 }
 
 const defaultUsage = { inputTokens: 10, outputTokens: 5 };
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null;
 
 /** Without the structured output flag, the Anthropic provider asks through a tool of this name. */
 const hasJsonTool = (body: unknown) =>

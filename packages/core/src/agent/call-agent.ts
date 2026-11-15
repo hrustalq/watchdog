@@ -1,6 +1,7 @@
 // The Agent interface, the only code that calls a model (Agent and LLM integration). It validates
 // every response, repairs an invalid one once, and meters every attempt (ADR 0008, ADR 0016).
 import { agentCall, type Db, eq, item, sql } from "@watchdog/db";
+import { storableText } from "@watchdog/shared/utils/storable-text";
 import {
   APICallError,
   generateText,
@@ -80,7 +81,7 @@ const storedPrices = (modelConfig: AgentModelConfig) =>
       };
 
 /** Postgres refuses a NUL and half a surrogate pair, and anything a model or provider writes can hold either. */
-export const storableText = (text: string) => text.replaceAll("\0", "").toWellFormed();
+export { storableText };
 
 export const storableMessage = (message: string) => storableText(message.slice(0, 1000));
 

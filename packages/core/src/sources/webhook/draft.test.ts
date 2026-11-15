@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto";
+import { sha256Hex } from "@watchdog/shared/utils/sha256-hex";
 import { describe, expect, it } from "vitest";
 import { maxBodyBytes } from "../item.ts";
 import { cleanPayload, mappingError, webhookDraft } from "./draft.ts";
 
 const bytes = (text: string) => new TextEncoder().encode(text);
-const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+const sha256 = sha256Hex;
 
 describe("webhookDraft", () => {
   it("without a mapping, names the Source, keeps the JSON as indented text and hashes the body", () => {

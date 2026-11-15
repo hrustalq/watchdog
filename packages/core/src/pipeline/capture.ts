@@ -2,6 +2,7 @@
 // push delivered them (docs: Processing pipeline, "Stages").
 import { addMilliseconds, subMilliseconds } from "date-fns";
 import { and, type Db, eq, inArray, item, itemLog, source, sql, type Tx } from "@watchdog/db";
+import { withoutNul } from "@watchdog/shared/utils/without-nul";
 import { queueSourceAlerts } from "../delivery/source-alert.ts";
 import { failingPollGapMs, healthAfter } from "../sources/health.ts";
 import type { ItemDraft } from "../sources/item.ts";
@@ -94,7 +95,7 @@ export async function captureItems(
   outcome: Success,
   deps: CaptureDeps,
 ): Promise<{ captured: number }> {
-  const byId = new Map(drafts.map(withoutNul).map((draft) => [draft.externalId, draft]));
+  const byId = new Map(drafts.map(draftWithoutNul).map((draft) => [draft.externalId, draft]));
   const unique = [...byId.values()];
   const { at } = outcome;
   // The row lock makes concurrent captures of one Source take turns, so only one takes the Backfill.
@@ -231,20 +232,19 @@ function describe(error: unknown) {
 }
 
 /** The entry without U+0000, which a feed can carry but Postgres text and jsonb refuse. */
-function withoutNul(entry: ItemDraft): ItemDraft {
-  const strip = (text: string) => text.replaceAll("\0", "");
+function draftWithoutNul(entry: ItemDraft): ItemDraft {
   const raw: unknown = JSON.parse(
     JSON.stringify(entry.raw, (_key, value: unknown) =>
-      typeof value === "string" ? strip(value) : value,
+      typeof value === "string" ? withoutNul(value) : value,
     ),
   );
   return {
     ...entry,
-    externalId: strip(entry.externalId),
-    url: entry.url === null ? null : strip(entry.url),
-    title: entry.title === null ? null : strip(entry.title),
-    author: entry.author === null ? null : strip(entry.author),
-    body: strip(entry.body),
+    externalId: withoutNul(entry.externalId),
+    url: entry.url === null ? null : withoutNul(entry.url),
+    title: entry.title === null ? null : withoutNul(entry.title),
+    author: entry.author === null ? null : withoutNul(entry.author),
+    body: withoutNul(entry.body),
     raw: typeof raw === "object" && raw !== null ? raw : {},
   };
 }

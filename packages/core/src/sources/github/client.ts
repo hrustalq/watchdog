@@ -1,7 +1,7 @@
 // What GitHub's issues and mentions kinds share: the token, the API headers and the rate limits
 // (docs: Sources and ingestion, "The token" and "Rate limits").
-import { createHash } from "node:crypto";
 import { addMinutes, startOfMinute } from "date-fns";
+import { sha256Hex } from "@watchdog/shared/utils/sha256-hex";
 import { account, and, type Db, eq, githubRateLimit, sql, workspace } from "@watchdog/db";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { decryptSecret } from "../../secrets/secrets.ts";
@@ -94,9 +94,6 @@ export interface GithubGetDeps extends FetchFeedDeps {
 /** GitHub allows each token 30 Search requests a minute. */
 const searchPerMinute = 30;
 
-/** The key a token's rate limits are kept under, so the token itself is never stored. */
-const tokenHashOf = (value: string) => createHash("sha256").update(value).digest("hex");
-
 /** The API resource a GitHub Source's polls read: an issues Source the core one, a mentions the search. */
 export function githubResource(kind: "issues" | "mentions"): "core" | "search" {
   return kind === "issues" ? "core" : "search";
@@ -129,7 +126,7 @@ export async function githubPause(
     .select({ pausedUntil: githubRateLimit.pausedUntil })
     .from(githubRateLimit)
     .where(
-      and(eq(githubRateLimit.tokenHash, tokenHashOf(token.value)), eq(githubRateLimit.resource, githubResource(kind))),
+      and(eq(githubRateLimit.tokenHash, sha256Hex(token.value)), eq(githubRateLimit.resource, githubResource(kind))),
     );
   const paused = row?.pausedUntil ?? null;
   return paused !== null && paused > now ? paused : undefined;
@@ -145,7 +142,7 @@ export async function githubGet(
   { token, resource, etag }: { token: GithubToken; resource: "core" | "search"; etag?: string | undefined },
   { db, fetch, now }: GithubGetDeps,
 ): Promise<GithubResponse | Deferred> {
-  const tokenHash = tokenHashOf(token.value);
+  const tokenHash = sha256Hex(token.value);
   const key = and(eq(githubRateLimit.tokenHash, tokenHash), eq(githubRateLimit.resource, resource));
   const [limit] = await db.select().from(githubRateLimit).where(key);
   if (limit?.pausedUntil && limit.pausedUntil > now) return { deferUntil: limit.pausedUntil };

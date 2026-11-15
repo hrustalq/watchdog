@@ -1,19 +1,18 @@
 // The short-lived code that links a Telegram chat to a Destination, or binds one to a Telegram bot Source
 // (docs: Actions and delivery, "Telegram chats"; Sources and ingestion, "Telegram bot intake"; Security and
 // privacy, "Destinations"; ADR 0029). Only its SHA-256 hash is stored.
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { and, type Db, destination, eq, gt, lt, ne, source, sql, telegramLinkCode } from "@watchdog/db";
+import { sha256Hex } from "@watchdog/shared/utils/sha256-hex";
+import { withoutNul } from "@watchdog/shared/utils/without-nul";
 import { setPushSourceHealth } from "../delivery/source-alert.ts";
 import { encryptSecret } from "../secrets/secrets.ts";
 import type { BotChat } from "./bot-runner.ts";
 
 export const linkCodeMinutes = 15;
 
-const hashOf = (code: string) => createHash("sha256").update(code).digest("hex");
 const liveCode = (code: string) =>
-  and(eq(telegramLinkCode.codeHash, hashOf(code)), gt(telegramLinkCode.expiresAt, sql`now()`));
-// Postgres refuses a NUL in jsonb, and the update that brought it would then come back on every poll.
-const withoutNul = (title: string) => title.replaceAll("\0", "");
+  and(eq(telegramLinkCode.codeHash, sha256Hex(code)), gt(telegramLinkCode.expiresAt, sql`now()`));
 
 const unknownCode = "That code is unknown or has expired. Get a new link in Watchdog, on the Sources or Destinations page.";
 
@@ -39,7 +38,7 @@ export async function issueLinkCode(db: Db, target: Target) {
       await tx.delete(telegramLinkCode).where(eq(telegramLinkCode.destinationId, target.destinationId));
     }
     await tx.insert(telegramLinkCode).values({
-      codeHash: hashOf(code),
+      codeHash: sha256Hex(code),
       ...target,
       expiresAt: sql`now() + make_interval(mins => ${linkCodeMinutes})`,
     });
