@@ -1,25 +1,11 @@
-import * as React from "react"
+import { useMediaQuery } from "usehooks-ts";
 
-const MOBILE_QUERY = "(max-width: 767px)"
+const MOBILE_QUERY = "(max-width: 767px)";
 
-function subscribe(onChange: () => void) {
-  const query = window.matchMedia(MOBILE_QUERY)
-  query.addEventListener("change", onChange)
-
-  return () => {
-    query.removeEventListener("change", onChange)
-  }
-}
-
-function getSnapshot() {
-  return window.matchMedia(MOBILE_QUERY).matches
-}
-
-function getServerSnapshot() {
-  return false
-}
-
-/** True below the `md` breakpoint, as DESIGN.md's responsive layout expects. */
+/**
+ * True below the `md` breakpoint, as DESIGN.md's responsive layout expects. It starts false, as the
+ * server rendered it, and the first layout effect swaps in the window's answer before the paint.
+ */
 export function useIsMobile() {
-  return React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+  return useMediaQuery(MOBILE_QUERY, { initializeWithValue: false });
 }

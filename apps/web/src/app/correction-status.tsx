@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useFormStatus } from "react-dom";
+import { useTimeout } from "usehooks-ts";
 import { Button } from "@/components/ui/button";
 
 /** How long the result stays, so the same result next time is a change screen readers announce. */
@@ -28,15 +29,15 @@ export function CorrectionStatus({ result }: { result: string }) {
   if (pending && !started) setStarted(true);
 
   useEffect(() => {
-    if (pending || !started) return undefined;
+    if (pending || !started) return;
     if (document.activeElement === document.body) ref.current?.focus({ preventScroll: true });
-    const timer = setTimeout(() => {
-      setStarted(false);
-    }, resultFor);
-    return () => {
-      clearTimeout(timer);
-    };
   }, [pending, started]);
+  useTimeout(
+    () => {
+      setStarted(false);
+    },
+    pending || !started ? null : resultFor,
+  );
 
   return (
     <p ref={ref} role="status" tabIndex={-1} data-pending={pending ? "" : undefined} className="sr-only">

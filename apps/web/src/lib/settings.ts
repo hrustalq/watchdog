@@ -1,6 +1,7 @@
 // The Workspace's alert settings, as the Settings screen changes them (docs: Actions and delivery,
 // "Grouping and rate limits", "Quiet hours" and "Workspace timezone"). Delivery reads them each time it
 // decides, so a save applies to the next decision.
+import { z } from "zod";
 import {
   and,
   type Db,
@@ -99,66 +100,106 @@ function whole(text: string, { min, max }: { min: number; max: number }) {
 function retentionDays(days: string, unlimited: boolean, selfHosted: boolean) {
   if (unlimited) {
     if (!selfHosted) {
-      return { error: "Unlimited is only for a self-hosted install: choose a number of days." };
+      return { error: "Unlimited is only for a self-hosted install: choose a number of days." } as const;
     }
-    return { days: null };
+    return { days: null } as const;
   }
   const value = whole(days, retentionRange);
   if (value === undefined) {
-    return { error: "Enter a whole number of days from 1 to 3,650, or tick Unlimited." };
+    return { error: "Enter a whole number of days from 1 to 3,650, or tick Unlimited." } as const;
   }
-  return { days: value };
+  return { days: value } as const;
 }
+
+/** Every field a refusal can name, in the order the form shows them. */
+const settingsFields: readonly AlertSettingsField[] = [
+  "timezone",
+  "quietHoursStart",
+  "quietHoursEnd",
+  "alertsPerHour",
+  "burstWindowSeconds",
+  "itemsRetentionDays",
+  "logRetentionDays",
+];
+
+const isSettingsField = (value: string): value is AlertSettingsField =>
+  settingsFields.some((field) => field === value);
+
+const alertSettingsForm = z.object({
+  timezone: z.string(),
+  quietHours: z.boolean(),
+  quietHoursStart: z.string(),
+  quietHoursEnd: z.string(),
+  severity5Bypasses: z.boolean(),
+  alertsPerHour: z.string(),
+  burstWindowSeconds: z.string(),
+  itemsRetentionDays: z.string(),
+  itemsUnlimited: z.boolean(),
+  logRetentionDays: z.string(),
+  logUnlimited: z.boolean(),
+});
+
+const alertSettingsSchema = (selfHosted: boolean) =>
+  alertSettingsForm
+    .superRefine((form, ctx) => {
+      const refuse = (field: string, message: string) => {
+        ctx.addIssue({ code: "custom", path: [field], message });
+      };
+      if (listedTimezone(form.timezone.trim()) === undefined) {
+        refuse("timezone", "Choose a timezone from the list, such as Europe/Berlin or UTC.");
+      }
+      if (form.quietHours) {
+        // The browser's time control posts HH:MM whatever clock it shows, so only a bad request gets here.
+        if (!time.test(form.quietHoursStart)) refuse("quietHoursStart", "Choose when quiet hours start.");
+        if (!time.test(form.quietHoursEnd)) refuse("quietHoursEnd", "Choose when quiet hours end.");
+        else if (form.quietHoursEnd === form.quietHoursStart) {
+          refuse("quietHoursEnd", "End quiet hours at a different time than they start.");
+        }
+      }
+      if (whole(form.alertsPerHour, alertsPerHourRange) === undefined) {
+        refuse("alertsPerHour", "Enter a whole number from 1 to 1,000.");
+      }
+      if (whole(form.burstWindowSeconds, burstWindowRange) === undefined) {
+        refuse("burstWindowSeconds", "Enter a whole number of seconds from 0 to 600.");
+      }
+      const items = retentionDays(form.itemsRetentionDays, form.itemsUnlimited, selfHosted);
+      if ("error" in items) refuse("itemsRetentionDays", items.error);
+      const log = retentionDays(form.logRetentionDays, form.logUnlimited, selfHosted);
+      if ("error" in log) refuse("logRetentionDays", log.error);
+    })
+    .transform((form) => ({
+      timezone: form.timezone,
+      quietHoursStart: form.quietHours ? form.quietHoursStart : null,
+      quietHoursEnd: form.quietHours ? form.quietHoursEnd : null,
+      severity5BypassesQuietHours: form.severity5Bypasses,
+      alertsPerHour: Number(form.alertsPerHour),
+      burstWindowSeconds: Number(form.burstWindowSeconds),
+      itemsRetentionDays: form.itemsUnlimited ? null : Number(form.itemsRetentionDays),
+      logRetentionDays: form.logUnlimited ? null : Number(form.logRetentionDays),
+    }));
 
 /** The form as the Workspace's columns, or what's wrong with each field that's wrong. */
 export function parseAlertSettings(
   form: AlertSettingsForm,
   { selfHosted = false }: { selfHosted?: boolean } = {},
 ): { values: AlertSettings } | { errors: Partial<Record<AlertSettingsField, string>> } {
-  const errors: Partial<Record<AlertSettingsField, string>> = {};
-  const timezone = listedTimezone(form.timezone.trim());
-  if (timezone === undefined) {
-    errors.timezone = "Choose a timezone from the list, such as Europe/Berlin or UTC.";
-  }
-  if (form.quietHours) {
-    // The browser's time control posts HH:MM whatever clock it shows, so only a bad request gets here.
-    if (!time.test(form.quietHoursStart)) errors.quietHoursStart = "Choose when quiet hours start.";
-    if (!time.test(form.quietHoursEnd)) errors.quietHoursEnd = "Choose when quiet hours end.";
-    else if (form.quietHoursEnd === form.quietHoursStart) {
-      errors.quietHoursEnd = "End quiet hours at a different time than they start.";
+  const parsed = alertSettingsSchema(selfHosted).safeParse(form);
+  if (!parsed.success) {
+    const errors: Partial<Record<AlertSettingsField, string>> = {};
+    for (const issue of parsed.error.issues) {
+      const [field] = issue.path;
+      if (typeof field === "string" && isSettingsField(field) && errors[field] === undefined) {
+        errors[field] = issue.message;
+      }
     }
-  }
-  const alertsPerHour = whole(form.alertsPerHour, alertsPerHourRange);
-  if (alertsPerHour === undefined) errors.alertsPerHour = "Enter a whole number from 1 to 1,000.";
-  const burstWindowSeconds = whole(form.burstWindowSeconds, burstWindowRange);
-  if (burstWindowSeconds === undefined) errors.burstWindowSeconds = "Enter a whole number of seconds from 0 to 600.";
-  const items = retentionDays(form.itemsRetentionDays, form.itemsUnlimited, selfHosted);
-  if ("error" in items) errors.itemsRetentionDays = items.error;
-  const log = retentionDays(form.logRetentionDays, form.logUnlimited, selfHosted);
-  if ("error" in log) errors.logRetentionDays = log.error;
-
-  if (
-    timezone === undefined ||
-    alertsPerHour === undefined ||
-    burstWindowSeconds === undefined ||
-    "error" in items ||
-    "error" in log ||
-    Object.keys(errors).length > 0
-  ) {
     return { errors };
   }
-  return {
-    values: {
-      timezone,
-      quietHoursStart: form.quietHours ? form.quietHoursStart : null,
-      quietHoursEnd: form.quietHours ? form.quietHoursEnd : null,
-      severity5BypassesQuietHours: form.severity5Bypasses,
-      alertsPerHour,
-      burstWindowSeconds,
-      itemsRetentionDays: items.days,
-      logRetentionDays: log.days,
-    },
-  };
+  // The schema accepted the name; the Workspace stores the one it resolves to.
+  const timezone = listedTimezone(parsed.data.timezone.trim());
+  if (timezone === undefined) {
+    return { errors: { timezone: "Choose a timezone from the list, such as Europe/Berlin or UTC." } };
+  }
+  return { values: { ...parsed.data, timezone } };
 }
 
 export async function loadAlertSettings(db: Db | Tx, workspaceId: string): Promise<AlertSettings> {
