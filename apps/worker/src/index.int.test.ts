@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
-import { json } from "node:stream/consumers";
+import { text } from "node:stream/consumers";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { agentItemQueue, itemEnqueuer, pollSource, processItemQueue } from "@watchdog/core";
@@ -409,8 +409,7 @@ describe("worker", () => {
 
     /**
      * An OpenAI-compatible model on loopback, which the spawned worker reaches through its egress guard. Its
-     * first request waits until the test releases it, and every other one answers at once. Without the
-     * structured output flag the system message ends with the output's JSON Schema, which picks the answer.
+     * first request waits until the test releases it, and every other one answers at once.
      */
     async function holdingModel() {
       let release: () => void = () => undefined;
@@ -420,16 +419,12 @@ describe("worker", () => {
         void (async () => {
           requests += 1;
           const first = requests === 1;
-          const body = (await json(request)) as { messages: { content: string }[] };
+          const body = await text(request);
           if (first) await released;
-          const system = body.messages[0]?.content ?? "";
-          const { properties } = JSON.parse(system.slice(system.lastIndexOf("\n") + 1)) as {
-            properties: Record<string, { items?: { enum?: string[] } }>;
-          };
-          const answer =
-            "categories" in properties
-              ? { categories: properties.categories?.items?.enum ?? [] }
-              : { summary: "A summary.", reasoning: "Fine.", severity: 1, importance: 2 };
+          // The classify call's schema names its one property; the extract-and-rate call's doesn't.
+          const answer = body.includes(String.raw`\"categories\"`)
+            ? { categories: ["lead"] }
+            : { summary: "A summary.", reasoning: "Fine.", severity: 1, importance: 2 };
           response.setHeader("content-type", "application/json");
           response.end(
             JSON.stringify({
