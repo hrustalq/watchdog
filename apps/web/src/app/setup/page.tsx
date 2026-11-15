@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { Suspense } from "react";
 import { setupTokenValid } from "@/lib/instance";
 import { server } from "@/lib/server";
+import { PageHeader } from "@/components/page";
 import { SignInForm } from "../sign-in/sign-in-form";
 import { claimAndSendLink } from "./actions";
 
@@ -34,14 +35,10 @@ async function Setup({ searchParams }: Pick<PageProps<"/setup">, "searchParams">
   if (!valid) {
     return (
       <>
-        <div className="flex flex-col gap-1">
-          <h1 className="text-headline">This setup link doesn&apos;t work</h1>
-          <p className="text-sm text-muted-foreground">
-            It&apos;s out of date or already used. Until Watchdog has an admin, it prints a new setup
-            link each time it starts. If you run it, the latest one is in the web container&apos;s
-            log.
-          </p>
-        </div>
+        <PageHeader
+          title="This setup link doesn't work"
+          description="It's out of date or already used. Until Watchdog has an admin, it prints a new setup link each time it starts. If you run it, the latest one is in the web container's log."
+        />
         <Link
           href="/sign-in"
           className="inline-flex h-8 items-center self-start rounded-sm text-sm font-medium underline-offset-4 outline-hidden hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
@@ -53,13 +50,10 @@ async function Setup({ searchParams }: Pick<PageProps<"/setup">, "searchParams">
   }
   return (
     <>
-      <div className="flex flex-col gap-1">
-        <h1 className="text-headline">Set up Watchdog</h1>
-        <p className="text-sm text-muted-foreground">
-          The email you enter becomes this Watchdog&apos;s admin, who decides whether others can
-          sign up. We&apos;ll send you a link that signs you in.
-        </p>
-      </div>
+      <PageHeader
+        title="Set up Watchdog"
+        description="The email you enter becomes this Watchdog's admin, who decides whether others can sign up. We'll send you a link that signs you in."
+      />
       <SignInForm
         action={claimAndSendLink}
         hidden={<input type="hidden" name="token" value={token} />}

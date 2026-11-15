@@ -1,4 +1,4 @@
-import { SubmitButton } from "@/app/sign-in/submit-button";
+import { SubmitButton } from "@/components/submit-button";
 
 /** A control whose result can't be undone, opened first. A disclosure works without JavaScript. */
 export function Confirming({

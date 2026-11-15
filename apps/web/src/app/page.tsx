@@ -4,6 +4,9 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { eq, source } from "@watchdog/db";
 import { CategoryList, Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
+import { EmptyState } from "@/components/empty-state";
+import { Page, PageHeader } from "@/components/page";
+import { PanelList } from "@/components/panel-list";
 import { feedPage, parseCursor, parseTopCursor, topPage, type FeedItem } from "@/lib/feed";
 import { lastFailedCall, hasUnreadableKey } from "@/lib/model";
 import { hasActiveModel } from "@/lib/rules";
@@ -91,14 +94,14 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
         </form>
       </header>
       {/* The list ignores clicks while its rows settle, which FeedRefresher signals. */}
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8 [&:has([data-settling])_ol]:pointer-events-none">
+      <Page gap={4} className="flex-1 [&:has([data-settling])_ol]:pointer-events-none">
         {/* On every page, since a Rating can arrive for an Item on an older one. The key starts it
             afresh on each page, so paging isn't announced as Items arriving. It sits first, so it stays
             mounted when the empty state gives way to the list. */}
         <FeedRefresher key={[latest, fallback, before?.id].join()} ids={items.map((row) => row.id)} paused={edit} />
-        <div className="flex flex-col gap-1">
-          <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-            <h1 className="text-headline">Feed</h1>
+        <PageHeader
+          title="Feed"
+          actions={
             <div className="flex flex-wrap items-center gap-3">
               {items.length === 0 ? null : (
                 // Outline in both states, because the only fill here says which view is selected.
@@ -111,7 +114,8 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
               )}
               <ViewControl latest={latest} edit={edit} />
             </div>
-          </div>
+          }
+        />
           {caption ? (
             <p className="text-sm text-muted-foreground">
               <FeedCaption latest={latest} fallback={fallback} hasModel={hasModel} />
@@ -126,7 +130,6 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
               {latest ? "Back to the newest" : "Back to the first page"}
             </Link>
           )}
-        </div>
         <FeedBody items={items} paged={before !== undefined} sources={sources} edit={edit} />
         {older === null ? null : (
           <Link
@@ -137,7 +140,7 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
             Show older
           </Link>
         )}
-      </main>
+      </Page>
     </div>
   );
 }
@@ -230,18 +233,9 @@ function FeedBody({
   );
 }
 
-function EmptyState({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center py-16 text-center">
-      <h2 className="text-headline">{title}</h2>
-      {children}
-    </div>
-  );
-}
-
 function FeedList({ items, edit }: { items: FeedItem[]; edit: boolean }) {
   return (
-    <ol className="divide-y overflow-hidden rounded-lg border">
+    <PanelList as="ol" className="overflow-hidden">
       {items.map((row) => (
         // The title's link covers the row, so the whole row opens the Item. A Correction posted without
         // JavaScript comes back to the row's id.
@@ -313,7 +307,7 @@ function FeedList({ items, edit }: { items: FeedItem[]; edit: boolean }) {
           </div>
         </li>
       ))}
-    </ol>
+    </PanelList>
   );
 }
 

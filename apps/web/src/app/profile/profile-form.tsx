@@ -2,11 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { field, fieldError, label, textBox } from "@/components/field-classes";
+import { fieldError, label, textBox } from "@/components/field-classes";
+import { SelectField } from "@/components/form-field";
 import { forgetDraft, keepDraft, useKeptDraft } from "@/lib/draft";
 import { cn } from "@/lib/utils";
-import { Notice } from "../sign-in/notice";
-import { SubmitButton } from "../sign-in/submit-button";
+import { Notice } from "@/components/notice";
+import { SubmitButton } from "@/components/submit-button";
 import { saveProfileAction } from "./actions";
 
 interface ProfileFormProps {
@@ -73,7 +74,7 @@ function Form({ body: savedBody, language: savedLanguage, languages, maxBody, re
         <Notice
           key={`${savedLanguage}:${savedBody}`}
           role="status"
-          className={cn("rounded-lg bg-muted px-3 py-2 text-sm", dirty && "hidden")}
+          className={cn(dirty && "hidden")}
         >
           Profile saved.
         </Notice>
@@ -129,34 +130,24 @@ function Form({ body: savedBody, language: savedLanguage, languages, maxBody, re
         </div>
       </div>
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="profile-language" className={label}>
-          Output language
-        </label>
-        {/* Uncontrolled: React resets a form after its action, and that takes a controlled select back
-            to its first option. The key moves the value a reset returns to along with what's saved. */}
-        <select
-          key={savedLanguage}
-          id="profile-language"
-          name="language"
-          defaultValue={savedLanguage}
-          onChange={(event) => {
-            setLanguage(event.target.value);
-          }}
-          aria-describedby="profile-language-note"
-          className={cn(field, "bg-background sm:max-w-xs")}
-        >
-          {languages.map(({ code, label: name }) => (
-            <option key={code} value={code}>
-              {name}
-            </option>
-          ))}
-        </select>
-        <p id="profile-language-note" className="max-w-[70ch] text-xs text-muted-foreground">
-          The language of the Agent&apos;s summaries and rating reasoning. Items keep their original text, and
-          Watchdog&apos;s own screens don&apos;t change.
-        </p>
-      </div>
+      <SelectField
+        key={savedLanguage}
+        id="profile-language"
+        name="language"
+        label="Output language"
+        defaultValue={savedLanguage}
+        onChange={(event) => {
+          setLanguage(event.target.value);
+        }}
+        help="The language of the Agent's summaries and rating reasoning. Items keep their original text, and Watchdog's own screens don't change."
+        controlClassName="sm:max-w-xs"
+      >
+        {languages.map(({ code, label: name }) => (
+          <option key={code} value={code}>
+            {name}
+          </option>
+        ))}
+      </SelectField>
 
       <div className="flex flex-col gap-3 border-t pt-4">
         <p className="text-sm text-muted-foreground">

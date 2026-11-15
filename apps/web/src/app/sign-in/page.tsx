@@ -2,23 +2,22 @@ import type { Metadata } from "next";
 import { connection } from "next/server";
 import { Suspense } from "react";
 import { providerNames, type ProviderId } from "@/lib/auth";
+import { PageHeader } from "@/components/page";
 import { returnTo } from "@/lib/return-to";
 import { server } from "@/lib/server";
 import { signInWithProvider } from "./actions";
 import { SignInForm } from "./sign-in-form";
-import { SubmitButton } from "./submit-button";
+import { SubmitButton } from "@/components/submit-button";
 
 export const metadata: Metadata = { title: "Sign in · Watchdog" };
 
 export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
   return (
     <>
-      <div className="flex flex-col gap-1">
-        <h1 className="text-headline">Sign in</h1>
-        <p className="text-sm text-muted-foreground">
-          Enter your email and we&apos;ll send you a link that signs you in. No password needed.
-        </p>
-      </div>
+      <PageHeader
+        title="Sign in"
+        description="Enter your email and we'll send you a link that signs you in. No password needed."
+      />
       {/* The form is in the static shell; an error and the page to return to, read from the URL,
           stream in over it. */}
       <Suspense fallback={<SignInForm />}>

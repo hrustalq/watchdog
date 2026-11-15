@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import Link from "next/link";
-import { dataBox, field, label, textBox, textLink } from "@/components/field-classes";
+import { dataBox, textBox, textLink } from "@/components/field-classes";
 import { Timestamp } from "@/components/timestamp";
 import {
   actionNames,
@@ -17,9 +17,15 @@ import {
   telegramLinkInCookie,
 } from "@/lib/destinations";
 import { Confirming } from "@/components/confirming";
+import { TextField } from "@/components/form-field";
+import { PageBar } from "@/components/page-bar";
+import { Page, PageHeader } from "@/components/page";
+import { PanelList, PanelRow } from "@/components/panel-list";
+import { Section } from "@/components/section";
+import { SignalLine } from "@/components/signal-line";
 import { requireWorkspace, server } from "@/lib/server";
-import { Notice } from "../sign-in/notice";
-import { SubmitButton } from "../sign-in/submit-button";
+import { Notice } from "@/components/notice";
+import { SubmitButton } from "@/components/submit-button";
 import {
   addEmailAction,
   addTelegramAction,
@@ -30,7 +36,6 @@ import {
   sendAgainAction,
   testDestinationAction,
 } from "./actions";
-import { FieldError } from "./field-error";
 
 export const metadata: Metadata = { title: "Destinations · Watchdog" };
 
@@ -72,33 +77,19 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
 
   return (
     <div className="flex flex-1 flex-col">
-      <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
-        <Link
-          href="/"
-          className="rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
-        >
-          Workspace
-        </Link>
-        <span aria-hidden="true" className="text-muted-foreground">
-          /
-        </span>
-        <span aria-current="page">Destinations</span>
-      </nav>
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 break-words">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-headline">Destinations</h1>
-          <p className="text-sm text-muted-foreground">Where Actions deliver alerts, webhook calls and Digests.</p>
-        </div>
+      <PageBar trail={[{ href: "/", label: "Workspace" }, { label: "Destinations" }]} />
+      <Page className="break-words">
+        <PageHeader title="Destinations" description="Where Actions deliver alerts, webhook calls and Digests." />
 
         {secret === undefined ? null : <SecretPanel secret={secret} name={secretFor?.name} />}
         {secret === undefined && secretFor?.type === "webhook" ? (
-          <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+          <Notice role="status">
             The secret for {secretFor.name} was already shown. Replace it if you didn&apos;t keep a copy.
           </Notice>
         ) : null}
         {telegramNotice?.status === "pending" ? <TelegramLinkPanel link={telegramNotice} bot={bot} /> : null}
         {telegramNotice?.status === "linked" ? (
-          <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+          <Notice role="status">
             {telegramNotice.name} is linked.
           </Notice>
         ) : null}
@@ -123,11 +114,8 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
           />
         )}
 
-        <section aria-labelledby="add-destination" className="flex flex-col gap-3">
-          <h2 id="add-destination" className="text-title">
-            Add a Destination
-          </h2>
-          <div className="divide-y rounded-lg border">
+        <Section id="add-destination" title="Add a Destination">
+          <PanelList as="div">
             <AddForm title="Email address" open={form === "email" || (form === "" && destinations.length === 0)}>
               <form action={addEmailAction} className="flex flex-col gap-4">
                 <NameField
@@ -140,9 +128,13 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                   label="Address"
                   type="email"
                   placeholder="you@example.com"
-                  value={form === "email" ? param("address") : ""}
+                  defaultValue={form === "email" ? param("address") : ""}
                   error={form === "email" && error?.field === "address" ? error.message : undefined}
                   help="Any address but your own gets a link to confirm it, and receives nothing until then."
+                  required
+                  maxLength={2048}
+                  autoComplete="email"
+                  spellCheck={false}
                 />
                 <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
                   Add email address
@@ -162,9 +154,13 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                   label="URL"
                   type="url"
                   placeholder="https://example.com/watchdog"
-                  value=""
+                  defaultValue=""
                   error={form === "webhook" && error?.field === "url" ? error.message : undefined}
                   help="Watchdog generates a signing secret and shows it once. The URL should answer directly, because a redirect can drop the request's body and signature."
+                  required
+                  maxLength={2048}
+                  autoComplete="off"
+                  spellCheck={false}
                 />
                 <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
                   Add webhook
@@ -190,7 +186,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
               ) : (
                 <p className="text-sm text-muted-foreground">
                   Telegram isn&apos;t set up on this install. Whoever runs this Watchdog can set{" "}
-                  <code className="font-mono text-[0.8125rem]">TELEGRAM_BOT_TOKEN</code>, as the{" "}
+                  <code className="text-data">TELEGRAM_BOT_TOKEN</code>, as the{" "}
                   <a href={configurationPage} className="underline underline-offset-4">
                     Configuration page
                   </a>{" "}
@@ -198,22 +194,18 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                 </p>
               )}
             </AddForm>
-          </div>
-        </section>
+          </PanelList>
+        </Section>
 
-        <section aria-labelledby="destinations" className="flex flex-col gap-3">
-          <h2 id="destinations" className="text-title">
-            <span className="tabular-nums">{destinations.length}</span>{" "}
-            {destinations.length === 1 ? "Destination" : "Destinations"}
-          </h2>
+        <Section id="destinations" title={<><span className="tabular-nums">{destinations.length}</span>{" "}{destinations.length === 1 ? "Destination" : "Destinations"}</>}>
           {destinations.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               None yet. Add one above, so Actions have somewhere to deliver.
             </p>
           ) : (
-            <ul className="divide-y rounded-lg border">
+            <PanelList>
               {destinations.map((row) => (
-                <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+                <PanelRow key={row.id}>
                   <div className="flex min-w-0 flex-col gap-1">
                     <h3 className="text-title break-words">{row.name}</h3>
                     {row.pointsAt === null ? null : (
@@ -221,7 +213,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                         className={
                           row.type === "telegram"
                             ? "text-sm text-muted-foreground"
-                            : "font-mono text-[0.8125rem] break-all text-muted-foreground"
+                            : "text-data break-all text-muted-foreground"
                         }
                       >
                         {row.pointsAt}
@@ -238,19 +230,16 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                       </p>
                     ) : null}
                     {row.lastError === null ? null : (
-                      <p className="flex items-start gap-2 text-sm text-alarm">
-                        <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
-                        <span className="min-w-0 break-words">
-                          Last send failed
-                          {row.lastErrorAt === null ? null : (
-                            <>
-                              {" "}
-                              at <Timestamp at={row.lastErrorAt} />
-                            </>
-                          )}
-                          : {row.lastError}
-                        </span>
-                      </p>
+                      <SignalLine tone="alarm">
+                        Last send failed
+                        {row.lastErrorAt === null ? null : (
+                          <>
+                            {" "}
+                            at <Timestamp at={row.lastErrorAt} />
+                          </>
+                        )}
+                        : {row.lastError}
+                      </SignalLine>
                     )}
                   </div>
                   <div className="flex shrink-0 flex-col gap-2 sm:max-w-64 sm:items-end">
@@ -305,12 +294,12 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                       pendingLabel="Removing…"
                     />
                   </div>
-                </li>
+                </PanelRow>
               ))}
-            </ul>
+            </PanelList>
           )}
-        </section>
-      </main>
+        </Section>
+      </Page>
     </div>
   );
 }
@@ -341,13 +330,10 @@ function State({ state, failing }: { state: DestinationState; failing: boolean }
 /** The one time a webhook secret is shown. A reload doesn't show it again. */
 function SecretPanel({ secret, name }: { secret: string; name: string | undefined }) {
   return (
-    <section aria-labelledby="secret" className="flex flex-col gap-2 rounded-lg border bg-card p-4">
-      <h2 id="secret" className="text-title">
-        The secret for {name ?? "this webhook"}
-      </h2>
-      <Notice role="status" className="text-sm">
+    <Section id="secret" title={<>The secret for {name ?? "this webhook"}</>} tone="raised" gap={2}>
+      <Notice role="status" tone="plain">
         Copy it now. Watchdog won&apos;t show it again. Your receiver uses it to check the{" "}
-        <code className="font-mono text-[0.8125rem]">X-Watchdog-Signature</code> header on every call.
+        <code className="text-data">X-Watchdog-Signature</code> header on every call.
       </Notice>
       {/* A text box, because Tab, select-all and copy work on it with no JavaScript and from a keyboard. */}
       <textarea
@@ -357,7 +343,7 @@ function SecretPanel({ secret, name }: { secret: string; name: string | undefine
         value={secret}
         className={`${textBox} ${dataBox} resize-none py-1.5`}
       />
-    </section>
+    </Section>
   );
 }
 
@@ -370,19 +356,16 @@ function TelegramLinkPanel({
   bot: string | undefined;
 }) {
   return (
-    <section aria-labelledby="telegram-link" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-      <h2 id="telegram-link" className="text-title">
-        Link {name} to a Telegram chat
-      </h2>
+    <Section id="telegram-link" title={<>Link {name} to a Telegram chat</>} tone="raised">
       {bot === undefined ? (
-        <Notice role="alert" className="text-sm text-alarm">
+        <Notice role="alert" tone="alarm">
           Watchdog couldn&apos;t reach Telegram to get the bot&apos;s name, so the link isn&apos;t ready. Reload this page
           in a moment.
         </Notice>
       ) : (
         <>
           {/* Keyed by the code, so a new link is announced even though the rest of the page stays. */}
-          <Notice key={code} role="status" className="text-sm">
+          <Notice key={code} role="status" tone="plain">
             The code in these links works once and expires at <Timestamp at={expiresAt} className="whitespace-nowrap" />.
           </Notice>
           <div className="flex flex-col gap-1 text-sm">
@@ -391,7 +374,7 @@ function TelegramLinkPanel({
               href={`https://t.me/${bot}?start=${code}`}
               target="_blank"
               rel="noreferrer"
-              className={`${textLink} self-start font-mono text-[0.8125rem] break-all`}
+              className={`${textLink} self-start text-data break-all`}
             >
               {`https://t.me/${bot}?start=${code}`}
             </a>
@@ -422,7 +405,7 @@ function TelegramLinkPanel({
           </p>
         </>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -448,15 +431,13 @@ function Outcome({
   refusedBySetting: boolean;
   mailGoesToLog: boolean;
 }) {
-  const quietly = "rounded-lg bg-muted px-3 py-2 text-sm";
-  const failed = "rounded-lg bg-destructive/10 px-3 py-2 text-sm text-alarm";
   const where = mailGoesToLog
     ? "This install has no mail server, so the confirmation link is in the web container's log."
     : "A confirmation link is on its way, and it stays waiting until that link is opened. The link lasts 24 hours.";
 
   if (refusedBySetting) {
     return (
-      <Notice role="alert" className={failed}>
+      <Notice role="alert" tone="failed">
         {refusedName ?? "That Destination"} can&apos;t be removed, because it&apos;s the only Destination Source Health
         alerts go to{refused.length > 0 ? `, and the only Destination of ${refused.join(", ")}` : ""}. Choose another
         for them, or untick this one, on <Link href="/settings" className={textLink}>
@@ -471,7 +452,7 @@ function Outcome({
   }
   if (refused.length > 0) {
     return (
-      <Notice role="alert" className={failed}>
+      <Notice role="alert" tone="failed">
         {refusedName ?? "That Destination"} can&apos;t be removed, because it&apos;s the only Destination of{" "}
         {refused.join(", ")}. Give {refused.length === 1 ? "that Action" : "those Actions"} another Destination, or
         disable {refused.length === 1 ? "it" : "them"}, first.
@@ -480,7 +461,7 @@ function Outcome({
   }
   if (removed) {
     return (
-      <Notice role="status" className={quietly}>
+      <Notice role="status">
         Destination removed.
         {left.length > 0 ? ` ${left.join(", ")} no longer ${left.length === 1 ? "delivers" : "deliver"} there.` : ""}
       </Notice>
@@ -488,21 +469,21 @@ function Outcome({
   }
   if (missing || resent === "not-found") {
     return (
-      <Notice role="alert" className={failed}>
+      <Notice role="alert" tone="failed">
         That Destination wasn&apos;t found in this Workspace.
       </Notice>
     );
   }
   if (added === "not-needed") {
     return (
-      <Notice role="status" className={quietly}>
+      <Notice role="status">
         Destination added. It&apos;s your own address, so it&apos;s confirmed already.
       </Notice>
     );
   }
   if (added === "sent" || resent === "sent") {
     return (
-      <Notice role="status" className={quietly}>
+      <Notice role="status">
         {added === "sent" ? "Destination added. " : ""}
         {where}
       </Notice>
@@ -510,7 +491,7 @@ function Outcome({
   }
   if (added === "failed" || resent === "failed") {
     return (
-      <Notice role="alert" className={failed}>
+      <Notice role="alert" tone="failed">
         {added === "failed" ? "Destination added, but the" : "The"} confirmation mail couldn&apos;t be sent. Try
         &quot;Send the link again&quot; in a moment.
       </Notice>
@@ -518,7 +499,7 @@ function Outcome({
   }
   if (added === "too-soon" || resent === "too-soon") {
     return (
-      <Notice role="status" className={quietly}>
+      <Notice role="status">
         {added === "too-soon" ? "Destination added. " : ""}A confirmation mail went out from this Workspace less than
         a minute ago, and it sends one a minute. Press &quot;Send the link again&quot; in a minute.
       </Notice>
@@ -544,7 +525,7 @@ function TestOutcome({
 }) {
   if (capped) {
     return (
-      <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+      <Notice role="status">
         The test to {name} wasn&apos;t sent: this Workspace has sent the hosted limit of 50 alert mails for today. Alert
         mail goes out again after midnight, {timezone} time.
       </Notice>
@@ -552,14 +533,14 @@ function TestOutcome({
   }
   if (lastError !== null) {
     return (
-      <Notice role="alert" className="rounded-lg bg-destructive/10 px-3 py-2 text-sm text-alarm">
+      <Notice role="alert" tone="failed">
         The test to {name} failed: {lastError}. Alerts to it fail the same way until that&apos;s fixed, so fix it and send
         another test.
       </Notice>
     );
   }
   return (
-    <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+    <Notice role="status">
       Test sent to {name}.
       {type === "email" && mailGoesToLog ? " This install has no mail server, so the mail is in the web container's log." : ""}
     </Notice>
@@ -596,63 +577,13 @@ function NameField({
       label="Name"
       type="text"
       placeholder={placeholder}
-      value={value}
+      defaultValue={value}
       error={error?.field === "name" ? error.message : undefined}
       help="Actions refer to it by this name."
+      maxLength={200}
+      autoComplete="off"
+      spellCheck={false}
+      required
     />
-  );
-}
-
-function TextField({
-  id,
-  name = id,
-  label: title,
-  type,
-  placeholder,
-  value,
-  error,
-  help,
-}: {
-  id: string;
-  name?: string;
-  label: string;
-  type: "text" | "email" | "url";
-  placeholder: string;
-  value: string;
-  error: string | undefined;
-  help: string;
-}) {
-  const invalid = error !== undefined;
-  return (
-    <div className="flex flex-col gap-2">
-      <label htmlFor={id} className={label}>
-        {title}
-      </label>
-      <input
-        id={id}
-        name={name}
-        type={type}
-        required
-        maxLength={type === "text" ? 200 : 2048}
-        // The name is the Destination's, and "name" alone would have a browser offer the person's own.
-        autoComplete={type === "email" ? "email" : "off"}
-        spellCheck={false}
-        placeholder={placeholder}
-        defaultValue={value}
-        aria-invalid={invalid}
-        aria-describedby={`${id}-${invalid ? "error" : "help"}`}
-        // Focus lands here with the error, so the field and its message are read together.
-        // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
-        autoFocus={invalid}
-        className={field}
-      />
-      {invalid ? (
-        <FieldError id={`${id}-error`}>{error}</FieldError>
-      ) : (
-        <p id={`${id}-help`} className="text-xs text-muted-foreground">
-          {help}
-        </p>
-      )}
-    </div>
   );
 }

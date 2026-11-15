@@ -3,8 +3,8 @@
 import { useRef, useState } from "react";
 import type { AlertSettingsForm } from "@/lib/settings";
 import { cn } from "@/lib/utils";
-import { Notice } from "../sign-in/notice";
-import { SubmitButton } from "../sign-in/submit-button";
+import { Notice } from "@/components/notice";
+import { SubmitButton } from "@/components/submit-button";
 import { saveSettingsAction } from "./actions";
 
 interface SettingsFormProps {
@@ -44,7 +44,7 @@ export function SettingsForm({ initial, justSaved, children }: SettingsFormProps
         // Each save brings a new page, so the notice is a new node and is read again, even when the
         // fields went nowhere. Hidden, not removed, while the fields hold edits: putting them back
         // returns it.
-        <Notice role="status" className={cn("rounded-lg bg-muted px-3 py-2 text-sm", dirty && "hidden")}>
+        <Notice role="status" className={cn(dirty && "hidden")}>
           Settings saved. The next alert follows them.
         </Notice>
       ) : null}

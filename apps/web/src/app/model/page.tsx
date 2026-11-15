@@ -1,9 +1,12 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { ChevronDown } from "lucide-react";
 import { Suspense } from "react";
 import { Timestamp } from "@/components/timestamp";
 import { buttonVariants } from "@/components/ui/button";
+import { PageBar } from "@/components/page-bar";
+import { Page, PageHeader } from "@/components/page";
+import { Section } from "@/components/section";
+import { SignalLine } from "@/components/signal-line";
 import {
   getModel,
   lastFailedCall,
@@ -18,8 +21,8 @@ import {
 } from "@/lib/model";
 import { readSentBack } from "@/lib/sent-back";
 import { requireWorkspace, server } from "@/lib/server";
-import { Notice } from "../sign-in/notice";
-import { SubmitButton } from "../sign-in/submit-button";
+import { Notice } from "@/components/notice";
+import { SubmitButton } from "@/components/submit-button";
 import { removeModelAction, testConnectionAction } from "./actions";
 import { formOpens } from "./form-open";
 import { ModelForm, type ModelFormValues } from "./model-form";
@@ -29,26 +32,15 @@ export const metadata: Metadata = { title: "Model · Watchdog" };
 export default function ModelPage({ searchParams }: PageProps<"/model">) {
   return (
     <div className="flex flex-1 flex-col">
-      <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
-        <Link
-          href="/"
-          className="inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
-        >
-          Workspace
-        </Link>
-        <span aria-hidden="true" className="text-muted-foreground">
-          /
-        </span>
-        <span aria-current="page">Model</span>
-      </nav>
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
-        <h1 className="text-headline">Model</h1>
+      <PageBar trail={[{ href: "/", label: "Workspace" }, { label: "Model" }]} />
+      <Page>
+        <PageHeader title="Model" />
         {/* The form shows the saved model, so an empty one in the static shell could replace it. This
             screen therefore needs JavaScript, unlike the form on Sources. */}
         <Suspense fallback={<div aria-busy="true" className="h-96 rounded-lg bg-muted" />}>
           <ModelScreen searchParams={searchParams} />
         </Suspense>
-      </main>
+      </Page>
     </div>
   );
 }
@@ -63,7 +55,6 @@ const blankForm: ModelFormValues = {
   outputPrice: "",
 };
 
-const noticeClass = "rounded-lg bg-muted px-3 py-2 text-sm";
 // The Remove control's summary styling, at the size of a card header: the whole row is the control.
 const formSummary =
   "flex min-h-12 cursor-pointer list-none flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg px-4 py-2 outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden";
@@ -135,14 +126,14 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
       {/* The worker's key is the one every Agent call uses, so this comes before anything about a save. */}
       {keyMismatch && mode === "self-hosted" ? <KeyMismatch /> : null}
       {param("saved") === "1" ? (
-        <Notice role="status" className={noticeClass}>
+        <Notice role="status">
           {model?.storedKey === "unreadable"
             ? "Model saved, but its API key is still unreadable."
             : "Model saved. Test the connection to check that it works."}
         </Notice>
       ) : null}
       {param("saved") === "key-left-behind" ? (
-        <Notice role="status" className={noticeClass}>
+        <Notice role="status">
           Model saved with no API key. The old key was only for the old address, so Watchdog deleted it.{" "}
           <a href="#api-key" className={keyLink}>
             Enter this model&apos;s key
@@ -151,18 +142,15 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
         </Notice>
       ) : null}
       {param("removed") !== "" ? (
-        <Notice role="status" className={noticeClass}>
+        <Notice role="status">
           Model removed. Agent stages have stopped and new Items stay unrated. Deterministic rules keep running.
         </Notice>
       ) : null}
 
       {model === undefined ? null : (
-        <section aria-labelledby="current-model" className="flex flex-col gap-3 rounded-lg border p-4">
+        <Section id="current-model" title={model.modelName} titleClassName="font-mono break-words" tone="panel">
           <div className="flex flex-col gap-1">
-            <h2 id="current-model" className="text-title font-mono break-words">
-              {model.modelName}
-            </h2>
-            <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{model.baseUrl}</p>
+            <p className="text-data break-all text-muted-foreground">{model.baseUrl}</p>
             <p className="text-sm text-muted-foreground">
               {providerTypes.find(({ value }) => value === model.providerType)?.label}
               {" · "}
@@ -204,7 +192,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
             )}
             <RemoveModel name={model.modelName} />
           </div>
-        </section>
+        </Section>
       )}
 
       {/* A native disclosure, as the Remove control: a saved model that works leaves the status and
@@ -263,7 +251,7 @@ function TestResult({ test, modelName }: { test: TestOutcome | undefined; modelN
   switch (test) {
     case "ok":
       return (
-        <Notice role="status" className={noticeClass}>
+        <Notice role="status">
           Connected. {modelName} answered.
         </Notice>
       );
@@ -296,7 +284,7 @@ function SettingsTest({
   switch (outcome) {
     case "ok":
       return (
-        <Notice role="status" className={noticeClass}>
+        <Notice role="status">
           These settings work: {modelName} answered. Nothing is saved yet, and the saved model keeps running.
         </Notice>
       );
@@ -331,19 +319,14 @@ function SettingsTest({
 
 /** Something to fix. It takes focus only after a test: a page that merely loads with it shouldn't move it. */
 function AlarmLine({ takeFocus, children }: { takeFocus: boolean; children: React.ReactNode }) {
-  const className = "flex items-start gap-2 text-sm text-alarm";
-  const line = (
-    <>
-      <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
-      {children}
-    </>
-  );
   return takeFocus ? (
-    <Notice role="alert" className={className}>
-      {line}
+    <Notice role="alert" tone="alarm">
+      <SignalLine as="span" tone="alarm">
+        {children}
+      </SignalLine>
     </Notice>
   ) : (
-    <p className={className}>{line}</p>
+    <SignalLine tone="alarm">{children}</SignalLine>
   );
 }
 
@@ -356,7 +339,7 @@ function KeyMismatch() {
     <AlarmLine takeFocus={false}>
       <span className="min-w-0 break-words">
         Web and the worker hold different{" "}
-        <span className="font-mono text-[0.8125rem]">WATCHDOG_ENCRYPTION_KEY</span> values, so the worker
+        <span className="text-data">WATCHDOG_ENCRYPTION_KEY</span> values, so the worker
         can&apos;t read the secrets web saved. Restart both with the same value.
       </span>
     </AlarmLine>
@@ -370,7 +353,7 @@ const UnreadableKey = ({ justTested, mode }: { justTested: boolean; mode: "hoste
       Watchdog can&apos;t read the stored API key
       {mode === "self-hosted" ? (
         <>
-          , which happens when <span className="font-mono text-[0.8125rem]">WATCHDOG_ENCRYPTION_KEY</span> changes
+          , which happens when <span className="text-data">WATCHDOG_ENCRYPTION_KEY</span> changes
         </>
       ) : null}
       . Items captured until you enter the key again stay unrated, and deterministic rules keep running.

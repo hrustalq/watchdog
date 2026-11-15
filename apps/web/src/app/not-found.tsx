@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { headers } from "next/headers";
 import Link from "next/link";
 import { buttonVariants } from "@/components/ui/button";
+import { CenteredPage } from "@/components/centered-page";
 import { itemMissHeader } from "@/lib/missing";
 
 /**
@@ -21,7 +22,7 @@ export const metadata: Metadata = { title: "Not found · Watchdog" };
 export default async function NotFound() {
   const item = (await headers()).get(itemMissHeader) !== null;
   return (
-    <main className="flex flex-1 flex-col items-center justify-center px-4 py-16 text-center">
+    <CenteredPage className="text-center">
       <h1 className="text-headline">Nothing here</h1>
       <p className="mt-2 max-w-md text-sm text-muted-foreground">
         This page doesn&apos;t exist.
@@ -30,6 +31,6 @@ export default async function NotFound() {
       <Link href="/" className={buttonVariants({ variant: "outline", className: "mt-6" })}>
         Back to the Feed
       </Link>
-    </main>
+    </CenteredPage>
   );
 }

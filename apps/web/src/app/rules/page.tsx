@@ -8,11 +8,16 @@ import { type ActionKind, digestScheduleName, type RuleKind, ruleNoun, type Rule
 import type { RuleSummary } from "@/lib/rule-summary";
 import { listRules } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
-import { Notice } from "../sign-in/notice";
-import { SubmitButton } from "../sign-in/submit-button";
+import { Notice } from "@/components/notice";
+import { Disclosure } from "@/components/disclosure";
+import { PageBar } from "@/components/page-bar";
+import { Page, PageHeader } from "@/components/page";
+import { PanelList, PanelRow } from "@/components/panel-list";
+import { Section } from "@/components/section";
+import { SignalLine } from "@/components/signal-line";
+import { SubmitButton } from "@/components/submit-button";
 import { removeRuleAction, setRuleEnabledAction } from "./actions";
 import { ForgetDrafts } from "./forget-drafts";
-import { RulesBreadcrumb } from "./rules-breadcrumb";
 import {
   actionApplies,
   appliesFromNow,
@@ -28,22 +33,15 @@ export const metadata: Metadata = { title: "Rules · Watchdog" };
 export default function RulesPage({ searchParams }: PageProps<"/rules">) {
   return (
     <div className="flex flex-1 flex-col">
-      <RulesBreadcrumb />
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
+      <PageBar trail={[{ href: "/", label: "Workspace" }, { label: "Rules" }]} />
+      <Page>
         <ForgetDrafts prefix="/rules" />
-        <div className="flex flex-col gap-1">
-          <h1 className="text-headline">Rules</h1>
-          <p className="text-sm text-muted-foreground">{appliesFromNow}</p>
-        </div>
+        <PageHeader title="Rules" description={appliesFromNow} />
         {/* What the last save said is read from the URL, so it streams in. */}
         <Suspense fallback={null}>
           <PageNotice searchParams={searchParams} />
         </Suspense>
-        <section aria-labelledby="add-rule" className="flex flex-col gap-4 rounded-lg border p-4">
-          <h2 id="add-rule" className="text-title">
-            Add a rule
-          </h2>
-          <p className="text-sm text-muted-foreground">{kindsExplained}</p>
+        <Section id="add-rule" title="Add a rule" tone="panel" gap={4} description={kindsExplained}>
           <div className="grid gap-4 sm:grid-cols-3">
             <AddRule type="classifier" description="Sorts every Item into Categories." />
             <AddRule
@@ -55,11 +53,11 @@ export default function RulesPage({ searchParams }: PageProps<"/rules">) {
               description="Sends an alert, calls a webhook or collects a Digest when an Item meets its Condition."
             />
           </div>
-        </section>
+        </Section>
         <Suspense fallback={<div aria-busy="true" className="h-48 rounded-lg bg-muted" />}>
           <RuleLists />
         </Suspense>
-      </main>
+      </Page>
     </div>
   );
 }
@@ -69,14 +67,14 @@ async function PageNotice({ searchParams }: Pick<PageProps<"/rules">, "searchPar
   // A rule a hosted limit refused isn't saved, and the message names the limit and the usage.
   if (typeof refused === "string") {
     return (
-      <Notice role="alert" className="rounded-lg bg-muted px-3 py-2 text-sm">
+      <Notice role="alert">
         {refused}
       </Notice>
     );
   }
   if (saved === undefined) return null;
   return (
-    <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+    <Notice role="status">
       Rule saved.
     </Notice>
   );
@@ -188,15 +186,19 @@ function RuleList({
   unreadableKey: boolean;
 }) {
   return (
-    <section aria-labelledby={`${type}-rules`} className="flex flex-col gap-3">
-      <h2 id={`${type}-rules`} className="text-title">
-        {heading} <span className="font-normal text-muted-foreground tabular-nums">{rules.length}</span>
-      </h2>
-      {note === undefined ? null : <p className="text-sm text-muted-foreground">{note}</p>}
+    <Section
+      id={`${type}-rules`}
+      title={
+        <>
+          {heading} <span className="font-normal text-muted-foreground tabular-nums">{rules.length}</span>
+        </>
+      }
+      description={note}
+    >
       {rules.length === 0 ? (
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
-        <ul className="divide-y rounded-lg border">
+        <PanelList>
           {rules.map((rule) => (
             <RuleItem
               key={rule.id}
@@ -206,9 +208,9 @@ function RuleList({
               unreadableKey={rule.kind === "agent" && unreadableKey}
             />
           ))}
-        </ul>
+        </PanelList>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -224,7 +226,7 @@ function RuleItem({
   unreadableKey: boolean;
 }) {
   return (
-    <li className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+    <PanelRow>
       <div className="flex min-w-0 flex-col gap-1">
         <h3 className="text-title break-words">
           <Link
@@ -259,7 +261,7 @@ function RuleItem({
         <EnableSwitch type={type} rule={rule} locked={needsModel || rule.noDestination === true} />
         <DeleteRule type={type} rule={rule} />
       </div>
-    </li>
+    </PanelRow>
   );
 }
 
@@ -296,7 +298,7 @@ function ActionDetail({
       {schedule === null ? null : (
         <p className="text-sm text-muted-foreground">
           Schedule{" "}
-          {digestScheduleName(schedule) ?? <span className="font-mono text-[0.8125rem]">{schedule}</span>}
+          {digestScheduleName(schedule) ?? <span className="text-data">{schedule}</span>}
         </p>
       )}
       {waiting.length === 0 ? null : (
@@ -313,12 +315,7 @@ function ActionDetail({
 
 /** Why an Action that looks enabled won't deliver: a lamp and full-strength text, unlike the row's other lines. */
 function Warning({ children }: { children: React.ReactNode }) {
-  return (
-    <p className="flex items-baseline gap-2 text-sm">
-      <span aria-hidden="true" className="size-1.5 shrink-0 translate-y-[-1px] rounded-full bg-caution" />
-      <span className="min-w-0 break-words">{children}</span>
-    </p>
-  );
+  return <SignalLine tone="caution">{children}</SignalLine>;
 }
 
 /** A form with one button, so it works without JavaScript. The word says what color alone wouldn't. */
@@ -350,25 +347,20 @@ function DeleteRule({ type, rule }: { type: RuleType; rule: RuleRow }) {
       ? "Deleting it stops it firing, and anything it hasn't sent yet never goes out. The Log keeps what it did."
       : `Deleting ${rule.name} stops it running. The ${type === "classifier" ? "Categories it already assigned" : "fields it already extracted"} stay on their Items.`;
   return (
-    <details className="group sm:max-w-64">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
-        <span className="group-open:hidden">
-          Delete<span className="sr-only"> {rule.name}</span>
-        </span>
-        <span className="hidden group-open:inline">
-          Keep it<span className="sr-only"> {rule.name}</span>
-        </span>
-      </summary>
-      <div className="mt-2 flex flex-col gap-3 rounded-lg border p-3">
-        <p className="text-sm">
-          {consequence} This can&apos;t be undone.
-        </p>
-        <form action={removeRuleAction.bind(null, type, rule.id)}>
-          <SubmitButton variant="destructive" pendingLabel="Deleting…">
-            Delete {ruleNoun[type]}
-          </SubmitButton>
-        </form>
-      </div>
-    </details>
+    <Disclosure
+      label={<>Delete<span className="sr-only"> {rule.name}</span></>}
+      openLabel={<>Keep it<span className="sr-only"> {rule.name}</span></>}
+      className="sm:max-w-64"
+      bodyClassName="border"
+    >
+      <p className="text-sm">
+        {consequence} This can&apos;t be undone.
+      </p>
+      <form action={removeRuleAction.bind(null, type, rule.id)}>
+        <SubmitButton variant="destructive" pendingLabel="Deleting…">
+          Delete {ruleNoun[type]}
+        </SubmitButton>
+      </form>
+    </Disclosure>
   );
 }

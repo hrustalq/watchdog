@@ -20,7 +20,7 @@ export function Timestamp({ at, seconds = false, className }: { at: Date; second
   const date = format(at, "yyyy-MM-dd", { in: utc });
   const time = format(at, timePattern(seconds), { in: utc });
   return (
-    <time dateTime={iso} className={cn("font-mono text-[0.8125rem]", className)}>
+    <time dateTime={iso} className={cn("text-data", className)}>
       <span className="whitespace-nowrap">{date}</span>{" "}
       <span className="whitespace-nowrap">{time} UTC</span>
     </time>

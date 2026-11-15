@@ -3,12 +3,16 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { loginState, sessionChats, sessionOf } from "@watchdog/core";
 import { Confirming } from "@/components/confirming";
-import { dataBox, field, fieldError, label, textLink } from "@/components/field-classes";
+import { dataBox, textLink } from "@/components/field-classes";
+import { TextField } from "@/components/form-field";
+import { PageBar } from "@/components/page-bar";
+import { Page, PageHeader } from "@/components/page";
+import { Section } from "@/components/section";
 import { Timestamp } from "@/components/timestamp";
 import { Button } from "@/components/ui/button";
 import { requireWorkspace, server } from "@/lib/server";
-import { Notice } from "../../sign-in/notice";
-import { SubmitButton } from "../../sign-in/submit-button";
+import { Notice } from "@/components/notice";
+import { SubmitButton } from "@/components/submit-button";
 import { matchingChats } from "./chat-filter";
 import {
   answerTelegramLoginAction,
@@ -23,9 +27,6 @@ export const metadata: Metadata = { title: "Telegram (your account) · Watchdog"
 
 // Read without Suspense, so every step is in the first HTML and the login works without JavaScript.
 export const instant = false;
-
-const crumb =
-  "rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60";
 
 // Shown over the page. A wrong phone number or an empty field is shown at its field instead.
 const problems: Record<string, string> = {
@@ -58,43 +59,33 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
 
   return (
     <div className="flex flex-1 flex-col">
-      <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
-        <Link href="/" className={crumb}>
-          Workspace
-        </Link>
-        <span aria-hidden="true" className="text-muted-foreground">
-          /
-        </span>
-        <Link href="/sources" className={crumb}>
-          Sources
-        </Link>
-        <span aria-hidden="true" className="text-muted-foreground">
-          /
-        </span>
-        <span aria-current="page">Telegram (your account)</span>
-      </nav>
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 break-words">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-headline">Telegram (your account)</h1>
-          <p className="text-sm text-muted-foreground">
-            For chats you can&apos;t add a bot to, Watchdog can sign in as you with a session of its own and use it only to
-            read. It never sends, joins, leaves or marks anything as read. Whenever you can add a bot to the chat, use the
-            bot instead: add a Telegram chat on the{" "}
-            <Link href="/sources" className={textLink}>
-              Sources
-            </Link>{" "}
-            screen.
-          </p>
-        </div>
+      <PageBar
+        trail={[{ href: "/", label: "Workspace" }, { href: "/sources", label: "Sources" }, { label: "Telegram (your account)" }]}
+      />
+      <Page className="break-words">
+        <PageHeader
+          title="Telegram (your account)"
+          description={
+            <>
+              For chats you can&apos;t add a bot to, Watchdog can sign in as you with a session of its own and use it only to
+              read. It never sends, joins, leaves or marks anything as read. Whenever you can add a bot to the chat, use the
+              bot instead: add a Telegram chat on the{" "}
+              <Link href="/sources" className={textLink}>
+                Sources
+              </Link>{" "}
+              screen.
+            </>
+          }
+        />
 
         {problem === undefined ? null : (
-          <Notice key={problem} role="alert" className="rounded-lg bg-muted px-3 py-2 text-sm">
+          <Notice key={problem} role="alert">
             {problem}
           </Notice>
         )}
 
         {status === undefined ? null : (
-          <Notice key={status} role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+          <Notice key={status} role="status">
             {status}
           </Notice>
         )}
@@ -115,7 +106,7 @@ export default async function TelegramSessionPage({ searchParams }: PageProps<"/
         ) : (
           <LoginPanel login={login} invalid={code === "invalid-phone"} empty={code === "empty"} />
         )}
-      </main>
+      </Page>
     </div>
   );
 }
@@ -137,11 +128,8 @@ function SessionPanel({
 }) {
   if (unreadable) {
     return (
-      <section aria-labelledby="session" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-        <h2 id="session" className="text-title">
-          Watchdog can&apos;t read the session for {account}
-        </h2>
-        <Notice role="alert" className="text-sm text-alarm">
+      <Section id="session" title={<>Watchdog can&apos;t read the session for {account}</>} tone="raised">
+        <Notice role="alert" tone="alarm">
           Watchdog&apos;s encryption key changed after the session was stored, so Watchdog can&apos;t read it any more,
           and can&apos;t log it out on Telegram either. End it yourself in Telegram under Settings › Devices, then
           delete it here.
@@ -154,16 +142,13 @@ function SessionPanel({
           button="Delete the session"
           pendingLabel="Deleting…"
         />
-      </section>
+      </Section>
     );
   }
   if (revoking && stuck) {
     return (
-      <section aria-labelledby="session" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-        <h2 id="session" className="text-title">
-          Revoking {account} didn&apos;t finish
-        </h2>
-        <Notice role="alert" className="text-sm text-alarm">
+      <Section id="session" title={<>Revoking {account} didn&apos;t finish</>} tone="raised">
+        <Notice role="alert" tone="alarm">
           Watchdog couldn&apos;t reach Telegram to log the session out, so the session is still there.
         </Notice>
         <form action={revokeTelegramSessionAction}>
@@ -171,35 +156,29 @@ function SessionPanel({
             Try again
           </SubmitButton>
         </form>
-      </section>
+      </Section>
     );
   }
   if (revoking) {
     return (
-      <section aria-labelledby="session" className="flex flex-col gap-2 rounded-lg border bg-card p-4">
-        <h2 id="session" className="text-title">
-          Revoking {account}
-        </h2>
-        <Notice role="status" className="text-sm">
+      <Section id="session" title={<>Revoking {account}</>} tone="raised" gap={2}>
+        <Notice role="status" tone="plain">
           Watchdog is logging the session out on Telegram, then deletes it.{" "}
           <Link href="/sources/telegram" prefetch={false} className={textLink}>
             Reload this page
           </Link>{" "}
           in a moment.
         </Notice>
-      </section>
+      </Section>
     );
   }
   return (
-    <section aria-labelledby="session" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-      <div className="flex flex-col gap-1">
-        <h2 id="session" className="text-title">
-          Signed in as {account}
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Since <Timestamp at={since} />. The session is stored encrypted, and only Watchdog&apos;s worker can read it.
-        </p>
-      </div>
+    <Section
+      id="session"
+      title={<>Signed in as {account}</>}
+      tone="raised"
+      description={<>Since <Timestamp at={since} />. The session is stored encrypted, and only Watchdog&apos;s worker can read it.</>}
+    >
       <Confirming
         label="Revoke"
         name={account}
@@ -208,7 +187,7 @@ function SessionPanel({
         button="Revoke the session"
         pendingLabel="Revoking…"
       />
-    </section>
+    </Section>
   );
 }
 
@@ -217,25 +196,21 @@ const kinds = { group: "Group", supergroup: "Group", channel: "Channel" };
 /** The account's groups and channels, each watched as a Source with one click. */
 function ChatsPanel({ chats, query }: { chats: Awaited<ReturnType<typeof sessionChats>>; query: string }) {
   return (
-    <section aria-labelledby="chats" className="flex flex-col gap-3 rounded-lg border p-4">
-      <div className="flex flex-col gap-1">
-        <h2 id="chats" className="text-title">
-          Chats to watch
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Each chat you watch becomes a Source. It starts with the chat&apos;s messages from the last 7 days, at most 50,
-          then takes every new one. Watchdog reads this list from Telegram once an hour.
-        </p>
-      </div>
+    <Section
+      id="chats"
+      title="Chats to watch"
+      tone="panel"
+      description="Each chat you watch becomes a Source. It starts with the chat's messages from the last 7 days, at most 50, then takes every new one. Watchdog reads this list from Telegram once an hour."
+    >
       <ChatList chats={chats} query={query} />
-    </section>
+    </Section>
   );
 }
 
 function ChatList({ chats, query }: { chats: Awaited<ReturnType<typeof sessionChats>>; query: string }) {
   if (chats === undefined) {
     return (
-      <Notice role="status" className="text-sm">
+      <Notice role="status" tone="plain">
         Watchdog is reading your chats from Telegram.{" "}
         <Link href="/sources/telegram" prefetch={false} className={textLink}>
           Reload this page
@@ -289,20 +264,15 @@ function ChatFilter({ query }: { query: string }) {
       aria-label="Filter chats"
       className="flex flex-wrap items-end gap-2"
     >
-      <div className="flex min-w-0 flex-1 flex-col gap-2">
-        <label htmlFor="q" className={label}>
-          Filter chats by title
-        </label>
-        <input
-          id="q"
-          name="q"
-          type="search"
-          defaultValue={query}
-          autoComplete="off"
-          spellCheck={false}
-          className={field}
-        />
-      </div>
+      <TextField
+        id="q"
+        name="q"
+        label="Filter chats by title"
+        type="search"
+        defaultValue={query}
+        autoComplete="off"
+        className="min-w-0 flex-1"
+      />
       <Button type="submit" variant="outline" className="sm:w-auto">
         Filter
       </Button>
@@ -323,53 +293,35 @@ function LoginPanel({
 }) {
   if (login === undefined || login.step === "failed") {
     return (
-      <section aria-labelledby="sign-in" className="flex flex-col gap-4 rounded-lg border p-4">
-        <h2 id="sign-in" className="text-title">
-          Sign in
-        </h2>
+      <Section id="sign-in" title="Sign in" tone="panel" gap={4}>
         {login === undefined ? null : (
-          <Notice role="alert" className="text-sm text-alarm">
+          <Notice role="alert" tone="alarm">
             {login.refusal}
           </Notice>
         )}
         <form action={startTelegramLoginAction} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-2">
-            <label htmlFor="phone" className={label}>
-              Phone number
-            </label>
-            <input
-              id="phone"
-              name="phone"
-              type="tel"
-              autoComplete="tel"
-              aria-invalid={invalid || undefined}
-              aria-describedby={invalid ? "phone-error phone-help" : "phone-help"}
-              className={`${field} ${dataBox}`}
-            />
-            {invalid ? (
-              <p id="phone-error" className={fieldError}>
-                {phoneInvalid}
-              </p>
-            ) : null}
-            <p id="phone-help" className="text-xs text-muted-foreground">
-              With the country code, such as +44 20 7946 0958. Telegram sends a code to your Telegram app.
-            </p>
-          </div>
+          <TextField
+            id="phone"
+            name="phone"
+            label="Phone number"
+            type="tel"
+            autoComplete="tel"
+            error={invalid ? phoneInvalid : undefined}
+            help="With the country code, such as +44 20 7946 0958. Telegram sends a code to your Telegram app."
+            controlClassName={dataBox}
+          />
           <SubmitButton pendingLabel="Asking Telegram for a code…" className="sm:w-auto sm:self-start">
             Send a code
           </SubmitButton>
         </form>
-      </section>
+      </Section>
     );
   }
 
   return (
-    <section aria-labelledby="sign-in" className="flex flex-col gap-4 rounded-lg border p-4">
-      <h2 id="sign-in" className="text-title">
-        Signing in <span className="font-mono text-[0.8125rem] font-normal">{login.phone}</span>
-      </h2>
+    <Section id="sign-in" title={<>Signing in <span className="text-data font-normal">{login.phone}</span></>} tone="panel" gap={4}>
       {login.step === "starting" ? (
-        <Notice role="status" className="text-sm">
+        <Notice role="status" tone="plain">
           Asking Telegram to send a code.{" "}
           <Link href="/sources/telegram" prefetch={false} className={textLink}>
             Reload this page
@@ -385,7 +337,7 @@ function LoginPanel({
           Cancel and use another number
         </SubmitButton>
       </form>
-    </section>
+    </Section>
   );
 }
 
@@ -397,36 +349,25 @@ function StepForm({ step, refusal, empty }: { step: "code" | "password"; refusal
       <input type="hidden" name="step" value={step} />
       {/* Keyed by the refusal, so a second wrong code is announced too. */}
       {refusal === null ? null : (
-        <Notice key={refusal} role="alert" className="text-sm text-alarm">
+        <Notice key={refusal} role="alert">
           {refusal}
         </Notice>
       )}
-      <div className="flex flex-col gap-2">
-        <label htmlFor={step} className={label}>
-          {code ? "Code" : "Two-step verification password"}
-        </label>
-        <input
-          id={step}
-          name={step}
-          type={code ? "text" : "password"}
-          inputMode={code ? "numeric" : undefined}
-          autoComplete={code ? "one-time-code" : "current-password"}
-          spellCheck={false}
-          aria-invalid={refusal !== null || error !== null || undefined}
-          aria-describedby={error === null ? `${step}-help` : `${step}-error ${step}-help`}
-          className={code ? `${field} ${dataBox}` : field}
-        />
-        {error === null ? null : (
-          <p id={`${step}-error`} className={fieldError}>
-            {error}
-          </p>
-        )}
-        <p id={`${step}-help`} className="text-xs text-muted-foreground">
-          {code
+      <TextField
+        id={step}
+        name={step}
+        label={code ? "Code" : "Two-step verification password"}
+        type={code ? "text" : "password"}
+        inputMode={code ? "numeric" : undefined}
+        autoComplete={code ? "one-time-code" : "current-password"}
+        error={error ?? undefined}
+        controlClassName={code ? dataBox : ""}
+        help={
+          code
             ? "Telegram sent it to your Telegram app, in a chat from Telegram itself."
-            : "Your account has two-step verification, so Telegram asks for its password too."}
-        </p>
-      </div>
+            : "Your account has two-step verification, so Telegram asks for its password too."
+        }
+      />
       <SubmitButton pendingLabel="Checking with Telegram…" className="sm:w-auto sm:self-start">
         Sign in
       </SubmitButton>

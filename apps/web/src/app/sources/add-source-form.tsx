@@ -1,10 +1,10 @@
-import type { ComponentProps, ReactNode } from "react";
-import { dataBox, field, fieldError, label, textBox } from "@/components/field-classes";
+import { dataBox, fieldError, label } from "@/components/field-classes";
+import { CheckboxField, SelectField, TextareaField, TextField } from "@/components/form-field";
 import { type Config, maxRegionLength } from "@watchdog/core";
 import { type AddType, type AddValues, type mappingFields, type Renderers, schedules } from "@/lib/sources";
 import { cn } from "@/lib/utils";
-import { Notice } from "../sign-in/notice";
-import { SubmitButton } from "../sign-in/submit-button";
+import { Notice } from "@/components/notice";
+import { SubmitButton } from "@/components/submit-button";
 import { addSource } from "./actions";
 
 const types: { value: AddType; title: string }[] = [
@@ -125,7 +125,7 @@ export function AddSourceForm({
   return (
     <form action={addSource} className="flex flex-col gap-4">
       {added ? (
-        <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+        <Notice role="status">
           {addedNotice(values.type)}
         </Notice>
       ) : null}
@@ -173,8 +173,12 @@ export function AddSourceForm({
       <TextField
         id="url"
         label="RSS feed URL"
-        websiteLabel="Page URL"
-        className={shownFor.url}
+        alternateLabel={{
+          label: "Page URL",
+          primaryClassName: "[form:has(#type-website:checked)_&]:hidden",
+          className: "hidden [form:has(#type-website:checked)_&]:block",
+        }}
+        className={`hidden ${shownFor.url}`}
         error={errorFor("url")}
         help={
           <>
@@ -242,66 +246,46 @@ export function AddSourceForm({
         placeholder="main"
         maxLength={maxRegionLength}
         defaultValue={values.region}
-        inputClassName={dataBox}
+        controlClassName={dataBox}
       />
-      <div className={cn("hidden flex-col gap-2", shownFor.website)}>
-        <label htmlFor="ignore" className={label}>
-          Ignored text <span className="font-normal text-muted-foreground">(optional)</span>
-        </label>
-        <textarea
-          id="ignore"
-          name="ignore"
-          rows={3}
-          // The text goes back in the URL with a problem, so it stays well under a URL's limits.
-          maxLength={2000}
-          spellCheck={false}
-          autoCapitalize="off"
-          autoComplete="off"
-          placeholder={"\\d+ visitors today\nUpdated .* ago"}
-          defaultValue={values.ignore}
-          aria-invalid={error?.field === "ignore"}
-          aria-describedby={error?.field === "ignore" ? "ignore-error" : "ignore-help"}
-          // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
-          autoFocus={error?.field === "ignore"}
-          className={cn(textBox, dataBox, "py-2 leading-[1.5]")}
-        />
-        {error?.field === "ignore" ? (
-          <p id="ignore-error" role="alert" className={fieldError}>
-            {error.message}
-          </p>
-        ) : (
-          <p id="ignore-help" className="text-xs text-muted-foreground">
-            Text that changes without mattering, such as a date or a counter, as regular expressions in RE2 syntax,
-            one a line, at most 20. Watchdog removes what they match before comparing.
-          </p>
-        )}
-      </div>
+      <TextareaField
+        id="ignore"
+        label="Ignored text"
+        optional
+        className={cn("hidden", shownFor.website)}
+        rows={3}
+        // The text goes back in the URL with a problem, so it stays well under a URL's limits.
+        maxLength={2000}
+        spellCheck={false}
+        autoCapitalize="off"
+        autoComplete="off"
+        placeholder={"\\d+ visitors today\nUpdated .* ago"}
+        defaultValue={values.ignore}
+        error={errorFor("ignore")}
+        help="Text that changes without mattering, such as a date or a counter, as regular expressions in RE2 syntax, one a line, at most 20. Watchdog removes what they match before comparing."
+        controlClassName={dataBox}
+      />
       {mode === "self-hosted" ? (
-        <div className={cn("hidden flex-col gap-2", shownFor.website)}>
-          {/* The label holds the box, so the whole row is the target. */}
-          <label htmlFor="ignoreRobots" className={cn(label, "flex min-h-6 items-center gap-2")}>
-            <input
-              id="ignoreRobots"
-              name="ignoreRobots"
-              type="checkbox"
-              defaultChecked={values.ignoreRobots === "on"}
-              aria-describedby="ignoreRobots-help"
-              className="size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            />
-            Ignore robots.txt
-          </label>
-          <p id="ignoreRobots-help" className="text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">
-              The risk is yours: the site may object or block this server&apos;s address.
-            </span>{" "}
-            Watchdog then fetches the page even where the site&apos;s robots.txt asks crawlers not to.
-          </p>
-        </div>
+        <CheckboxField
+          id="ignoreRobots"
+          name="ignoreRobots"
+          label="Ignore robots.txt"
+          defaultChecked={values.ignoreRobots === "on"}
+          help={
+            <>
+              <span className="font-medium text-foreground">
+                The risk is yours: the site may object or block this server&apos;s address.
+              </span>{" "}
+              Watchdog then fetches the page even where the site&apos;s robots.txt asks crawlers not to.
+            </>
+          }
+          className={cn("hidden", shownFor.website)}
+        />
       ) : null}
       <TextField
         id="repo"
         label="Repo"
-        className={shownFor.repo}
+        className={`hidden ${shownFor.repo}`}
         error={errorFor("repo")}
         help={
           <>
@@ -320,12 +304,12 @@ export function AddSourceForm({
         autoComplete="off"
         placeholder="vercel/next.js"
         defaultValue={values.repo}
-        inputClassName={dataBox}
+        controlClassName={dataBox}
       />
       <TextField
         id="term"
         label="Search for"
-        className={shownFor.search}
+        className={`hidden ${shownFor.search}`}
         error={errorFor("term")}
         help="Words or a phrase, as GitHub's search reads them. Each poll reads only the newest 100 matching issues and pull requests, so narrow a busy term."
         autoComplete="off"
@@ -337,20 +321,20 @@ export function AddSourceForm({
         id="within"
         label="Only in"
         optional
-        className={shownFor.search}
+        className={`hidden ${shownFor.search}`}
         error={errorFor("within")}
         help="An org, or a repo as owner/name. Leave it empty to search all of public GitHub."
         autoCapitalize="off"
         autoComplete="off"
         placeholder="vercel or vercel/next.js"
         defaultValue={values.within}
-        inputClassName={dataBox}
+        controlClassName={dataBox}
       />
       <TextField
         id="token"
         label="GitHub token"
         optional={githubSignIn !== false}
-        className={shownFor.token}
+        className={`hidden ${shownFor.token}`}
         error={errorFor("token")}
         help={
           tokenDropped ? (
@@ -377,7 +361,7 @@ export function AddSourceForm({
         // Password managers ignore autocomplete="off" on a password field; these ask them to stay out.
         data-1p-ignore
         data-lpignore="true"
-        inputClassName={dataBox}
+        controlClassName={dataBox}
       />
       <fieldset className={cn("hidden flex-col gap-4", shownFor.webhook)}>
         <legend className={cn(label, "mb-2")}>
@@ -401,52 +385,33 @@ export function AddSourceForm({
               placeholder={mapping.placeholder}
               maxLength={1000}
               defaultValue={values[mapping.id]}
-              inputClassName={dataBox}
+              controlClassName={dataBox}
             />
           ))}
         </div>
       </fieldset>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-2">
-          <label htmlFor="name" className={label}>
-            Name <span className="font-normal text-muted-foreground">(optional)</span>
-          </label>
-          <input
-            id="name"
-            name="name"
-            type="text"
-            maxLength={200}
-            placeholder="Taken from what it watches"
-            defaultValue={values.name}
-            className={field}
-          />
-        </div>
-        <div className={cn("flex-col gap-2", shownFor.schedule)}>
-          <label htmlFor="schedule" className={label}>
-            Schedule
-          </label>
-          <select
-            id="schedule"
-            name="schedule"
-            defaultValue={values.schedule}
-            aria-invalid={error?.field === "schedule"}
-            aria-describedby={error?.field === "schedule" ? "schedule-error" : undefined}
-            // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
-            autoFocus={error?.field === "schedule"}
-            className={`${field} bg-background`}
-          >
-            {schedules.map((schedule) => (
-              <option key={schedule.cron} value={schedule.cron}>
-                {schedule.label}
-              </option>
-            ))}
-          </select>
-          {error?.field === "schedule" ? (
-            <p id="schedule-error" role="alert" className={fieldError}>
-              {error.message}
-            </p>
-          ) : null}
-        </div>
+        <TextField
+          id="name"
+          label="Name"
+          optional
+          maxLength={200}
+          placeholder="Taken from what it watches"
+          defaultValue={values.name}
+        />
+        <SelectField
+          id="schedule"
+          label="Schedule"
+          className={shownFor.schedule}
+          defaultValue={values.schedule}
+          error={errorFor("schedule")}
+        >
+          {schedules.map((schedule) => (
+            <option key={schedule.cron} value={schedule.cron}>
+              {schedule.label}
+            </option>
+          ))}
+        </SelectField>
       </div>
       <SubmitButton pendingLabel="Checking…" className="sm:w-auto sm:self-start">
         Add Source
@@ -467,70 +432,4 @@ function addedNotice(type: AddType) {
     return "Source added. Its first poll runs within a minute, and its recent entries show up in the Feed as the Backfill. If none do, its row below says why.";
   }
   return "Source added. The worker fetches it within a minute, and its recent entries show up in the Feed as the Backfill.";
-}
-
-/**
- * A labelled text field, hidden unless `className` shows it, with its help or its error below. With
- * `websiteLabel`, a second label takes over while Website is chosen. Each is its own <label>, so
- * each one's text is exactly its name, not both run together.
- */
-function TextField({
-  id,
-  label: text,
-  websiteLabel,
-  optional = false,
-  help,
-  error,
-  className,
-  inputClassName,
-  ...input
-}: {
-  id: FieldName;
-  label: string;
-  websiteLabel?: string;
-  optional?: boolean;
-  help: ReactNode;
-  error: string | undefined;
-  className: string;
-  inputClassName?: string;
-} & Omit<ComponentProps<"input">, "id" | "name" | "className">) {
-  const invalid = error !== undefined;
-  return (
-    <div className={cn("hidden flex-col gap-2", className)}>
-      <label
-        htmlFor={id}
-        className={cn(label, websiteLabel !== undefined && "[form:has(#type-website:checked)_&]:hidden")}
-      >
-        {text}
-        {optional ? <span className="font-normal text-muted-foreground"> (optional)</span> : null}
-      </label>
-      {websiteLabel === undefined ? null : (
-        <label htmlFor={id} className={cn(label, "hidden [form:has(#type-website:checked)_&]:block")}>
-          {websiteLabel}
-        </label>
-      )}
-      <input
-        type="text"
-        spellCheck={false}
-        {...input}
-        id={id}
-        name={id}
-        aria-invalid={invalid}
-        aria-describedby={invalid ? `${id}-error` : `${id}-help`}
-        // Focus lands here with the error, so the field and its message are read together.
-        // eslint-disable-next-line jsx-a11y/no-autofocus -- only with an error on this field to fix
-        autoFocus={invalid}
-        className={cn(field, inputClassName)}
-      />
-      {invalid ? (
-        <p id={`${id}-error`} role="alert" className={fieldError}>
-          {error}
-        </p>
-      ) : (
-        <p id={`${id}-help`} className="text-xs text-muted-foreground">
-          {help}
-        </p>
-      )}
-    </div>
-  );
 }

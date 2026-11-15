@@ -11,8 +11,9 @@ import {
 import { readSentBack } from "@/lib/sent-back";
 import { server } from "@/lib/server";
 import { listSources } from "@/lib/sources";
+import { PageBar } from "@/components/page-bar";
+import { Page, PageHeader } from "@/components/page";
 import { RuleEditor } from "./rule-editor";
-import { RulesBreadcrumb } from "./rules-breadcrumb";
 
 /**
  * The editor as a whole page. Both routes that use it set `instant = false` and read their data
@@ -54,12 +55,9 @@ export async function EditorScreen({
       : [{ path: "", message: "That rule wasn't saved, and it's too long to bring back without JavaScript. Check it for mistakes and try again." }];
   return (
     <div className="flex flex-1 flex-col">
-      <RulesBreadcrumb editing={heading} />
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-8">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-headline break-words">{heading}</h1>
-          {detail === undefined ? null : <p className="text-sm text-muted-foreground">{detail}</p>}
-        </div>
+      <PageBar trail={[{ href: "/", label: "Workspace" }, { href: "/rules", label: "Rules" }, { label: heading }]} />
+      <Page gap={6}>
+        <PageHeader title={heading} description={detail} titleClassName="break-words" />
         <RuleEditor
           target={target}
           initialYaml={sentBack ?? yaml}
@@ -72,7 +70,7 @@ export async function EditorScreen({
           declared={declared}
           scheduleHelp={`A cron expression in this Workspace's timezone (${workspace.timezone}), such as 0 9 * * 1 for Mondays at 09:00. It can't run more often than every ${String(minimumMinutes[mode])} minutes on ${mode}.`}
         />
-      </main>
+      </Page>
     </div>
   );
 }
