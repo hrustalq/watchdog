@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { useInterval, useTimeout } from "usehooks-ts";
 
 /** How often a screen that is waiting on the pipeline asks the server for changes. */
 const interval = 30_000;
@@ -36,25 +37,33 @@ export interface Refreshing {
  */
 export function useRefreshing({ paused = false, watchFor }: Refreshing = {}) {
   const router = useRouter();
+  // A change of pause or of the window resets the wait during render, as the old effect did when it
+  // re-ran. The key says which wait the timeout belongs to, so a late one can't end a new wait.
+  const waitingFor = `${String(paused)}:${String(watchFor)}`;
+  const [waiting, setWaiting] = useState({ key: waitingFor, over: false });
+  if (waiting.key !== waitingFor) setWaiting({ key: waitingFor, over: false });
+  useInterval(
+    () => {
+      if (document.visibilityState === "visible" && !held()) router.refresh();
+    },
+    paused || waiting.over ? null : interval,
+  );
+  useTimeout(
+    () => {
+      setWaiting((current) => (current.key === waitingFor ? { key: waitingFor, over: true } : current));
+    },
+    paused || watchFor === undefined ? null : watchFor,
+  );
   useEffect(() => {
     if (paused) return undefined;
     const refresh = () => {
       if (document.visibilityState === "visible" && !held()) router.refresh();
     };
-    const timer = setInterval(refresh, interval);
-    const stop =
-      watchFor === undefined
-        ? undefined
-        : setTimeout(() => {
-            clearInterval(timer);
-          }, watchFor);
     document.addEventListener("visibilitychange", refresh);
     return () => {
-      clearInterval(timer);
-      if (stop !== undefined) clearTimeout(stop);
       document.removeEventListener("visibilitychange", refresh);
     };
-  }, [router, paused, watchFor]);
+  }, [router, paused]);
 }
 
 /** A screen with nothing of its own to say while it waits: it only has to stay current. */

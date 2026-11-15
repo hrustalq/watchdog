@@ -1,5 +1,6 @@
 // A Workspace's model, as the Model screen reads and changes it (ADR 0005). Every query is scoped to
 // the Workspace, and nothing here returns the key or its ciphertext to the page.
+import { z } from "zod";
 import { type AgentFetch, encryptSecret, keyFingerprint, readApiKey, testModelConnection } from "@watchdog/core";
 import {
   agentCall,
@@ -132,26 +133,89 @@ function cleanPrice(text: string) {
   return Number.isFinite(price) && price >= 0 ? price : undefined;
 }
 
-function parseModel(input: ModelInput) {
-  const provider = providerTypes.find(({ value }) => value === input.providerType)?.value;
-  if (provider === undefined) return { problem: "provider" } as const;
-  const baseUrl = cleanBaseUrl(input.baseUrl);
-  if (baseUrl === undefined) return { problem: "base-url" } as const;
-  const modelName = input.modelName.trim();
+/** The form's own field names, as the problem they're about. */
+const modelProblemFields = new Map<string, ModelProblem>([
+  ["providerType", "provider"],
+  ["baseUrl", "base-url"],
+  ["modelName", "model-name"],
+  ["apiKey", "api-key"],
+  ["inputPrice", "input-price"],
+  ["outputPrice", "output-price"],
+]);
+
+/** A text field whose reader turns it into its value, or refuses it with this message. */
+function textField<T>(read: (text: string) => T | undefined, message: string) {
+  return z.string().transform((text, ctx): T => {
+    const value = read(text);
+    if (value === undefined) {
+      ctx.addIssue({ code: "custom", message });
+      return z.NEVER;
+    }
+    return value;
+  });
+}
+
+const providerField = textField(
+  (value) => providerTypes.find((type) => type.value === value)?.value,
+  modelProblemMessage.provider,
+);
+
+const baseUrlField = textField(cleanBaseUrl, modelProblemMessage["base-url"]);
+
+const modelNameField = textField((text) => {
+  const name = text.trim();
   // Postgres text refuses a NUL and half a surrogate pair.
-  if (modelName === "" || modelName.length > 200 || modelName.includes("\0") || !modelName.isWellFormed()) {
-    return { problem: "model-name" } as const;
-  }
-  const apiKey = input.apiKey.trim();
+  if (name === "" || name.length > 200 || name.includes("\0") || !name.isWellFormed()) return undefined;
+  return name;
+}, modelProblemMessage["model-name"]);
+
+const apiKeyField = textField((text) => {
+  const key = text.trim();
   // Anything else can't go in a header, and fails on every call.
-  if (apiKey !== "" && !/^[\x21-\x7e]{1,4096}$/.test(apiKey)) return { problem: "api-key" } as const;
-  // One or the other: a key typed beside the box is a user who wants both, and saving would drop one.
-  if (apiKey !== "" && input.clearKey) return { problem: "api-key" } as const;
-  const inputPrice = cleanPrice(input.inputPrice);
-  if (inputPrice === undefined) return { problem: "input-price" } as const;
-  const outputPrice = cleanPrice(input.outputPrice);
-  if (outputPrice === undefined) return { problem: "output-price" } as const;
-  return { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice };
+  if (key !== "" && !/^[\x21-\x7e]{1,4096}$/.test(key)) return undefined;
+  return key;
+}, modelProblemMessage["api-key"]);
+
+const priceField = (message: string) => textField(cleanPrice, message);
+
+const modelSchema = z
+  .object({
+    providerType: providerField,
+    baseUrl: baseUrlField,
+    modelName: modelNameField,
+    apiKey: apiKeyField,
+    clearKey: z.boolean(),
+    structured: z.boolean(),
+    inputPrice: priceField(modelProblemMessage["input-price"]),
+    outputPrice: priceField(modelProblemMessage["output-price"]),
+  })
+  .superRefine((model, ctx) => {
+    // One or the other: a key typed beside the box is a user who wants both, and saving would drop one.
+    if (model.apiKey !== "" && model.clearKey) {
+      ctx.addIssue({ code: "custom", path: ["apiKey"], message: modelProblemMessage["api-key"] });
+    }
+  })
+  .transform((model) => ({
+    provider: model.providerType,
+    baseUrl: model.baseUrl,
+    modelName: model.modelName,
+    apiKey: model.apiKey,
+    inputPrice: model.inputPrice,
+    outputPrice: model.outputPrice,
+  }));
+
+function parseModel(input: ModelInput) {
+  const parsed = modelSchema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  // The first problem in the form's order, so the screen focuses the first field to fix.
+  const problem = modelProblems.find((candidate) =>
+    parsed.error.issues.some((issue) => {
+      const [field] = issue.path;
+      return typeof field === "string" && modelProblemFields.get(field) === candidate;
+    }),
+  );
+  if (problem === undefined) throw new Error("A model field with no problem name");
+  return { problem };
 }
 
 /**
@@ -187,7 +251,7 @@ export async function saveModel(
   input: ModelInput,
 ): Promise<{ problem: ModelProblem } | { keyLeftBehind: boolean }> {
   const parsed = parseModel(input);
-  if (parsed.problem !== undefined) return { problem: parsed.problem };
+  if ("problem" in parsed) return { problem: parsed.problem };
   const { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice } = parsed;
   const newCiphertext = apiKey === "" ? null : encryptSecret(apiKey, encryptionKey);
   const settings = {
@@ -476,7 +540,7 @@ export async function testModelSettings(
   input: ModelInput,
 ): Promise<{ problem: ModelProblem } | { outcome: TestOutcome; modelConfigId: string | undefined }> {
   const parsed = parseModel(input);
-  if (parsed.problem !== undefined) return { problem: parsed.problem };
+  if ("problem" in parsed) return { problem: parsed.problem };
   const { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice } = parsed;
 
   const saved = await db.query.modelConfig.findFirst({

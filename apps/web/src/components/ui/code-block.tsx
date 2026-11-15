@@ -3,6 +3,7 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
+import { useCopyToClipboard, useTimeout } from "usehooks-ts"
 
 import { Button } from "@/components/ui/button"
 import { CheckIcon, CopyIcon } from "lucide-react"
@@ -93,19 +94,11 @@ function CodeBlockCopyButton({
   ...props
 }: React.ComponentProps<typeof Button> & { value: string }) {
   const [copied, setCopied] = React.useState(false)
+  const [, copy] = useCopyToClipboard()
 
-  React.useEffect(() => {
-    if (!copied) {
-      return
-    }
-
-    const timeout = setTimeout(() => {
-      setCopied(false)
-    }, 2000)
-    return () => {
-      clearTimeout(timeout)
-    }
-  }, [copied])
+  useTimeout(() => {
+    setCopied(false)
+  }, copied ? 2000 : null)
 
   return (
     <>
@@ -121,11 +114,8 @@ function CodeBlockCopyButton({
         )}
         onClick={(event) => {
           onClick?.(event)
-          navigator.clipboard
-            .writeText(value)
-            .then(() => {
-              setCopied(true)
-            })
+          copy(value)
+            .then(setCopied)
             .catch(() => {
               setCopied(false)
             })

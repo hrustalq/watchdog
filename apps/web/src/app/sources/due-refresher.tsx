@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useInterval, useTimeout } from "usehooks-ts";
 
 /** How often the Sources screen looks again. */
 const interval = 5_000;
@@ -18,20 +19,26 @@ const afterDueFor = 60_000;
 export function DueRefresher({ due }: { due: boolean }) {
   const router = useRouter();
   const wasDue = useRef(false);
+  // The window `due` opened: it starts on the render that changes the value, and ends when it runs out.
+  const [watching, setWatching] = useState(due);
   useEffect(() => {
-    if (!due && !wasDue.current) return undefined;
+    if (!due && !wasDue.current) return;
     wasDue.current = due;
-    const timer = setInterval(() => {
+    setWatching(true);
+  }, [due]);
+  const openFor = due ? whileDueFor : afterDueFor;
+  useInterval(
+    () => {
       const typing = document.activeElement?.matches("input, textarea, select") === true;
       if (document.visibilityState === "visible" && !typing) router.refresh();
-    }, interval);
-    const stop = setTimeout(() => {
-      clearInterval(timer);
-    }, due ? whileDueFor : afterDueFor);
-    return () => {
-      clearInterval(timer);
-      clearTimeout(stop);
-    };
-  }, [due, router]);
+    },
+    watching ? interval : null,
+  );
+  useTimeout(
+    () => {
+      setWatching(false);
+    },
+    watching ? openFor : null,
+  );
   return null;
 }
