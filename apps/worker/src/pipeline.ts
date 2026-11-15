@@ -62,7 +62,7 @@ export async function startPipeline(
     if (job === undefined) return;
     const { itemId } = job.data;
     try {
-      await processItem(db, itemId, { ...deps, lastAttempt: job.retryCount >= job.retryLimit });
+      await processItem(db, itemId, { ...deps, lastAttempt: job.retryCount >= job.retryLimit, signal: job.signal });
     } catch (error) {
       console.error(`Processing Item ${itemId} failed:`, error);
       throw error;

@@ -436,7 +436,11 @@ describe("worker", () => {
               usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
             }),
           );
-        })();
+        })().catch((error: unknown) => {
+          // Answered, so a failure here shows in the Item's Log instead of a call waiting out its timeout.
+          response.statusCode = 500;
+          response.end(String(error));
+        });
       });
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
       const address = server.address();
@@ -445,7 +449,11 @@ describe("worker", () => {
         baseUrl: `http://127.0.0.1:${String(address.port)}/v1`,
         requests: () => requests,
         release,
-        close: () => server.close(),
+        // The worker's fetch keeps its connection alive, which would hold close() open.
+        close: async () => {
+          server.closeAllConnections();
+          await new Promise<void>((resolve) => server.close(() => { resolve(); }));
+        },
       };
     }
 
@@ -523,7 +531,7 @@ describe("worker", () => {
         ]);
         expect(await restarted.stop()).toBe(0);
       } finally {
-        model.close();
+        await model.close();
       }
     }, bootBudget + 120_000);
 

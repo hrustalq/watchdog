@@ -410,6 +410,30 @@ describe("processItem", () => {
       expect(finished.processedAt).not.toBeNull();
     });
 
+    // A worker's stop aborts the job's signal 30 s in, and a call already running still answers (#140).
+    it("stores a call's answer once its signal is aborted, and starts no later call", async () => {
+      const seeded = await seed();
+      await addModel(seeded);
+      await saveAgentClassifier(seeded, "leads", ["lead"]);
+      const itemId = await capture(seeded, "Someone wants to buy");
+      const fake = answering({ json: { categories: ["lead"] } });
+      const stop = new AbortController();
+      const fetch: typeof fake.fetch = (input, init) => {
+        stop.abort();
+        return fake.fetch(input, init);
+      };
+
+      const run = processItem(db, itemId, { ...fake.deps, agent: { ...fake.deps.agent, fetch }, signal: stop.signal });
+
+      await expect(run).rejects.toThrow(/aborted/);
+      expect(fake.requests).toHaveLength(1);
+      expect(await callsOf(itemId)).toMatchObject([{ status: "ok" }]);
+      expect(await callsOf(itemId, "extract-rate")).toEqual([]);
+      const stopped = await reload(itemId);
+      expect(stopped.classifiedAt).not.toBeNull();
+      expect(stopped.processedAt).toBeNull();
+    });
+
     it("stores the rest of the answer when a Classifier is deleted during the call", async () => {
       const seeded = await seed();
       await addModel(seeded);

@@ -16,6 +16,12 @@ export interface ProcessItemDeps extends ActDeps {
    * and a self-hosted install leaves undefined (GitHub issue #111).
    */
   jsonPathNodes?: number;
+  /**
+   * Aborted when the worker stops and gives the job up. A call already running still answers and is
+   * stored, but no later call starts, since the worker is about to exit and its retry runs the Item again
+   * (GitHub issue #140).
+   */
+  signal?: AbortSignal;
 }
 
 /** Locks the Item's row. Undefined when it's finished, or gone: deleted while its job waited. */
@@ -45,6 +51,7 @@ async function runStages(db: Db, itemId: string, deps: ProcessItemDeps, now: () 
   });
   if (target === undefined) return;
 
+  deps.signal?.throwIfAborted();
   const classifyFailure =
     target.classifiedAt === null && target.categoriesCorrectedAt === null
       ? await runAgentClassifiers(db, target, deps.agent, now)
@@ -61,6 +68,7 @@ async function runStages(db: Db, itemId: string, deps: ProcessItemDeps, now: () 
   // The extract-and-rate call waits until classify succeeds (docs: Processing pipeline, "Failures").
   if (classifyFailure !== undefined) throw new Error(`The classify call failed: ${classifyFailure.message}`);
 
+  deps.signal?.throwIfAborted();
   const rateFailure = await runExtractAndRate(db, unfinished, deps.agent, deps, now);
   if (rateFailure !== undefined) throw new Error(`The extract-and-rate call failed: ${rateFailure.message}`);
 }
