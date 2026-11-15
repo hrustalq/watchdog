@@ -280,7 +280,7 @@ export function RuleForm({
 
         {hidden.length === 0 ? null : (
           <p className="rounded-lg bg-muted px-3 py-2 text-sm">
-            Only the YAML view shows <span className="font-mono text-[0.8125rem]">{hidden.join(", ")}</span>. It
+            Only the YAML view shows <span className="text-data">{hidden.join(", ")}</span>. It
             stays in the rule.
           </p>
         )}
@@ -849,7 +849,7 @@ function YamlOnly({ path, value, removeLabel, onRemove }: { path: Path; value: u
   return (
     <div data-path={pathKey(path)} className="flex flex-col gap-2 rounded-lg border p-3">
       <p className="text-xs text-muted-foreground">Only the YAML view can edit this part. It stays in the rule.</p>
-      <pre className="overflow-x-auto font-mono text-[0.8125rem]">{draftToYaml(value)}</pre>
+      <pre className="overflow-x-auto text-data">{draftToYaml(value)}</pre>
       <Problems at={path} />
       <div>
         <SmallButton onClick={onRemove}>{removeLabel}</SmallButton>

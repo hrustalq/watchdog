@@ -3,9 +3,15 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { type Config, releasesFeedUrl, sessionOf, signInToken } from "@watchdog/core";
 import { buttonVariants } from "@/components/ui/button";
-import { dataBox, field, fieldError, label, textBox, textLink } from "@/components/field-classes";
+import { dataBox, textBox, textLink } from "@/components/field-classes";
 import { FocusOnMount } from "@/components/focus-on-mount";
+import { Disclosure } from "@/components/disclosure";
+import { TextField } from "@/components/form-field";
 import { HealthChip } from "@/components/health";
+import { PageBar } from "@/components/page-bar";
+import { Page, PageHeader } from "@/components/page";
+import { PanelList, PanelRow } from "@/components/panel-list";
+import { Section } from "@/components/section";
 import { Timestamp } from "@/components/timestamp";
 import { readSentBack } from "@/lib/sent-back";
 import { requireWorkspace, server } from "@/lib/server";
@@ -21,9 +27,8 @@ import {
   sourceLinkInCookie,
   watchedSourceName,
 } from "@/lib/sources";
-import { cn } from "@/lib/utils";
-import { Notice } from "../sign-in/notice";
-import { SubmitButton } from "../sign-in/submit-button";
+import { Notice } from "@/components/notice";
+import { SubmitButton } from "@/components/submit-button";
 import { checkSourceNowAction, newSourceLinkAction, removeSourceAction, replaceGithubTokenAction } from "./actions";
 import { AddSourceForm } from "./add-source-form";
 import { DueRefresher } from "./due-refresher";
@@ -39,30 +44,16 @@ export default async function SourcesPage({ searchParams }: PageProps<"/sources"
   const params = await searchParams;
   return (
     <div className="flex flex-1 flex-col">
-      <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
-        <Link
-          href="/"
-          className="inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
-        >
-          Workspace
-        </Link>
-        <span aria-hidden="true" className="text-muted-foreground">
-          /
-        </span>
-        <span aria-current="page">Sources</span>
-      </nav>
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8">
-        <h1 className="text-headline">Sources</h1>
-        <section aria-labelledby="add-source" className="flex flex-col gap-4 rounded-lg border p-4">
-          <h2 id="add-source" className="text-title">
-            Add a Source
-          </h2>
+      <PageBar trail={[{ href: "/", label: "Workspace" }, { label: "Sources" }]} />
+      <Page>
+        <PageHeader title="Sources" />
+        <Section id="add-source" title="Add a Source" tone="panel" gap={4}>
           {/* The form and what the last submit said, read from the URL, are both in the first HTML, so
               the form submits and its outcome shows without JavaScript. */}
           <AddSourceFormWithOutcome params={params} />
-        </section>
+        </Section>
         <SourceList params={params} />
-      </main>
+      </Page>
     </div>
   );
 }
@@ -167,26 +158,22 @@ async function SourceList({ params }: { params: Awaited<PageProps<"/sources">["s
     {telegramSessionAvailable ? <TelegramAccount session={session} /> : null}
     {link?.status === "pending" ? <TelegramLinkPanel link={link} bot={bot} /> : null}
     {link?.status === "linked" ? (
-      <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+      <Notice role="status">
         The bot is in the chat. {link.name} captures each message posted there from now on.
       </Notice>
     ) : null}
-    <section aria-labelledby="watched" className="flex flex-col gap-3">
+    <Section id="watched" title={<>Watching <span className="tabular-nums">{sources.length}</span>{" "}{sources.length === 1 ? "Source" : "Sources"}</>} focusableTitle>
         {/* Remove takes its row away, so the focus goes to the list's heading, near where the row was. */}
         {removed ? <FocusOnMount id="watched" /> : null}
-        <h2 id="watched" tabIndex={-1} className="text-title outline-hidden">
-          Watching <span className="tabular-nums">{sources.length}</span>{" "}
-          {sources.length === 1 ? "Source" : "Sources"}
-        </h2>
         {sources.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             None yet. Add a feed, a page, a GitHub repo, a GitHub search, a webhook inbox or a Telegram chat above, and every
             Item it captures shows up in the Feed.
           </p>
         ) : (
-          <ul className="divide-y rounded-lg border">
+          <PanelList>
             {sources.map((row) => (
-              <li key={row.id} className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+              <PanelRow key={row.id}>
                 {/* Check now lands on the line that says the poll is due, so a screen reader reads it. */}
                 {checkedFor === row.id ? <FocusOnMount id={row.due ? `poll-${row.id}` : `source-${row.id}`} /> : null}
                 <div className="flex min-w-0 flex-col gap-1">
@@ -212,11 +199,11 @@ async function SourceList({ params }: { params: Awaited<PageProps<"/sources">["s
                     </p>
                   ) : null}
                   {urlOf(row) === null ? null : (
-                    <p className="font-mono text-[0.8125rem] break-all text-muted-foreground">{urlOf(row)}</p>
+                    <p className="text-data break-all text-muted-foreground">{urlOf(row)}</p>
                   )}
                   {"region" in row.config ? (
                     <p className="text-sm break-all text-muted-foreground">
-                      Region <span className="font-mono text-[0.8125rem]">{row.config.region}</span>
+                      Region <span className="text-data">{row.config.region}</span>
                     </p>
                   ) : null}
                   {row.schedule === null ? null : <p className="text-sm text-muted-foreground">
@@ -289,12 +276,12 @@ async function SourceList({ params }: { params: Awaited<PageProps<"/sources">["s
                   ) : null}
                   <RemoveSource id={row.id} name={row.name} />
                 </div>
-              </li>
+              </PanelRow>
             ))}
-          </ul>
+          </PanelList>
         )}
         <DueRefresher due={sources.some((row) => row.due)} />
-      </section>
+      </Section>
     </>
   );
 }
@@ -335,21 +322,18 @@ function TelegramAccount({ session }: { session: { account: string; revokedAt: D
         : `Revoking ${session.account}.`;
   }
   return (
-    <section
-      aria-labelledby="telegram-account"
-      className="flex flex-col gap-3 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between"
+    <Section
+      id="telegram-account"
+      title="Telegram (your account)"
+      description={state}
+      tone="panel"
+      className="sm:flex-row sm:items-center sm:justify-between"
     >
-      <div className="flex min-w-0 flex-col gap-1">
-        <h2 id="telegram-account" className="text-title">
-          Telegram (your account)
-        </h2>
-        <p className="text-sm text-muted-foreground">{state}</p>
-      </div>
       <Link href="/sources/telegram" className={buttonVariants({ variant: "outline", className: "shrink-0" })}>
         {session === undefined ? "Sign in" : "Manage"}
         <span className="sr-only"> Telegram (your account)</span>
       </Link>
-    </section>
+    </Section>
   );
 }
 
@@ -362,19 +346,16 @@ function TelegramLinkPanel({
   bot: string | undefined;
 }) {
   return (
-    <section aria-labelledby="telegram-link" className="flex flex-col gap-3 rounded-lg border bg-card p-4">
-      <h2 id="telegram-link" className="text-title">
-        Bring the bot into a chat for {name}
-      </h2>
+    <Section id="telegram-link" title={<>Bring the bot into a chat for {name}</>} tone="raised">
       {bot === undefined ? (
-        <Notice role="alert" className="text-sm text-alarm">
+        <Notice role="alert" tone="alarm">
           Watchdog couldn&apos;t reach Telegram to get the bot&apos;s name, so the link isn&apos;t ready. Reload this page
           in a moment.
         </Notice>
       ) : (
         <>
           {/* Keyed by the code, so a new link is announced even though the rest of the page stays. */}
-          <Notice key={code} role="status" className="text-sm">
+          <Notice key={code} role="status" tone="plain">
             The code in this link and command works once and expires at <Timestamp at={expiresAt} className="whitespace-nowrap" />.
           </Notice>
           <p className="text-sm">
@@ -403,7 +384,7 @@ function TelegramLinkPanel({
           </p>
         </>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -413,24 +394,17 @@ function TelegramLinkPanel({
  */
 function RemoveSource({ id, name }: { id: string; name: string }) {
   return (
-    <details className="group shrink-0 sm:max-w-64">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
-        <span className="group-open:hidden">Remove</span>
-        <span className="hidden group-open:inline">Keep it</span>
-      </summary>
-      {/* Card, not muted: Alarm Red on the muted well leaves its text under 4.5:1. DESIGN.md → Buttons. */}
-      <div className="mt-2 flex flex-col gap-3 rounded-lg bg-card p-3">
-        <p className="text-sm">
-          Removing {name} also deletes every Item it captured, and their Logs, from the Feed. This
-          can&apos;t be undone.
-        </p>
-        <form action={removeSourceAction.bind(null, id)}>
-          <SubmitButton variant="destructive" pendingLabel="Removing…">
-            Remove Source and its Items
-          </SubmitButton>
-        </form>
-      </div>
-    </details>
+    <Disclosure label="Remove" openLabel="Keep it" className="shrink-0 sm:max-w-64" bodyClassName="bg-card">
+      <p className="text-sm">
+        Removing {name} also deletes every Item it captured, and their Logs, from the Feed. This
+        can&apos;t be undone.
+      </p>
+      <form action={removeSourceAction.bind(null, id)}>
+        <SubmitButton variant="destructive" pendingLabel="Removing…">
+          Remove Source and its Items
+        </SubmitButton>
+      </form>
+    </Disclosure>
   );
 }
 
@@ -459,50 +433,46 @@ function ReplaceToken({
 }) {
   const inputId = `token-${id}`;
   return (
-    <details open={outcome !== undefined} className="group shrink-0 sm:max-w-72">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
-        <span className="group-open:hidden">
-          Replace token<span className="sr-only"> for {name}</span>
-        </span>
-        <span className="hidden group-open:inline">Cancel</span>
-      </summary>
-      <div className="mt-2 flex flex-col gap-3 rounded-lg bg-muted p-3">
-        {outcome === "replaced" ? (
-          <Notice role="status" className="text-sm">
-            New token saved. The next poll, within a minute, uses it.
-          </Notice>
-        ) : null}
-        {outcome === "invalid-token" ? (
-          <p role="alert" className={fieldError}>
-            {problemMessage("invalid-token", { url: "", status: "", mode })}
-          </p>
-        ) : null}
-        <p className="text-sm">
-          A fine-grained personal access token that can read the repo&apos;s issues. It replaces the one this Source
-          reads with, or the Workspace&apos;s GitHub sign-in token.
-        </p>
-        <form action={replaceGithubTokenAction.bind(null, id)} className="flex flex-col gap-2">
-          <label htmlFor={inputId} className={label}>
-            New token
-          </label>
-          {/* A password field: the browser doesn't show it or keep it in form history. */}
-          <input
-            id={inputId}
-            name="token"
-            type="password"
-            autoComplete="off"
-            // Password managers ignore autocomplete="off" on a password field; these ask them to stay out.
-            data-1p-ignore
-            data-lpignore="true"
-            spellCheck={false}
-            maxLength={255}
-            className={cn(field, dataBox)}
-          />
-          <SubmitButton variant="outline" pendingLabel="Saving…">
-            Save token<span className="sr-only"> for {name}</span>
-          </SubmitButton>
-        </form>
-      </div>
-    </details>
+    <Disclosure
+      label={<>Replace token<span className="sr-only"> for {name}</span></>}
+      openLabel="Cancel"
+      open={outcome !== undefined}
+      className="shrink-0 sm:max-w-72"
+      bodyClassName="bg-muted"
+    >
+      {outcome === "replaced" ? (
+        <Notice role="status" tone="plain">
+          New token saved. The next poll, within a minute, uses it.
+        </Notice>
+      ) : null}
+      {outcome === "invalid-token" ? (
+        <Notice role="alert" tone="alarm">
+          {problemMessage("invalid-token", { url: "", status: "", mode })}
+        </Notice>
+      ) : null}
+      <p className="text-sm">
+        A fine-grained personal access token that can read the repo&apos;s issues. It replaces the one this Source
+        reads with, or the Workspace&apos;s GitHub sign-in token.
+      </p>
+      <form action={replaceGithubTokenAction.bind(null, id)} className="flex flex-col gap-2">
+        {/* A password field: the browser doesn't show it or keep it in form history, and the
+            data-* hints ask password managers to stay out, since autocomplete="off" doesn't. */}
+        <TextField
+          id={inputId}
+          name="token"
+          label="New token"
+          type="password"
+          autoComplete="off"
+          data-1p-ignore
+          data-lpignore="true"
+          spellCheck={false}
+          maxLength={255}
+          controlClassName={dataBox}
+        />
+        <SubmitButton variant="outline" pendingLabel="Saving…">
+          Save token<span className="sr-only"> for {name}</span>
+        </SubmitButton>
+      </form>
+    </Disclosure>
   );
 }

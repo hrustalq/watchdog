@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { SubmitButton } from "../sign-in/submit-button";
+import { SubmitButton } from "@/components/submit-button";
 import { testModelSettingsAction } from "./actions";
 
 /**

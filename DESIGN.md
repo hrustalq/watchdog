@@ -300,6 +300,18 @@ Crisp and engineered. One radius family derived from `--radius: 0.5rem`, identic
 
 The full shadcn/ui `base-rhea` kit now lives in `apps/web/src/components/ui` (Base UI + cva), themed by this document. The Button and the chips below were the first components built; the rest of the kit was added from the registry and follows the same tokens, radii, type roles and focus treatment. A new token a component needs is declared here and in `apps/web/src/app/globals.css` together.
 
+### Layout and form primitives (`apps/web/src/components/`)
+Screens compose these instead of writing the same utility strings again; each one carries its part of this document, so a screen only supplies content.
+- **PageBar:** the 48px trail above a Page, built on the kit's Breadcrumb. The last crumb is text, never a link to itself, and truncates instead of widening the page.
+- **Page / PageHeader:** the 48rem reading column (42rem where a form would stretch) at the 4px rhythm, and the screen's one Headline with its Body line. Sign-in, the 404 and the error page use `CenteredPage` instead, because they centre one short column over the whole height.
+- **Section:** a titled block whose heading id is its accessible name. `plain` is a heading over a list, `panel` is a bordered block on Graphite Floor, `raised` is the same in Raised Graphite, and `inset` is a section inside a PanelList, which draws the border.
+- **PanelList / PanelRow:** one hairline-bordered list of rows, the row title block left and its 32px controls right, stacked on a phone.
+- **Disclosure:** a native `<details>` whose summary is a 32px control, for a confirmation that must open without JavaScript. The closed and open labels both exist; the body takes the surface its red text needs (a card, never a tinted well).
+- **Notice:** the page's arrived-with message, which takes focus so a screen reader reads it. `quiet` is Instrument Well, `failed` is the 10% Alarm Red tint, `caution` is the 10% Caution Amber tint, and `plain` is running text inside a panel that must not nest a second well. The tone is the look; `role` decides whether it interrupts.
+- **TextField / TextareaField / SelectField / CheckboxField:** Label type above a 32px kit control, then its hint or its one error. A refused field points at its error and takes focus (the form focuses its first problem); a valid one points at its hint. The alternate-label form covers the URL field that becomes a page URL while Website is chosen. Checkboxes stay native `<input type="checkbox">` so the Settings and Model forms still post without JavaScript.
+- **SignalLine:** a 6px lamp and words aligned to the first line: `alarm` for a failure, `caution` for something that needs attention without claiming one. The lamp is drawn in `CanvasText` in forced colors.
+- **EmptyState:** one Headline and the line that says why a list is empty, centred in the height the page has left. `text-data` is the Data-type utility: mono at MONO 1, tabular, 0.8125rem.
+
 ### Buttons
 Character: precise and quiet; the action is clear from the label and position, not loud color.
 - **Shape:** Crisp corners (0.5rem, `rounded-lg`), 1px transparent border, 32px tall by default.

@@ -1,5 +1,7 @@
-import { dataBox, field, fieldError, label as labelClass } from "@/components/field-classes";
+import { dataBox } from "@/components/field-classes";
+import { CheckboxField, SelectField, TextField } from "@/components/form-field";
 import { type ModelProblem, modelProblemMessage, providerTypes, type StoredKey } from "@/lib/model";
+import { cn } from "@/lib/utils";
 import { saveModelAction } from "./actions";
 import { ModelFormActions } from "./form-actions";
 
@@ -29,7 +31,8 @@ const keyPlaceholder = (storedKey: StoredKey, clearKey: boolean) => {
 /**
  * Sets the Workspace's model. The key field is never filled in: the page only knows whether a key
  * is set, and a blank field keeps it. That holds for a key that can't be read too, so there the
- * form asks for the key instead of offering to keep it.
+ * form asks for the key instead of offering to keep it. Every field keeps its hint beside a refusal,
+ * because the examples are what a refused field needs most.
  */
 export function ModelForm({
   values,
@@ -43,23 +46,7 @@ export function ModelForm({
   /** The last submit held a key, and it's gone: a refused form doesn't carry it back. */
   keyTyped: boolean;
 }) {
-  const invalid = (name: ModelProblem) => ({
-    "aria-invalid": problem === name,
-    "aria-describedby": `${name}-note`,
-    // Focus lands on the field with the error, so the field and its message are read together.
-    autoFocus: problem === name,
-  });
-  // The hint stays beside an error: a refused field is when its examples are needed most.
-  const note = (name: ModelProblem, hint: React.ReactNode) => (
-    <div id={`${name}-note`} className="flex flex-col gap-1">
-      {problem === name ? (
-        <p role="alert" className={fieldError}>
-          {modelProblemMessage[name]}
-        </p>
-      ) : null}
-      <p className="text-xs text-muted-foreground">{hint}</p>
-    </div>
-  );
+  const errorFor = (name: ModelProblem) => (problem === name ? modelProblemMessage[name] : undefined);
   const examples = providerTypes.map(({ label, baseUrl }) => (
     <span key={label} className="block wrap-anywhere">
       {label}: <span className="font-mono">{baseUrl}</span>
@@ -68,145 +55,112 @@ export function ModelForm({
 
   return (
     <form action={saveModelAction} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <label htmlFor="provider" className={labelClass}>
-          Provider type
-        </label>
-        <select
-          id="provider"
-          name="providerType"
-          defaultValue={values.providerType}
-          {...invalid("provider")}
-          className={`${field} bg-background`}
-        >
-          {providerTypes.map(({ value, label }) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
-        {note("provider", "OpenAI-compatible also covers OpenRouter, Groq, DeepSeek, Mistral, Ollama and LM Studio.")}
-      </div>
+      <SelectField
+        id="provider"
+        name="providerType"
+        label="Provider type"
+        defaultValue={values.providerType}
+        error={errorFor("provider")}
+        focusOnError={problem === "provider"}
+        showHelpWithError
+        help="OpenAI-compatible also covers OpenRouter, Groq, DeepSeek, Mistral, Ollama and LM Studio."
+      >
+        {providerTypes.map(({ value, label }) => (
+          <option key={value} value={value}>
+            {label}
+          </option>
+        ))}
+      </SelectField>
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="base-url" className={labelClass}>
-          Base URL
-        </label>
-        <input
-          id="base-url"
-          name="baseUrl"
-          type="url"
-          required
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="https://api.openai.com/v1"
-          defaultValue={values.baseUrl}
-          {...invalid("base-url")}
-          className={`${field} ${dataBox}`}
-        />
-        {note("base-url", <>Include the version in the path. For example:{examples}</>)}
-      </div>
+      <TextField
+        id="base-url"
+        name="baseUrl"
+        label="Base URL"
+        type="url"
+        required
+        autoComplete="off"
+        placeholder="https://api.openai.com/v1"
+        defaultValue={values.baseUrl}
+        error={errorFor("base-url")}
+        focusOnError={problem === "base-url"}
+        showHelpWithError
+        controlClassName={dataBox}
+        help={<>Include the version in the path. For example:{examples}</>}
+      />
 
-      <div className="flex flex-col gap-2">
-        <label htmlFor="api-key" className={labelClass}>
-          API key {storedKey === "unreadable" ? null : <span className="font-normal text-muted-foreground">(optional)</span>}
-        </label>
-        <input
+      <div className="flex flex-col gap-3">
+        <TextField
           id="api-key"
           name="apiKey"
+          label="API key"
+          optional={storedKey !== "unreadable"}
           type="password"
           autoComplete="off"
-          spellCheck={false}
           placeholder={keyPlaceholder(storedKey, values.clearKey)}
-          {...invalid("api-key")}
-          className={`${field} ${dataBox}`}
+          error={errorFor("api-key")}
+          focusOnError={problem === "api-key"}
+          showHelpWithError
+          controlClassName={dataBox}
+          help={
+            <>
+              {keyTyped ? (
+                <strong className="font-medium text-foreground">
+                  {problem === "api-key" && values.clearKey && storedKey === "set" ? (
+                    <>
+                      A new key and the box that removes the stored key can&apos;t both be saved. Leave the key field
+                      blank to remove the stored key, or untick the box to save this one.{" "}
+                    </>
+                  ) : (
+                    <>
+                      The key you typed wasn&apos;t saved. Enter it again
+                      {storedKey === "set" && !values.clearKey ? ", or leave this blank to keep the current one" : ""}.{" "}
+                    </>
+                  )}
+                </strong>
+              ) : null}
+              {storedKey === "unreadable" && !keyTyped ? (
+                <strong className="font-medium text-foreground">Enter this model&apos;s key and save. </strong>
+              ) : null}
+              Stored encrypted, and never shown again. {keyHint[storedKey]}
+            </>
+          }
         />
         {/* Only offered while a key is set: with none there's nothing to remove. */}
         {storedKey === "set" ? (
-          <div className="flex flex-col gap-1">
-            {/* The label holds the box, so the whole row is the target. */}
-            <label htmlFor="clear-key" className={`${labelClass} flex min-h-6 items-center gap-2`}>
-              <input
-                id="clear-key"
-                name="clearKey"
-                type="checkbox"
-                defaultChecked={values.clearKey}
-                aria-describedby="clear-key-hint"
-                className="size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-              />
-              Remove the stored key
-            </label>
-            <p id="clear-key-hint" className="pl-6 text-xs text-muted-foreground">
-              Deletes the saved key when you save, and keeps this model, its prices and its Usage history. Leave the
-              key field above blank.
-            </p>
-          </div>
-        ) : null}
-        {note(
-          "api-key",
-          <>
-            {keyTyped ? (
-              <strong className="font-medium text-foreground">
-                {problem === "api-key" && values.clearKey && storedKey === "set" ? (
-                  <>
-                    A new key and the box that removes the stored key can&apos;t both be saved. Leave the key field
-                    blank to remove the stored key, or untick the box to save this one.{" "}
-                  </>
-                ) : (
-                  <>
-                    The key you typed wasn&apos;t saved. Enter it again
-                    {storedKey === "set" && !values.clearKey ? ", or leave this blank to keep the current one" : ""}.{" "}
-                  </>
-                )}
-              </strong>
-            ) : null}
-            {storedKey === "unreadable" && !keyTyped ? (
-              <strong className="font-medium text-foreground">Enter this model&apos;s key and save. </strong>
-            ) : null}
-            Stored encrypted, and never shown again.{" "}
-            {keyHint[storedKey]}
-          </>,
-        )}
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <label htmlFor="model-name" className={labelClass}>
-          Model name
-        </label>
-        <input
-          id="model-name"
-          name="modelName"
-          type="text"
-          required
-          maxLength={200}
-          autoComplete="off"
-          spellCheck={false}
-          placeholder="gpt-5-mini"
-          defaultValue={values.modelName}
-          {...invalid("model-name")}
-          className={`${field} ${dataBox}`}
-        />
-        {note("model-name", "As the provider's docs spell it.")}
-      </div>
-
-      <div className="flex flex-col gap-1">
-        {/* The label holds the box, so the whole row is the target. */}
-        <label htmlFor="structured" className={`${labelClass} flex min-h-6 items-center gap-2`}>
-          <input
-            id="structured"
-            name="structured"
-            type="checkbox"
-            defaultChecked={values.structured}
-            aria-describedby="structured-hint"
-            className="size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          <CheckboxField
+            id="clear-key"
+            name="clearKey"
+            label="Remove the stored key"
+            defaultChecked={values.clearKey}
+            help="Deletes the saved key when you save, and keeps this model, its prices and its Usage history. Leave the key field above blank."
           />
-          Supports structured output
-        </label>
-        <p id="structured-hint" className="pl-6 text-xs text-muted-foreground">
-          The host accepts a JSON Schema. Without this, Watchdog asks for plain JSON and checks what comes back. Leave it
-          off if you&apos;re not sure.
-        </p>
+        ) : null}
       </div>
+
+      <TextField
+        id="model-name"
+        name="modelName"
+        label="Model name"
+        type="text"
+        required
+        maxLength={200}
+        autoComplete="off"
+        placeholder="gpt-5-mini"
+        defaultValue={values.modelName}
+        error={errorFor("model-name")}
+        focusOnError={problem === "model-name"}
+        showHelpWithError
+        controlClassName={dataBox}
+        help="As the provider's docs spell it."
+      />
+
+      <CheckboxField
+        id="structured"
+        name="structured"
+        label="Supports structured output"
+        defaultChecked={values.structured}
+        help="The host accepts a JSON Schema. Without this, Watchdog asks for plain JSON and checks what comes back. Leave it off if you're not sure."
+      />
 
       <div className="grid gap-4 sm:grid-cols-2">
         {(
@@ -215,23 +169,23 @@ export function ModelForm({
             { id: "output-price", name: "outputPrice", label: "Output price", value: values.outputPrice },
           ] as const
         ).map(({ id, name, label, value }) => (
-          <div key={id} className="flex flex-col gap-2">
-            <label htmlFor={id} className={labelClass}>
-              {label} <span className="font-normal text-muted-foreground">(optional)</span>
-            </label>
-            <input
-              id={id}
-              name={name}
-              type="number"
-              min="0"
-              step="any"
-              inputMode="decimal"
-              defaultValue={value}
-              {...invalid(id)}
-              className={`${field} ${dataBox} tabular-nums`}
-            />
-            {note(id, "Per million tokens, to estimate this model's cost.")}
-          </div>
+          <TextField
+            key={id}
+            id={id}
+            name={name}
+            label={label}
+            optional
+            type="number"
+            min="0"
+            step="any"
+            inputMode="decimal"
+            defaultValue={value}
+            error={errorFor(id)}
+            focusOnError={problem === id}
+            showHelpWithError
+            controlClassName={cn(dataBox, "tabular-nums")}
+            help="Per million tokens, to estimate this model's cost."
+          />
         ))}
       </div>
 

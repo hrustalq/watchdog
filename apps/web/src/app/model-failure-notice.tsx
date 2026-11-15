@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { filledLamp } from "@/components/rating";
+import { SignalLine } from "@/components/signal-line";
 import { modelLink } from "./rules/words";
 
 const inlineLink =
@@ -14,10 +14,9 @@ function AlarmLine({ said }: { said: React.ReactNode | undefined }) {
   return (
     <p role="status" className="empty:hidden">
       {said === undefined ? null : (
-        <span className="flex items-start gap-2 text-sm text-alarm">
-          <span aria-hidden="true" className={`mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm ${filledLamp}`} />
-          <span className="min-w-0 break-words">{said}</span>
-        </span>
+        <SignalLine as="span" tone="alarm">
+          {said}
+        </SignalLine>
       )}
     </p>
   );

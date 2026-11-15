@@ -16,9 +16,12 @@ import {
   type UsageTally,
 } from "@/lib/usage";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "@/components/empty-state";
+import { PageBar } from "@/components/page-bar";
+import { Page } from "@/components/page";
 import { modelLink } from "../rules/words";
-import { Notice } from "../sign-in/notice";
-import { SubmitButton } from "../sign-in/submit-button";
+import { Notice } from "@/components/notice";
+import { SubmitButton } from "@/components/submit-button";
 import { setPricesAction } from "./actions";
 import { MonthNav } from "./month-nav";
 
@@ -31,7 +34,6 @@ export const instant = false;
 const textLink =
   "inline-flex min-h-6 items-center rounded-sm text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60";
 const notes = "flex max-w-[70ch] flex-col gap-1 text-sm text-muted-foreground";
-const noticeClass = "rounded-lg bg-muted px-3 py-2 text-sm";
 const noPrices = "No prices";
 
 const priceFields = [
@@ -72,19 +74,8 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
 
   return (
     <div className="flex flex-1 flex-col">
-      <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
-        <Link
-          href="/"
-          className="rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
-        >
-          Workspace
-        </Link>
-        <span aria-hidden="true" className="text-muted-foreground">
-          /
-        </span>
-        <span aria-current="page">Usage</span>
-      </nav>
-      <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-8 px-4 py-8">
+      <PageBar trail={[{ href: "/", label: "Workspace" }, { label: "Usage" }]} />
+      <Page className="flex-1">
         <div className="flex flex-col gap-2">
           <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
             <h1 className="text-headline">Usage</h1>
@@ -109,12 +100,12 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
         </div>
 
         {param("saved") === "prices" ? (
-          <Notice role="status" className={noticeClass}>
+          <Notice role="status">
             Prices saved. Every month&apos;s estimate now includes the calls that ran on that model.
           </Notice>
         ) : null}
         {error === "model" ? (
-          <Notice role="alert" className={noticeClass}>
+          <Notice role="alert">
             {priceProblemMessage.model}
           </Notice>
         ) : null}
@@ -137,7 +128,7 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
                 tally: model,
                 label: (
                   <>
-                    <span className="font-mono text-[0.8125rem] wrap-anywhere">{model.modelName}</span>
+                    <span className="text-data wrap-anywhere">{model.modelName}</span>
                     <span className="block font-mono text-xs wrap-anywhere text-muted-foreground">{model.baseUrl}</span>
                     {model.archived ? (
                       <span className="mt-1 inline-block rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium tracking-[0.01em]">
@@ -185,7 +176,7 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
             )}
           </>
         )}
-      </main>
+      </Page>
     </div>
   );
 }
@@ -203,8 +194,7 @@ function EmptyMonth({
 }) {
   const words = "mt-2 max-w-md text-sm text-muted-foreground";
   return (
-    <div className="flex flex-1 flex-col items-center justify-center py-16 text-center">
-      <h2 className="text-headline">{neverCalled ? "No Agent calls yet" : `No Agent calls in ${label}`}</h2>
+    <EmptyState title={neverCalled ? "No Agent calls yet" : `No Agent calls in ${label}`}>
       {/* Neither a rating nor a test can happen while the key can't be read, so this asks for the key
           rather than promising calls. */}
       {unreadableKey && neverCalled ? (
@@ -226,11 +216,11 @@ function EmptyMonth({
           </Link>
         </>
       )}
-    </div>
+    </EmptyState>
   );
 }
 
-const reading = "px-4 py-2 text-right align-top font-mono text-[0.8125rem] whitespace-nowrap";
+const reading = "px-4 py-2 text-right align-top text-data whitespace-nowrap";
 const columnHead = "px-4 py-2 text-right font-medium whitespace-nowrap";
 // Stays in view while a phone scrolls the readings, so each one still says whose it is.
 const firstColumn = "sticky left-0 bg-background px-4 py-2 text-left align-top";

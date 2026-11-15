@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PageHeader } from "@/components/page";
 import { verifyForm } from "@/lib/auth";
 import { ConfirmForm } from "./confirm-form";
 
@@ -24,13 +25,10 @@ export default async function ConfirmPage({ searchParams }: PageProps<"/sign-in/
   const { token, next } = await searchParams;
   return (
     <>
-      <div className="flex flex-col gap-1">
-        <h1 className="text-headline">Finish signing in</h1>
-        <p className="text-sm text-muted-foreground">
-          Press the button to sign in. We ask first so that a mail scanner opening the link
-          can&apos;t use it up before you do.
-        </p>
-      </div>
+      <PageHeader
+        title="Finish signing in"
+        description="Press the button to sign in. We ask first so that a mail scanner opening the link can't use it up before you do."
+      />
       {/* A missing token is sent anyway: Better Auth answers with the "expired" notice on sign-in. */}
       <ConfirmForm
         action={verifyForm.action}

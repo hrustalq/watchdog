@@ -7,7 +7,7 @@ import { field, label } from "@/components/field-classes";
 import { ImportanceChip, SeverityChip } from "@/components/rating";
 import { correctRatingAction } from "./actions";
 import { CorrectionButton, CorrectionStatus } from "./correction-status";
-import { SubmitButton } from "./sign-in/submit-button";
+import { SubmitButton } from "@/components/submit-button";
 
 const levels = [1, 2, 3, 4, 5];
 

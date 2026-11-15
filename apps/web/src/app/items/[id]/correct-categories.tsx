@@ -3,7 +3,7 @@ import { field } from "@/components/field-classes";
 import { maxCategoryLength } from "@/lib/corrections";
 import { correctCategoriesAction } from "../../actions";
 import { CorrectionButton, CorrectionStatus } from "../../correction-status";
-import { SubmitButton } from "../../sign-in/submit-button";
+import { SubmitButton } from "@/components/submit-button";
 
 /** The add box's suggestions, which is the page's one list of them. */
 const knownList = "item-categories";

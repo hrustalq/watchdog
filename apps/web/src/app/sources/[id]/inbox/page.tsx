@@ -1,11 +1,13 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { dataBox, textBox } from "@/components/field-classes";
 import { Confirming } from "@/components/confirming";
+import { PageBar } from "@/components/page-bar";
+import { Page, PageHeader } from "@/components/page";
+import { Section } from "@/components/section";
 import { findInbox, inboxUrl, revealInboxToken } from "@/lib/inbox";
 import { requireWorkspace, server } from "@/lib/server";
-import { Notice } from "../../../sign-in/notice";
+import { Notice } from "@/components/notice";
 import { replaceInboxTokenAction } from "../../actions";
 
 export const metadata: Metadata = { title: "Webhook inbox · Watchdog" };
@@ -13,9 +15,6 @@ export const metadata: Metadata = { title: "Webhook inbox · Watchdog" };
 // Read without Suspense, so all of it is in the first HTML: the URL is shown only this once, and has to
 // reach someone without JavaScript too.
 export const instant = false;
-
-const crumb =
-  "rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60";
 
 const mapped = [
   { field: "title", term: "Title", unmapped: "“Webhook to” and the Source's name" },
@@ -36,41 +35,20 @@ export default async function InboxPage({ params }: PageProps<"/sources/[id]/inb
 
   return (
     <div className="flex flex-1 flex-col">
-      <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
-        <Link href="/" className={crumb}>
-          Workspace
-        </Link>
-        <span aria-hidden="true" className="text-muted-foreground">
-          /
-        </span>
-        <Link href="/sources" className={crumb}>
-          Sources
-        </Link>
-        <span aria-hidden="true" className="text-muted-foreground">
-          /
-        </span>
-        <span aria-current="page" className="truncate">
-          {inbox.name}
-        </span>
-      </nav>
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-4 py-8 break-words">
-        <div className="flex flex-col gap-1">
-          <h1 className="text-headline">{inbox.name}</h1>
-          <p className="text-sm text-muted-foreground">
-            A webhook inbox. Each POST of JSON, up to 1 MB, becomes one Item in the Feed, at most 60 a minute.
-          </p>
-        </div>
+      <PageBar trail={[{ href: "/", label: "Workspace" }, { href: "/sources", label: "Sources" }, { label: inbox.name }]} />
+      <Page className="break-words">
+        <PageHeader
+          title={inbox.name}
+          description="A webhook inbox. Each POST of JSON, up to 1 MB, becomes one Item in the Feed, at most 60 a minute."
+        />
 
         {token === undefined ? (
-          <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm">
+          <Notice role="status">
             The URL for {inbox.name} was already shown. Replace the token if you didn&apos;t keep a copy.
           </Notice>
         ) : (
-          <section aria-labelledby="inbox-url" className="flex flex-col gap-2 rounded-lg border bg-card p-4">
-            <h2 id="inbox-url" className="text-title">
-              The inbox URL
-            </h2>
-            <Notice role="status" className="text-sm">
+          <Section id="inbox-url" title="The inbox URL" tone="raised" gap={2}>
+            <Notice role="status" tone="plain">
               Copy it now. Watchdog won&apos;t show it again. The token in it is the only proof a request is meant for
               this inbox, so keep it as you would a password.
             </Notice>
@@ -82,13 +60,10 @@ export default async function InboxPage({ params }: PageProps<"/sources/[id]/inb
               value={url}
               className={`${textBox} ${dataBox} resize-none py-1.5`}
             />
-          </section>
+          </Section>
         )}
 
-        <section aria-labelledby="try-it" className="flex flex-col gap-2">
-          <h2 id="try-it" className="text-title">
-            Try it
-          </h2>
+        <Section id="try-it" title="Try it" gap={2}>
           <p className="text-sm text-muted-foreground">
             Watchdog answers 202 when it captures an Item and 200 when it already has that one.
           </p>
@@ -99,12 +74,9 @@ export default async function InboxPage({ params }: PageProps<"/sources/[id]/inb
             value={curl}
             className={`${textBox} ${dataBox} resize-none py-1.5`}
           />
-        </section>
+        </Section>
 
-        <section aria-labelledby="mapping" className="flex flex-col gap-2">
-          <h2 id="mapping" className="text-title">
-            Mapping
-          </h2>
+        <Section id="mapping" title="Mapping" gap={2}>
           <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-sm">
             {mapped.map(({ field, term, unmapped }) => {
               const path = inbox.mapping[field];
@@ -112,13 +84,13 @@ export default async function InboxPage({ params }: PageProps<"/sources/[id]/inb
                 <div key={field} className="contents">
                   <dt className="text-muted-foreground">{term}</dt>
                   <dd className="min-w-0 break-all">
-                    {path === undefined ? unmapped : <span className="font-mono text-[0.8125rem]">{path}</span>}
+                    {path === undefined ? unmapped : <span className="text-data">{path}</span>}
                   </dd>
                 </div>
               );
             })}
           </dl>
-        </section>
+        </Section>
 
         <Confirming
           label="Replace the token"
@@ -128,7 +100,7 @@ export default async function InboxPage({ params }: PageProps<"/sources/[id]/inb
           button="Replace it"
           pendingLabel="Replacing…"
         />
-      </main>
+      </Page>
     </div>
   );
 }

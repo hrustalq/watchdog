@@ -7,7 +7,7 @@ const at = new Date("2026-11-08T13:30:45.000Z");
 describe("Timestamp", () => {
   it("keeps the date and the time each unbroken, with a break allowed only between them", () => {
     expect(renderToStaticMarkup(<Timestamp at={at} />)).toBe(
-      '<time dateTime="2026-11-08T13:30:45.000Z" class="font-mono text-[0.8125rem]">' +
+      '<time dateTime="2026-11-08T13:30:45.000Z" class="text-data">' +
         '<span class="whitespace-nowrap">2026-11-08</span> <span class="whitespace-nowrap">13:30 UTC</span>' +
         "</time>",
     );

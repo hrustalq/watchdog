@@ -1,5 +1,6 @@
 import type { ManualRun } from "@/lib/feed";
-import { Notice } from "../../sign-in/notice";
+import { Notice } from "@/components/notice";
+import { SignalLine } from "@/components/signal-line";
 
 /**
  * What a manual Extractor Rule run did, above its rule's button. The rule's name takes a line of its
@@ -24,21 +25,20 @@ export function RunOutcome({ run }: { run: ManualRun }) {
 
   if (run.failed) {
     return (
-      <Notice role="alert" className="flex items-start gap-2 text-sm text-alarm">
-        <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-alarm" />
-        <span className="min-w-0 break-words">
+      <Notice role="alert" tone="alarm">
+        <SignalLine as="span" tone="alarm">
           {/* An older row carries the reason in its sentence, which names the rule itself. */}
           {run.detail === undefined ? null : <RuleName name={run.extractor} />}
           {run.detail === undefined ? run.message : `The run failed: ${run.detail}`}
           <span className="block text-muted-foreground">What this rule found before stays as it was.</span>
-        </span>
+        </SignalLine>
       </Notice>
     );
   }
 
   if (nothingStored) {
     return (
-      <Notice role="status" className="flex items-start gap-2 rounded-lg bg-caution/10 px-3 py-2 text-sm text-caution">
+      <Notice role="status" tone="caution" className="flex items-start gap-2">
         <span aria-hidden="true" className="mt-1.5 size-1.5 shrink-0 rounded-full bg-caution" />
         <Lines name={run.extractor} lines={lines} />
       </Notice>
@@ -46,7 +46,7 @@ export function RunOutcome({ run }: { run: ManualRun }) {
   }
 
   return (
-    <Notice role="status" className="rounded-lg bg-muted px-3 py-2 text-sm break-words">
+    <Notice role="status" className="break-words">
       <Lines name={run.extractor} lines={lines} />
     </Notice>
   );

@@ -2,8 +2,12 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { localDateTime } from "@watchdog/core";
-import { Rating } from "@/components/rating";
+import { filledLamp, Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
+import { PageBar } from "@/components/page-bar";
+import { Page } from "@/components/page";
+import { PanelList } from "@/components/panel-list";
+import { Section } from "@/components/section";
 import { Button } from "@/components/ui/button";
 import { deliveryStatus, isCallFailure, isFailureRow, itemActions, itemWithLog, manualRunIn } from "@/lib/feed";
 import { knownCategories, listRules } from "@/lib/rules";
@@ -11,7 +15,7 @@ import { requireWorkspace, server } from "@/lib/server";
 import { RatingControls } from "../../correct-rating";
 import { Refresher } from "../../refresher";
 import { kindLabel, modelLink } from "../../rules/words";
-import { SubmitButton } from "../../sign-in/submit-button";
+import { SubmitButton } from "@/components/submit-button";
 import { runExtractorRuleAction } from "./actions";
 import { CorrectCategories } from "./correct-categories";
 import { RunOutcome } from "./run-outcome";
@@ -28,21 +32,10 @@ export const instant = false;
 export default function ItemPage({ params, searchParams }: PageProps<"/items/[id]">) {
   return (
     <div className="flex flex-1 flex-col">
-      <nav aria-label="Breadcrumb" className="flex h-12 items-center gap-2 border-b px-4 text-sm">
-        <Link
-          href="/"
-          className="inline-flex min-h-6 items-center rounded-sm text-muted-foreground underline-offset-4 outline-hidden hover:text-foreground hover:underline focus-visible:ring-3 focus-visible:ring-ring/60"
-        >
-          Feed
-        </Link>
-        <span aria-hidden="true" className="text-muted-foreground">
-          /
-        </span>
-        <span aria-current="page">Item</span>
-      </nav>
-      <main className="mx-auto flex w-full max-w-3xl flex-col px-4 py-8">
+      <PageBar trail={[{ href: "/", label: "Feed" }, { label: "Item" }]} />
+      <Page gap="none">
         <ItemDetail params={params} searchParams={searchParams} />
-      </main>
+      </Page>
     </div>
   );
 }
@@ -119,7 +112,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
           <a
             href={found.url}
             rel="noreferrer"
-            className="self-start rounded-sm font-mono text-[0.8125rem] break-all text-muted-foreground underline underline-offset-4 outline-hidden hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/60"
+            className="self-start rounded-sm text-data break-all text-muted-foreground underline underline-offset-4 outline-hidden hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/60"
           >
             {found.url}
           </a>
@@ -134,32 +127,23 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
         </dl>
       </header>
       {found.summary === null ? null : (
-        <section aria-labelledby="summary" className="flex flex-col gap-3">
-          <h2 id="summary" className="text-title">
-            Summary
-          </h2>
+        <Section id="summary" title="Summary">
           <p className={readingText}>{found.summary}</p>
-        </section>
+        </Section>
       )}
-      <section aria-labelledby="original" className="flex flex-col gap-3">
-        <h2 id="original" className="text-title">
-          Original text
-        </h2>
+      <Section id="original" title="Original text">
         {found.body === "" ? (
           <p className="text-sm text-muted-foreground">The Source gave no text for this Item.</p>
         ) : (
           <p className={readingText}>{found.body}</p>
         )}
-      </section>
-      <section aria-labelledby="fields" className="flex flex-col gap-3">
-        <h2 id="fields" className="text-title">
-          Extracted fields
-        </h2>
+      </Section>
+      <Section id="fields" title="Extracted fields">
         {found.fields.length === 0 ? (
           <p className="text-sm text-muted-foreground">No fields on this Item yet.</p>
         ) : (
           // A field's name can be 64 characters with nowhere to wrap, so a phone stacks it on its value.
-          <dl className="grid gap-x-6 gap-y-1 font-mono text-[0.8125rem] sm:grid-cols-[minmax(0,14rem)_1fr]">
+          <dl className="grid gap-x-6 gap-y-1 text-data sm:grid-cols-[minmax(0,14rem)_1fr]">
             {found.fields.map(({ name, value, extractorRule }) => (
               <div key={name} className="contents">
                 <dt className="break-all text-muted-foreground">{name}</dt>
@@ -173,7 +157,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
             ))}
           </dl>
         )}
-      </section>
+      </Section>
       <ActionsSection
         fired={fired}
         processed={found.processedAt !== null}
@@ -181,26 +165,18 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
         actedOn={found.log.some(({ stage, data }) => stage === "act" && aboutAnAction(data))}
         timezone={workspace.timezone}
       />
-      <section aria-labelledby="run-rule" className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1">
-          <h2 id="run-rule" className="text-title">
-            Run an Extractor Rule
-          </h2>
-          <p className="max-w-[70ch] text-sm text-muted-foreground">
-            Runs on this Item even if it doesn&apos;t meet the rule&apos;s Condition, and replaces what that rule found
-            before. An Agent-backed rule makes one call to your model, which your provider bills as usual.
-          </p>
-        </div>
+      <Section
+        id="run-rule"
+        title="Run an Extractor Rule"
+        description="Runs on this Item even if it doesn't meet the rule's Condition, and replaces what that rule found before. An Agent-backed rule makes one call to your model, which your provider bills as usual."
+      >
         {/* A new key for each run, so the notice takes focus again after a second run. It sits outside
             the list's disclosure: after a run its notice has to be visible without opening anything. */}
         {run === undefined ? null : <RunOutcome key={run.id} run={run} />}
         <RuleList itemId={found.id} rules={extractorRules} hasModel={hasModel} />
-      </section>
-      <section aria-labelledby="log" className="flex flex-col gap-3">
-        <h2 id="log" className="scroll-mt-4 text-title">
-          Log
-        </h2>
-        <ol className="divide-y rounded-lg border bg-muted font-mono text-[0.8125rem]">
+      </Section>
+      <Section id="log" title="Log" titleClassName="scroll-mt-4">
+        <PanelList as="ol" className="bg-muted text-data">
           {found.log.map((row) => (
             <li key={row.id} className="flex flex-col gap-x-4 px-3 py-2 sm:flex-row">
               <Timestamp at={row.at} seconds className="shrink-0 text-muted-foreground" />
@@ -208,8 +184,8 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
               <LogMessage row={row} />
             </li>
           ))}
-        </ol>
-      </section>
+        </PanelList>
+      </Section>
     </article>
   );
 }
@@ -292,7 +268,7 @@ function RuleList({
   const rows = rules.map((rule) => (
     <RunRule key={rule.id} itemId={itemId} rule={rule} needsModel={rule.kind === "agent" && !hasModel} />
   ));
-  if (rules.length <= inlineRulesUpTo) return <ul className="divide-y rounded-lg border">{rows}</ul>;
+  if (rules.length <= inlineRulesUpTo) return <PanelList>{rows}</PanelList>;
   return (
     <details className="group rounded-lg border">
       <summary className={disclosure}>
@@ -363,9 +339,6 @@ function RunRule({
   );
 }
 
-// Forced colours drop backgrounds, which would hide a filled lamp.
-const filledLamp = "forced-color-adjust-none forced-colors:bg-[CanvasText]";
-
 /** Red for a failure and green for a send, filled. Anything still waiting gets a hollow lamp. */
 function lampFor(status: string, failed: boolean) {
   if (failed) return `bg-alarm ${filledLamp}`;
@@ -397,14 +370,11 @@ function ActionsSection({
   else if (isBackfill) empty = "No Action fires on an Item from a Backfill.";
   else if (actedOn) empty = "Nothing is waiting to go or was sent from this Item. The Log says why.";
   return (
-    <section aria-labelledby="actions" className="flex flex-col gap-3">
-      <h2 id="actions" className="text-title">
-        Actions
-      </h2>
+    <Section id="actions" title="Actions">
       {fired.length === 0 ? (
         <p className="text-sm text-muted-foreground">{empty}</p>
       ) : (
-        <ul className="divide-y rounded-lg border">
+        <PanelList>
           {fired.map((row) => (
             <li key={row.id} className="flex flex-col gap-1 p-3">
               <p className="text-sm font-medium break-words">
@@ -491,9 +461,9 @@ function ActionsSection({
               </ul>
             </li>
           ))}
-        </ul>
+        </PanelList>
       )}
-    </section>
+    </Section>
   );
 }
 

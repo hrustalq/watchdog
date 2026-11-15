@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { CenteredPage } from "@/components/centered-page";
 import { filledLamp } from "@/components/rating";
 import { Button, buttonVariants } from "@/components/ui/button";
 
@@ -11,7 +12,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
  */
 export default function ErrorPage({ retry }: { retry: () => void }) {
   return (
-    <main className="flex flex-1 flex-col items-center justify-center px-4 py-16 text-center">
+    <CenteredPage className="text-center">
       <span aria-hidden="true" className={`size-1.5 rounded-full bg-alarm ${filledLamp}`} />
       <h1 className="mt-3 text-headline">Something went wrong</h1>
       <p role="alert" className="mt-2 max-w-md text-sm text-muted-foreground">
@@ -30,6 +31,6 @@ export default function ErrorPage({ retry }: { retry: () => void }) {
           Back to the Feed
         </Link>
       </div>
-    </main>
+    </CenteredPage>
   );
 }

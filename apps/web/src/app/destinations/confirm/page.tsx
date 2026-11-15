@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { confirmationAddress } from "@/lib/destinations";
 import { server } from "@/lib/server";
-import { Notice } from "../../sign-in/notice";
-import { SubmitButton } from "../../sign-in/submit-button";
+import { CenteredColumn, CenteredPage } from "@/components/centered-page";
+import { PageHeader } from "@/components/page";
+import { Notice } from "@/components/notice";
+import { SubmitButton } from "@/components/submit-button";
 import { confirmDestinationAction } from "../actions";
 
 // The URL holds a live token: keep it out of search indexes and out of Referer headers to other sites.
@@ -28,12 +30,12 @@ export default async function ConfirmDestinationPage({ searchParams }: PageProps
   const address =
     result === undefined && typeof token === "string" ? await confirmationAddress(server().db, token) : undefined;
   return (
-    <main className="flex flex-1 flex-col items-center justify-center px-4 py-16">
-      <div className="flex w-full max-w-sm flex-col gap-6">
+    <CenteredPage>
+      <CenteredColumn>
         <p className="text-title">Watchdog</p>
         <Step token={token} address={address} confirmed={result === "confirmed"} />
-      </div>
-    </main>
+      </CenteredColumn>
+    </CenteredPage>
   );
 }
 
@@ -66,14 +68,16 @@ function Step({
   }
   return (
     <>
-      <div className="flex flex-col gap-1">
-        <h1 className="text-headline">Confirm this address</h1>
-        <p className="text-sm text-muted-foreground">
-          Someone asked Watchdog to send its alerts to{" "}
-          <span className="font-mono text-[0.8125rem] break-all text-foreground">{address}</span>. Press the button
-          to agree. If you didn&apos;t expect this, close the page, and nothing will be sent here.
-        </p>
-      </div>
+      <PageHeader
+        title="Confirm this address"
+        description={
+          <>
+            Someone asked Watchdog to send its alerts to{" "}
+            <span className="text-data break-all text-foreground">{address}</span>. Press the button to agree. If you
+            didn&apos;t expect this, close the page, and nothing will be sent here.
+          </>
+        }
+      />
       <form action={confirmDestinationAction}>
         <input type="hidden" name="token" value={token} />
         <SubmitButton pendingLabel="Confirming…">Confirm this address</SubmitButton>
@@ -94,8 +98,8 @@ function Outcome({
 }) {
   return (
     <div className="flex flex-col gap-1">
-      <h1 className="text-headline">{title}</h1>
-      <Notice role={role} className="text-sm text-muted-foreground">
+      <PageHeader title={title} />
+      <Notice role={role} tone="plain" className="text-muted-foreground">
         {children}
       </Notice>
     </div>
