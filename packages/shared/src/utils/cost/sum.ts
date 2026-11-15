@@ -3,7 +3,10 @@
 import { Decimal } from "decimal.js";
 import type { Cost } from "./types.ts";
 
-/** The canonical spelling of a value: fixed-point, without trailing zeros. */
+/**
+ * The canonical spelling of a value: fixed-point, without an exponent or trailing zeros, so
+ * "7.5000000000000000" from the database becomes "7.5" and can be compared as a string.
+ */
 export function toCost(value: Decimal.Value): Cost {
   return new Decimal(value).toFixed();
 }
