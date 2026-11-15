@@ -4,7 +4,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/testing/postgres.ts"
+    "./testing": "./src/testing/postgres.ts",
+    "./testing/global-setup": "./src/testing/global-setup.ts"
   },
   "scripts": {
     "db:generate": "drizzle-kit generate",

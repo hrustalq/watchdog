@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
 import { migrate as applyMigrations } from "drizzle-orm/node-postgres/migrator";
+import { Client } from "pg";
+import { inject } from "vitest";
 import { closeDb, createDb } from "../client.ts";
 
 // The Postgres in Compose (#8) must run the same major version.
@@ -13,14 +15,55 @@ export interface TestPostgres {
   stop: () => Promise<void>;
 }
 
-/** Starts a throwaway Postgres container for an integration test. Needs Docker. */
-export async function startPostgres(): Promise<TestPostgres> {
-  const container = await new PostgreSqlContainer(postgresImage).start();
+declare module "vitest" {
+  export interface ProvidedContext {
+    /** The run's shared Postgres server, which `global-setup.ts` starts. */
+    postgresServerUrl?: string;
+  }
+}
+
+/**
+ * Starts a Postgres container. Settings are for a throwaway server: every test file of a package
+ * connects to the one server, and nothing on it needs to survive a crash.
+ */
+export async function startPostgresServer(): Promise<TestPostgres> {
+  const container = await new PostgreSqlContainer(postgresImage)
+    .withCommand(["postgres", "-c", "max_connections=1000", "-c", "fsync=off"])
+    .start();
   return {
     url: container.getConnectionUri(),
     stop: async () => {
       await container.stop();
     },
+  };
+}
+
+/**
+ * A throwaway database for an integration test. Needs Docker. On the server the package's global setup
+ * started it's a new database, created in well under a second, so test files don't each start a
+ * container, which starved a machine running four packages at once (#436). Without that setup it
+ * starts a server of its own.
+ */
+export async function startPostgres(): Promise<TestPostgres> {
+  const serverUrl = inject("postgresServerUrl");
+  if (serverUrl === undefined) return startPostgresServer();
+  const name = `test_${crypto.randomUUID().replaceAll("-", "")}`;
+  const admin = async (statement: string) => {
+    const client = new Client({ connectionString: serverUrl });
+    await client.connect();
+    try {
+      await client.query(statement);
+    } finally {
+      await client.end();
+    }
+  };
+  await admin(`create database ${name}`);
+  const url = new URL(serverUrl);
+  url.pathname = `/${name}`;
+  return {
+    url: url.href,
+    // Forced, as stopping a container was: a test that left a connection open still gets its database dropped.
+    stop: () => admin(`drop database ${name} with (force)`),
   };
 }
 
