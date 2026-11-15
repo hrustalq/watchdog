@@ -33,10 +33,10 @@ describe("moving between months", () => {
 
 describe("an estimated cost", () => {
   it("shows four decimals, and never rounds a small cost down to nothing", () => {
-    expect(formatCost(3.5)).toBe("3.5000");
-    expect(formatCost(1234.5)).toBe("1,234.5000");
-    expect(formatCost(0)).toBe("0.0000");
-    expect(formatCost(0.000_003)).toBe("<0.0001");
+    expect(formatCost("3.5")).toBe("3.5000");
+    expect(formatCost("1234.5")).toBe("1,234.5000");
+    expect(formatCost("0")).toBe("0.0000");
+    expect(formatCost("0.000003")).toBe("<0.0001");
   });
 });
 
@@ -48,7 +48,7 @@ describe("whether a cost is only a floor", () => {
     outputTokens: 1,
     withoutTokens: 0,
     unpricedCalls: 0,
-    cost: 1,
+    cost: "1",
   };
 
   it("isn't when every call is in it", () => {

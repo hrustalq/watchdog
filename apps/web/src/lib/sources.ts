@@ -26,6 +26,9 @@ import {
   signInToken,
 } from "@watchdog/core";
 import { and, type Db, eq, inArray, scheduleTypes, source, sql } from "@watchdog/db";
+import { httpUrl } from "@watchdog/shared/utils/http-url";
+import { oneLine } from "@watchdog/shared/utils/one-line";
+import { withoutNul } from "@watchdog/shared/utils/without-nul";
 import { newInboxToken } from "./inbox.ts";
 import { isUuid } from "./uuid.ts";
 
@@ -181,7 +184,7 @@ export async function addRssSource(
   workspaceId: string,
   input: { url: string; name: string; schedule: string },
 ): Promise<AddSourceResult> {
-  const url = webUrl(input.url);
+  const url = httpUrl(input.url);
   if (url === null) return { problem: "invalid-url" };
   const schedule = presetSchedule(input.schedule);
   if (schedule === undefined) return { problem: "schedule" };
@@ -196,7 +199,7 @@ export async function addRssSource(
     return fetchProblem(error);
   }
 
-  const name = cleanName(input.name) || cleanName(feedTitle ?? "") || url.hostname;
+  const name = oneLine(input.name, 200) || oneLine(feedTitle ?? "", 200) || url.hostname;
   return save(db, { workspaceId, type: "rss", name, config: { url: url.href }, schedule });
 }
 
@@ -219,7 +222,7 @@ export async function addWebsiteSource(
     schedule: string;
   },
 ): Promise<AddSourceResult> {
-  const url = webUrl(input.url);
+  const url = httpUrl(input.url);
   if (url === null) return { problem: "invalid-url" };
   const region = cleanRegion(input.region);
   if (region !== "" && regionError(region) !== undefined) return { problem: "invalid-region" };
@@ -241,26 +244,20 @@ export async function addWebsiteSource(
     render,
     ...(deps.mode === "self-hosted" && input.ignoreRobots === "on" && { ignoreRobots: true as const }),
   };
-  const name = cleanName(input.name) || cleanName(`${url.hostname}${url.pathname === "/" ? "" : url.pathname}`);
+  const name =
+    oneLine(input.name, 200) || oneLine(`${url.hostname}${url.pathname === "/" ? "" : url.pathname}`, 200);
   return save(db, { workspaceId, type: "website", name, config, schedule });
 }
 
 /** At most this many ignore patterns a Source (docs: Sources and ingestion, "Website change detection"). */
 const maxIgnore = 20;
-const cleanRegion = (region: string) => region.replaceAll("\0", "").trim();
+const cleanRegion = (region: string) => withoutNul(region).trim();
 /** One pattern a line, trimmed, blank lines dropped. */
 const ignoreLines = (ignore: string) =>
-  ignore
-    .replaceAll("\0", "")
+  withoutNul(ignore)
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line !== "");
-
-/** An absolute http or https URL, or null. */
-function webUrl(posted: string) {
-  const url = URL.parse(posted.trim());
-  return url !== null && (url.protocol === "http:" || url.protocol === "https:") ? url : null;
-}
 
 /**
  * Checks that GitHub has the repo's releases feed, and saves it as a GitHub releases Source only
@@ -286,7 +283,7 @@ export async function addGithubReleasesSource(
     return error instanceof MissingRepoError ? { problem: "no-repo" } : fetchProblem(error);
   }
 
-  const name = cleanName(input.name) || `${repo} releases`;
+  const name = oneLine(input.name, 200) || `${repo} releases`;
   return save(db, { workspaceId, type: "github", name, config: { kind: "releases", repo }, schedule });
 }
 
@@ -303,7 +300,7 @@ export async function addGithubIssuesSource(
   const repo = parseRepo(input.repo);
   if (repo === null) return { problem: "invalid-repo" };
   const config = { kind: "issues" as const, repo };
-  const name = cleanName(input.name) || `${repo} issues`;
+  const name = oneLine(input.name, 200) || `${repo} issues`;
   return saveWithToken(db, deps, workspaceId, { ...input, config, name });
 }
 
@@ -314,13 +311,13 @@ export async function addGithubMentionsSource(
   workspaceId: string,
   input: { term: string; within: string; token: string; name: string; schedule: string },
 ): Promise<AddSourceResult> {
-  const term = cleanTerm(input.term);
+  const term = oneLine(input.term);
   if (term === "" || term.length > maxTermLength) return { problem: "invalid-term" };
   const within = parseWithin(input.within);
   if (within === null) return { problem: "invalid-within" };
   const config = { kind: "mentions" as const, term, ...(within !== undefined && { within }) };
   const defaultName = within === undefined ? `${term} on GitHub` : `${term} in ${within.replace(/^\w+:/, "")}`;
-  return saveWithToken(db, deps, workspaceId, { ...input, config, name: cleanName(input.name) || defaultName });
+  return saveWithToken(db, deps, workspaceId, { ...input, config, name: oneLine(input.name, 200) || defaultName });
 }
 
 /**
@@ -341,7 +338,7 @@ export async function addWebhookSource(
   return save(db, {
     workspaceId,
     type: "webhook",
-    name: cleanName(input.name) || "Webhook inbox",
+    name: oneLine(input.name, 200) || "Webhook inbox",
     config,
     schedule: null,
     nextPollAt: null,
@@ -354,7 +351,7 @@ export async function addWebhookSource(
  * schedule, and no chat, so no dedup key, until the bot binds one.
  */
 export async function addTelegramSource(db: Db, workspaceId: string, input: Pick<AddValues, "name">): Promise<{ source: { id: string }; code: string }> {
-  const name = cleanName(input.name) || "Telegram chat";
+  const name = oneLine(input.name, 200) || "Telegram chat";
   const values = { workspaceId, type: "telegram", name, config: { via: "bot" }, schedule: null, nextPollAt: null } as const;
   const [saved] = await db.insert(source).values(values).returning({ id: source.id });
   if (saved === undefined) throw new Error("The Source wasn't saved");
@@ -397,13 +394,12 @@ export async function sourceLinkInCookie(
   return "chatId" in row.config && row.health !== "failing" ? ({ status: "linked", id, name } as const) : undefined;
 }
 
-const cleanPath = (path: string) => path.replaceAll("\0", "").trim();
+const cleanPath = (path: string) => withoutNul(path).trim();
 /** A mapping path that's filled in but can't run. */
 const badPath = (path: string) => cleanPath(path) !== "" && mappingError(cleanPath(path)) !== undefined;
 
 /** GitHub caps a search query at 256 characters, which the term shares with its qualifiers. */
 const maxTermLength = 100;
-const cleanTerm = (term: string) => term.replaceAll("\0", "").replace(/\s+/g, " ").trim();
 
 /** A pasted token as GitHub shows it: printable ASCII, no spaces. */
 const tokenPattern = /^[\x21-\x7e]{1,255}$/;
@@ -462,9 +458,6 @@ async function save(db: Db, values: typeof source.$inferInsert): Promise<AddSour
   return saved === undefined ? { problem: "duplicate" } : { source: saved };
 }
 
-/** A name on one line, at most 200 characters, without the NUL Postgres text refuses. */
-const cleanName = (name: string) => name.replaceAll("\0", "").replace(/\s+/g, " ").trim().slice(0, 200);
-
 function fetchProblem(error: unknown): { problem: AddProblem; status?: string } {
   // Also a redirect to a blocked address, or to a URL that isn't http or https.
   if (error instanceof EgressBlockedError) return { problem: "blocked" };
@@ -500,7 +493,7 @@ export async function watchedSourceName(
   if (values.type === "github-mentions") {
     const within = parseWithin(values.within ?? "");
     if (within === null) return undefined;
-    const config = { kind: "mentions" as const, term: cleanTerm(values.term ?? ""), ...(within !== undefined && { within }) };
+    const config = { kind: "mentions" as const, term: oneLine(values.term ?? ""), ...(within !== undefined && { within }) };
     return watchedName(db, workspaceId, "github", githubKey(config));
   }
   const repo = parseRepo(values.repo);
@@ -565,7 +558,7 @@ export function problemMessage(
       if (ignoreLines(ignore).length > maxIgnore) return `Enter at most ${String(maxIgnore)} ignore patterns, one a line.`;
       // Counted as the textarea shows them, blank lines included.
       const line =
-        ignore.split(/\r?\n/).findIndex((text) => text.trim() !== "" && regexError(text.replaceAll("\0", "").trim()) !== undefined) + 1;
+        ignore.split(/\r?\n/).findIndex((text) => text.trim() !== "" && regexError(withoutNul(text).trim()) !== undefined) + 1;
       return `${line > 0 ? `Line ${String(line)}` : "A line"} isn't a regular expression Watchdog can run. Ignore patterns use RE2 syntax, such as \\d+ visitors.`;
     }
     case "render-unavailable":
@@ -590,7 +583,7 @@ export function problemMessage(
       return "Choose one of the schedules in the list.";
     case "duplicate": {
       // The term is only quoted back once it is a term the form would accept.
-      const search = cleanTerm(term);
+      const search = oneLine(term);
       const shownTerm = search !== "" && search.length <= maxTermLength ? `“${search}”` : "that term";
       const what = {
         rss: "watches that feed",

@@ -1,7 +1,7 @@
 // The website Source type: one page polled on its schedule, compared with its Baseline, and each change
 // captured as one Item (docs: Sources and ingestion, "Website change detection").
-import { createHash } from "node:crypto";
 import { diffLines } from "diff";
+import { sha256Hex } from "@watchdog/shared/utils/sha256-hex";
 import { z } from "zod";
 import { type Rendered, renderTimeout } from "../../render/renderer.ts";
 import { capBody } from "../item.ts";
@@ -51,7 +51,7 @@ export const website: SourceTypeImpl = {
 
     const page = readPage(html, region);
     const text = normalise(page.text, ignore);
-    const hash = createHash("sha256").update(text).digest("hex");
+    const hash = sha256Hex(text);
     const baseline = source.fetchState;
     if (baseline.hash === hash) return { notModified: true };
     // The new text becomes the Baseline in the transaction that captures its Item.

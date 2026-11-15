@@ -7,6 +7,7 @@ import { findOne, getChildren, textContent } from "domutils";
 import type { createEgressFetch } from "../../egress/egress.ts";
 import { maxDepth, parseHtml } from "../../rules/css.ts";
 import { withoutMatches } from "../../rules/regex.ts";
+import { withoutNul } from "@watchdog/shared/utils/without-nul";
 import { htmlToText } from "../item.ts";
 
 export { maxSelectorLength as maxRegionLength, selectorError as regionError } from "../../rules/css.ts";
@@ -84,7 +85,7 @@ export function readPage(html: string, region: string | undefined) {
 export function normalise(text: string, ignore: string[]) {
   return ignore
     // Postgres refuses U+0000 in the jsonb that keeps the Baseline.
-    .reduce((kept, pattern) => withoutMatches(pattern, kept), text.replaceAll("\0", ""))
+    .reduce((kept, pattern) => withoutMatches(pattern, kept), withoutNul(text))
     .split("\n")
     .map((line) => line.replace(/\s+/g, " ").trim())
     .filter((line) => line !== "")

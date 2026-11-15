@@ -1,6 +1,8 @@
 // A webhook inbox's payload as an Item (docs: Actions and delivery, "Webhook inbox (intake)").
-import { createHash } from "node:crypto";
 import type { SourceConfigs } from "@watchdog/db";
+import { httpUrl } from "@watchdog/shared/utils/http-url";
+import { sha256Hex } from "@watchdog/shared/utils/sha256-hex";
+import { storableText } from "@watchdog/shared/utils/storable-text";
 import { jsonPathError, jsonPathValues } from "../../rules/jsonpath.ts";
 import { capBody, type ItemDraft } from "../item.ts";
 
@@ -17,14 +19,12 @@ const maxTitleCharacters = 500;
 
 class TooDeep extends Error {}
 
-const cleanText = (text: string) => text.replaceAll("\0", "").toWellFormed();
-
 function clean(value: unknown, depth: number): unknown {
-  if (typeof value === "string") return cleanText(value);
+  if (typeof value === "string") return storableText(value);
   if (typeof value !== "object" || value === null) return value;
   if (depth >= maxDepth) throw new TooDeep();
   if (Array.isArray(value)) return value.map((entry: unknown) => clean(entry, depth + 1));
-  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [cleanText(key), clean(entry, depth + 1)]));
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [storableText(key), clean(entry, depth + 1)]));
 }
 
 /**
@@ -39,8 +39,6 @@ export function cleanPayload(payload: unknown): unknown {
     throw error;
   }
 }
-
-const sha256 = (data: string | Uint8Array) => createHash("sha256").update(data).digest("hex");
 
 /**
  * The Item a cleaned payload becomes. Each mapped field takes the first value its path finds; a path
@@ -60,13 +58,13 @@ export function webhookDraft(
     return value.trim() === "" ? undefined : value;
   };
   const mappedId = mapped("externalId");
-  const externalId = mappedId !== undefined && mappedId.length > maxExternalIdLength ? sha256(mappedId) : mappedId;
+  const externalId = mappedId !== undefined && mappedId.length > maxExternalIdLength ? sha256Hex(mappedId) : mappedId;
   const title = mapped("title");
   // The Item page links to it, so only a web URL is kept.
-  const url = URL.parse(mapped("url") ?? "");
+  const url = httpUrl(mapped("url") ?? "");
   return {
-    externalId: externalId ?? sha256(body),
-    url: url !== null && (url.protocol === "http:" || url.protocol === "https:") ? url.href : null,
+    externalId: externalId ?? sha256Hex(body),
+    url: url?.href ?? null,
     title: title === undefined ? `Webhook to ${sourceName}` : Array.from(title).slice(0, maxTitleCharacters).join(""),
     author: null,
     body: capBody(mapped("body") ?? JSON.stringify(payload, null, 2)),

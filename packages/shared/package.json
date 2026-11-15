@@ -1,0 +1,26 @@
+{
+  "name": "@watchdog/shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./utils/*": "./src/utils/*/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc",
+    "lint": "oxlint",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests --exclude \"**/*.int.test.ts\"",
+    "test:integration": "vitest run --passWithNoTests .int.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26",
+    "@watchdog/lint-config": "workspace:*",
+    "oxlint": "^1.92.0",
+    "oxlint-tsgolint": "^7.0.2006",
+    "typescript": "^7",
+    "vitest": "^5.0.5"
+  },
+  "dependencies": {
+    "decimal.js": "^10.6.0"
+  }
+}

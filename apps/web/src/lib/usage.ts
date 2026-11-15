@@ -3,6 +3,7 @@
 import { addMonths, format, parse, startOfMonth } from "date-fns";
 import { tz, TZDate } from "@date-fns/tz";
 import { agentCall, and, type Db, eq, gte, lt, modelConfig, type SQL, sql } from "@watchdog/db";
+import { addCosts, type Cost, formatCost, toCost } from "@watchdog/shared/utils/cost";
 
 const utc = tz("UTC");
 
@@ -31,11 +32,7 @@ export function parseMonth(value: unknown, now: Date) {
 
 export const monthLabel = (month: string) => format(monthStart(month), "MMMM yyyy", { in: utc });
 
-/** Prices have no currency, so neither does this. A cost too small to show still isn't nothing. */
-export function formatCost(cost: number) {
-  if (cost > 0 && cost < 0.0001) return "<0.0001";
-  return cost.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
-}
+export { formatCost };
 
 export const purposeLabel: Record<(typeof agentCall.$inferSelect)["purpose"], string> = {
   classify: "Classify",
@@ -59,18 +56,12 @@ export interface UsageTally {
   withoutTokens: number;
   /** Calls that recorded no prices, whose cost `cost` can't include. */
   unpricedCalls: number;
-  /** What the priced calls cost. Null when none of them were. */
-  cost: number | null;
+  /** What the priced calls cost, exact. Null when none of them were. */
+  cost: Cost | null;
 }
 
 /** Whether a cost leaves calls out, so the real one can only be higher. */
 export const isFloor = (tally: UsageTally) => tally.unpricedCalls > 0 || tally.withoutTokens > 0;
-
-/** The cost two tallies add to: null only when neither recorded a price. */
-function addCost(a: number | null, b: number | null) {
-  if (a === null && b === null) return null;
-  return (a ?? 0) + (b ?? 0);
-}
 
 const add = (a: UsageTally, b: UsageTally): UsageTally => ({
   calls: a.calls + b.calls,
@@ -79,7 +70,7 @@ const add = (a: UsageTally, b: UsageTally): UsageTally => ({
   outputTokens: a.outputTokens + b.outputTokens,
   withoutTokens: a.withoutTokens + b.withoutTokens,
   unpricedCalls: a.unpricedCalls + b.unpricedCalls,
-  cost: addCost(a.cost, b.cost),
+  cost: addCosts(a.cost, b.cost),
 });
 
 /** One row per key, largest first. Other fields come from the key's first row, so the caller narrows the type. */
@@ -107,13 +98,13 @@ const sum = (column: typeof agentCall.inputTokens | typeof agentCall.outputToken
  * What the calls cost at the prices each one recorded, added up. A call that recorded no prices
  * adds nothing, and `unpricedCalls` counts it, so the row can say its cost leaves calls out.
  */
-const cost = sql<number>`coalesce(sum(
+const cost = sql<string>`coalesce(sum(
   case
     when ${agentCall.inputPricePerMillion} is null or ${agentCall.outputPricePerMillion} is null then 0
     else (coalesce(${agentCall.inputTokens}, 0) * ${agentCall.inputPricePerMillion}
       + coalesce(${agentCall.outputTokens}, 0) * ${agentCall.outputPricePerMillion}) / 1000000
   end
-), 0)`.mapWith(Number);
+), 0)::text`.mapWith(String);
 
 /** The month of a Workspace's first call, or undefined when it has never made one. */
 function firstMonthOf(first: { at: Date } | undefined) {
@@ -168,7 +159,10 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
 
   // A month whose calls all recorded a price has a figure. One where none did has no estimate at
   // all, and one where some did is a floor, which `isFloor` says.
-  const rows = counted.map((row) => (row.unpricedCalls === row.calls ? { ...row, cost: null } : row));
+  const rows = counted.map((row) => ({
+    ...row,
+    cost: row.unpricedCalls === row.calls ? null : toCost(row.cost),
+  }));
   const nothing: UsageTally = {
     calls: 0,
     failed: 0,

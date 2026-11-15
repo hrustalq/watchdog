@@ -226,9 +226,9 @@ describe("the Usage screen", () => {
         outputTokens: 150_000,
         unpricedCalls: 0,
       });
-      expect(present(models[0]).cost).toBeCloseTo(6, 10);
+      expect(present(models[0]).cost).toBe("6");
       expect(total).toMatchObject({ calls: 2, inputTokens: 1_500_000, outputTokens: 150_000, unpricedCalls: 0 });
-      expect(total.cost).toBeCloseTo(6, 10);
+      expect(total.cost).toBe("6");
     });
 
     it("is a floor when one of its rows ran without prices", async () => {
@@ -244,7 +244,7 @@ describe("the Usage screen", () => {
       const { models, total } = await usageForMonth(db, workspaceId, month);
 
       expect(present(models[0])).toMatchObject({ calls: 2, unpricedCalls: 1 });
-      expect(present(models[0]).cost).toBeCloseTo(2, 10);
+      expect(present(models[0]).cost).toBe("2");
       expect(isFloor(present(models[0]))).toBe(true);
       expect(isFloor(total)).toBe(true);
     });
@@ -360,10 +360,10 @@ describe("the Usage screen", () => {
       const { models, purposes, total } = await usageForMonth(db, workspaceId, month);
 
       // 1.2M input at 2.50 is 3.00, and 100k output at 10 is 1.00.
-      expect(present(models[0]).cost).toBeCloseTo(4, 10);
-      expect(total.cost).toBeCloseTo(4, 10);
-      expect(purposes.find((row) => row.purpose === "extract-rate")?.cost).toBeCloseTo(3.5, 10);
-      expect(purposes.find((row) => row.purpose === "classify")?.cost).toBeCloseTo(0.5, 10);
+      expect(present(models[0]).cost).toBe("4");
+      expect(total.cost).toBe("4");
+      expect(purposes.find((row) => row.purpose === "extract-rate")?.cost).toBe("3.5");
+      expect(purposes.find((row) => row.purpose === "classify")?.cost).toBe("0.5");
     });
 
     it("is absent without prices", async () => {
@@ -388,7 +388,7 @@ describe("the Usage screen", () => {
       const workspaceId = await newWorkspace();
       await call(await newModel(workspaceId, { inputPricePerMillion: 0, outputPricePerMillion: 0 }));
 
-      expect(present((await usageForMonth(db, workspaceId, month)).models[0]).cost).toBe(0);
+      expect(present((await usageForMonth(db, workspaceId, month)).models[0]).cost).toBe("0");
     });
 
     it("keeps each model's own cost, and counts what a total leaves out", async () => {
@@ -402,12 +402,12 @@ describe("the Usage screen", () => {
       const { models, purposes, total } = await usageForMonth(db, workspaceId, month);
 
       expect(models.find((row) => row.modelName === "priced")).toMatchObject({ unpricedCalls: 0 });
-      expect(models.find((row) => row.modelName === "priced")?.cost).toBeCloseTo(2.5, 10);
+      expect(models.find((row) => row.modelName === "priced")?.cost).toBe("2.5");
       expect(models.find((row) => row.modelName === "unpriced")).toMatchObject({ cost: null, unpricedCalls: 2 });
-      expect(total.cost).toBeCloseTo(2.5, 10);
+      expect(total.cost).toBe("2.5");
       expect(total.unpricedCalls).toBe(2);
       expect(purposes.find((row) => row.purpose === "extract-rate")).toMatchObject({ unpricedCalls: 1 });
-      expect(purposes.find((row) => row.purpose === "extract-rate")?.cost).toBeCloseTo(2.5, 10);
+      expect(purposes.find((row) => row.purpose === "extract-rate")?.cost).toBe("2.5");
       expect(purposes.find((row) => row.purpose === "classify")).toMatchObject({ cost: null, unpricedCalls: 1 });
     });
 
@@ -415,7 +415,7 @@ describe("the Usage screen", () => {
       const workspaceId = await newWorkspace();
       await save(workspaceId, { inputPrice: "2", outputPrice: "10" });
       await call(await modelRow(workspaceId), { inputTokens: 1_000_000, outputTokens: 0 });
-      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeCloseTo(2, 10);
+      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBe("2");
 
       await save(workspaceId, { inputPrice: "4", outputPrice: "20" });
       await call(await modelRow(workspaceId), {
@@ -424,21 +424,21 @@ describe("the Usage screen", () => {
         createdAt: new Date("2026-11-02T12:00:00.000Z"),
       });
 
-      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeCloseTo(2, 10);
-      expect((await usageForMonth(db, workspaceId, "2026-11")).total.cost).toBeCloseTo(4, 10);
+      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBe("2");
+      expect((await usageForMonth(db, workspaceId, "2026-11")).total.cost).toBe("4");
     });
 
     it("leaves an earlier estimate in place when a price is cleared", async () => {
       const workspaceId = await newWorkspace();
       await save(workspaceId, { inputPrice: "2", outputPrice: "10" });
       await call(await modelRow(workspaceId), { inputTokens: 1_000_000, outputTokens: 100_000 });
-      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeCloseTo(3, 10);
+      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBe("3");
 
       await save(workspaceId, { inputPrice: "", outputPrice: "" });
 
       const { total } = await usageForMonth(db, workspaceId, month);
       expect(total).toMatchObject({ calls: 1, unpricedCalls: 0 });
-      expect(total.cost).toBeCloseTo(3, 10);
+      expect(total.cost).toBe("3");
     });
 
     it("prices a call that recorded none once both are set, and never moves a recorded one", async () => {
@@ -453,10 +453,10 @@ describe("the Usage screen", () => {
       await call(await modelRow(workspaceId), { inputTokens: 0, outputTokens: 1_000_000 });
       const bothPriced = await usageForMonth(db, workspaceId, month);
       expect(bothPriced.total).toMatchObject({ calls: 2, unpricedCalls: 0 });
-      expect(bothPriced.total.cost).toBeCloseTo(8, 10);
+      expect(bothPriced.total.cost).toBe("8");
 
       await save(workspaceId, { inputPrice: "60", outputPrice: "100" });
-      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBeCloseTo(8, 10);
+      expect((await usageForMonth(db, workspaceId, month)).total.cost).toBe("8");
     });
 
     it("fills an archived model's calls once the Usage screen sets its prices", async () => {
@@ -467,7 +467,7 @@ describe("the Usage screen", () => {
       await call(current, { inputTokens: 1_000_000, outputTokens: 0 });
 
       const before = await usageForMonth(db, workspaceId, month);
-      expect(before.total.cost).toBeCloseTo(2.5, 10);
+      expect(before.total.cost).toBe("2.5");
       expect(isFloor(before.total)).toBe(true);
 
       await expect(
@@ -478,8 +478,8 @@ describe("the Usage screen", () => {
       const line = present(after.models.find((row) => row.modelName === "replaced"));
       // 1M input at 2.50 and 100k output at 10.00 is 3.50, and the row is still archived.
       expect(line).toMatchObject({ archived: true, unpricedCalls: 0 });
-      expect(line.cost).toBeCloseTo(3.5, 10);
-      expect(after.total.cost).toBeCloseTo(6, 10);
+      expect(line.cost).toBe("3.5");
+      expect(after.total.cost).toBe("6");
       expect(isFloor(after.total)).toBe(false);
       // The call that recorded no prices took these, as saving the active model's prices does.
       const recorded = present(

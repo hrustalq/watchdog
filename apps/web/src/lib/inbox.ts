@@ -1,7 +1,8 @@
 // The webhook inbox: where an external system POSTs JSON to a webhook Source, and how its Inbox token
 // is shown and replaced (docs: Actions and delivery, "Webhook inbox (intake)"; Security and privacy,
 // "Source credentials").
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256Hex } from "@watchdog/shared/utils/sha256-hex";
 import { addMinutes, differenceInMilliseconds } from "date-fns";
 import { captureItems, type CaptureDeps, cleanPayload, decryptSecret, encryptSecret, webhookConfig, webhookDraft } from "@watchdog/core";
 import { and, type Db, eq, isNotNull, item, source, sql } from "@watchdog/db";
@@ -12,12 +13,10 @@ const perMinute = 60;
 /** application/json, or another +json type such as application/vnd.example+json. */
 const jsonType = /^(?:application\/json|[\w.!#$&^-]+\/[\w.!#$&^+-]+\+json)$/;
 
-const hashOf = (token: string) => createHash("sha256").update(token).digest("hex");
-
 /** A new Inbox token's columns: its hash to look requests up by, and the token until it's shown. */
 export function newInboxToken(encryptionKey: Buffer) {
   const token = randomBytes(32).toString("base64url");
-  return { inboxTokenHash: hashOf(token), secretCiphertext: encryptSecret(token, encryptionKey) };
+  return { inboxTokenHash: sha256Hex(token), secretCiphertext: encryptSecret(token, encryptionKey) };
 }
 
 export const inboxUrl = (baseURL: string, token: string) => new URL(`/api/inbox/${token}`, baseURL).href;
@@ -46,7 +45,7 @@ export async function receiveInbox(
       // A request isn't a change to the Source.
       updatedAt: sql`${source.updatedAt}`,
     })
-    .where(and(eq(source.inboxTokenHash, hashOf(token)), eq(source.type, "webhook")))
+    .where(and(eq(source.inboxTokenHash, sha256Hex(token)), eq(source.type, "webhook")))
     .returning({
       id: source.id,
       name: source.name,

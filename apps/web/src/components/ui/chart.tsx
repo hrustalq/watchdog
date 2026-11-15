@@ -2,6 +2,7 @@
 
 import * as React from "react"
 import { cn } from "cn"
+import { isRecord } from "@watchdog/shared/utils/is-record"
 import * as RechartsPrimitive from "recharts"
 import type { TooltipValueType } from "recharts"
 
@@ -38,10 +39,6 @@ function useChart() {
   }
 
   return context
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null
 }
 
 function getString(record: Record<string, unknown>, key: string) {

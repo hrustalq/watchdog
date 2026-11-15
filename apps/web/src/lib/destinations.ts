@@ -1,6 +1,8 @@
 // A Workspace's Destinations, as the Destinations page reads and changes them. Every query is scoped
 // to the Workspace, so another Workspace's Destination id behaves like a missing one.
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { oneLine } from "@watchdog/shared/utils/one-line";
+import { sha256Hex } from "@watchdog/shared/utils/sha256-hex";
 import {
   decryptSecret,
   emailDestinationConfig,
@@ -75,9 +77,6 @@ export function problemField(problem: AddProblem) {
   return problem === "invalid-address" ? "address" : "url";
 }
 
-/** A name on one line, at most 200 characters, without the NUL Postgres text refuses. */
-const cleanName = (name: string) => name.replaceAll("\0", "").replace(/\s+/g, " ").trim().slice(0, 200);
-const hashOf = (token: string) => createHash("sha256").update(token).digest("hex");
 
 /** A confirmation link stays valid this long (docs: Security and privacy, "Destinations"). */
 const linkLifetime = sql`now() + interval '24 hours'`;
@@ -132,7 +131,7 @@ async function sendConfirmation(
   }
 
   // After the mail, so one that fails leaves the link already in someone's inbox working.
-  const tokenHash = hashOf(token);
+  const tokenHash = sha256Hex(token);
   return db.transaction(async (tx) => {
     // The Destination's row before the confirmation's, the order removing a Destination takes them through
     // the cascade, so the two can't deadlock. Key share, because this changes no key: a send's no-key update
@@ -166,7 +165,7 @@ export async function addEmailDestination(
   account: { email: string; emailVerified: boolean },
   input: { name: string; address: string },
 ) {
-  const name = cleanName(input.name);
+  const name = oneLine(input.name, 200);
   if (name === "") return { problem: "blank-name" } as const;
   const parsed = emailDestinationConfig.safeParse({ address: input.address.trim() });
   if (!parsed.success) return { problem: "invalid-address" } as const;
@@ -209,7 +208,7 @@ export async function confirmationAddress(db: Db, token: string) {
     .select({ config: destination.config })
     .from(destinationConfirmation)
     .innerJoin(destination, eq(destination.id, destinationConfirmation.destinationId))
-    .where(and(eq(destinationConfirmation.tokenHash, hashOf(token)), gt(destinationConfirmation.expiresAt, sql`now()`)));
+    .where(and(eq(destinationConfirmation.tokenHash, sha256Hex(token)), gt(destinationConfirmation.expiresAt, sql`now()`)));
   const parsed = emailDestinationConfig.safeParse(live?.config);
   return parsed.success ? parsed.data.address : undefined;
 }
@@ -220,7 +219,7 @@ export async function confirmationAddress(db: Db, token: string) {
  * the Destination was removed as the token was spent.
  */
 export function confirmDestination(db: Db, token: string) {
-  const tokenHash = hashOf(token);
+  const tokenHash = sha256Hex(token);
   const live = and(eq(destinationConfirmation.tokenHash, tokenHash), gt(destinationConfirmation.expiresAt, sql`now()`));
   return db.transaction(async (tx) => {
     // Which Destination it's for, read without locking the token, so a remove can take the Destination
@@ -268,7 +267,7 @@ export async function addWebhookDestination(
   workspaceId: string,
   input: { name: string; url: string },
 ) {
-  const name = cleanName(input.name);
+  const name = oneLine(input.name, 200);
   if (name === "") return { problem: "blank-name" } as const;
   const url = URL.parse(input.url.trim());
   const problem = urlProblem(url, deps.egressAllows);
@@ -476,7 +475,7 @@ export async function removeDestination(db: Db, workspaceId: string, destination
 
 /** Saves a Telegram Destination, waiting for the bot, with the first code to send it. */
 export async function addTelegramDestination(db: Db, workspaceId: string, input: { name: string }) {
-  const name = cleanName(input.name);
+  const name = oneLine(input.name, 200);
   if (name === "") return { problem: "blank-name" } as const;
   const [saved] = await db
     .insert(destination)

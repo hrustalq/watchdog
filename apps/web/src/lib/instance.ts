@@ -1,10 +1,10 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
+import { sha256Hex } from "@watchdog/shared/utils/sha256-hex";
 import type { Config } from "@watchdog/core";
 import { and, eq, instanceSettings, isNull, type Db } from "@watchdog/db";
 
 // The first-run admin and the sign-up switch of a self-hosted install. Hosted mode uses none of it.
 
-const hashOf = (token: string) => createHash("sha256").update(token).digest("hex");
 const settingsOf = (db: Db) => db.query.instanceSettings.findFirst();
 
 /**
@@ -18,7 +18,7 @@ export async function setupUrl(mode: Config["mode"], db: Db, baseURL: string) {
   await db.insert(instanceSettings).values({}).onConflictDoNothing();
   const issued = await db
     .update(instanceSettings)
-    .set({ setupTokenHash: hashOf(token) })
+    .set({ setupTokenHash: sha256Hex(token) })
     .where(isNull(instanceSettings.adminUserId))
     .returning({ id: instanceSettings.id });
   return issued.length === 0 ? undefined : `${new URL(`/setup?token=${token}`, baseURL)}`;
@@ -27,7 +27,7 @@ export async function setupUrl(mode: Config["mode"], db: Db, baseURL: string) {
 /** Whether the token is the one in the setup URL and the install still has no admin. */
 export async function setupTokenValid(db: Db, token: string) {
   const settings = await settingsOf(db);
-  return settings?.adminUserId === null && settings.setupTokenHash === hashOf(token);
+  return settings?.adminUserId === null && settings.setupTokenHash === sha256Hex(token);
 }
 
 /**
@@ -39,7 +39,7 @@ export async function claimInstance(db: Db, token: string, email: string) {
   const claimed = await db
     .update(instanceSettings)
     .set({ claimedEmail: email.trim().toLowerCase() })
-    .where(and(isNull(instanceSettings.adminUserId), eq(instanceSettings.setupTokenHash, hashOf(token))))
+    .where(and(isNull(instanceSettings.adminUserId), eq(instanceSettings.setupTokenHash, sha256Hex(token))))
     .returning({ id: instanceSettings.id });
   return claimed.length > 0;
 }
