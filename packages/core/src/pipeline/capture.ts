@@ -5,7 +5,7 @@ import { and, type Db, eq, inArray, item, itemLog, source, sql, type Tx } from "
 import { queueSourceAlerts } from "../delivery/source-alert.ts";
 import { failingPollGapMs, healthAfter } from "../sources/health.ts";
 import type { ItemDraft } from "../sources/item.ts";
-import { type PollDeps, sourceTypes } from "../sources/types.ts";
+import { type Backfill, type PollDeps, sourceTypes } from "../sources/types.ts";
 import { detectLanguage } from "./language.ts";
 
 export interface CaptureDeps {
@@ -33,6 +33,12 @@ type Outcome = Success | { at: Date; error: string };
 
 /** When a draft was published; an undated one counts as just published. */
 const published = (draft: ItemDraft) => draft.publishedAt?.getTime() ?? Infinity;
+
+/** Where new drafts start for a Source already through its Backfill: its window back, or all of them. */
+function backfillStart(backfill: Backfill | null, backfilledAt: Date | null) {
+  if (backfill === null || backfilledAt === null) return -Infinity;
+  return subMilliseconds(backfilledAt, backfill.window).getTime();
+}
 
 /**
  * Polls a Source through its type, captures the new drafts as Items, and records the outcome on the
@@ -114,7 +120,7 @@ export async function captureItems(
       backfillColumns = { backfilledAt: at, backfillSkippedIds: skipped };
     } else {
       // A type without a Backfill captures every new draft, however old.
-      const start = backfill && backfilledAt ? subMilliseconds(backfilledAt, backfill.window).getTime() : -Infinity;
+      const start = backfillStart(backfill, backfilledAt);
       const skipped = new Set(locked.backfillSkippedIds ?? []);
       const candidates = unique.filter(
         (draft) => !skipped.has(draft.externalId) && published(draft) >= start,

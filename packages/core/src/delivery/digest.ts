@@ -50,6 +50,12 @@ interface Schedulable {
   timezone: string;
 }
 
+/** The later of the last run and the last save, which the Digest's schedule counts from. */
+function dueSince(digestRanAt: Date | null, updatedAt: Date) {
+  if (digestRanAt === null || !isAfter(digestRanAt, updatedAt)) return updatedAt;
+  return digestRanAt;
+}
+
 /**
  * Whether the Digest's schedule has come since it last ran, or since it was saved, whichever is later.
  * Reading it from those each time means a save, enabling it or a new timezone takes effect at once.
@@ -57,7 +63,7 @@ interface Schedulable {
 function isDue({ definition, digestRanAt, updatedAt, timezone }: Schedulable, now: Date) {
   const digest = digestOf(definition);
   if (digest === undefined) return false;
-  const since = digestRanAt !== null && isAfter(digestRanAt, updatedAt) ? digestRanAt : updatedAt;
+  const since = dueSince(digestRanAt, updatedAt);
   try {
     return !isAfter(nextFiring(digest.schedule, since, timezone), now);
   } catch {

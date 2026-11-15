@@ -42,7 +42,9 @@ async function emailCapDay(tx: Tx, settings: typeof workspace.$inferSelect, now:
         lt(sentMessage.sentAt, dayEnd),
       ),
     );
-  return sent === undefined ? { mails: mailsPerDay, dayEnd: now } : { ...sent, dayEnd };
+  // A group-less count(*) always gives one row; the fallback is for the type, and claims no room.
+  if (sent === undefined) return { mails: mailsPerDay, dayEnd: now };
+  return { ...sent, dayEnd };
 }
 
 /**
@@ -51,7 +53,8 @@ async function emailCapDay(tx: Tx, settings: typeof workspace.$inferSelect, now:
  */
 export async function emailCapEnd(tx: Tx, settings: typeof workspace.$inferSelect, now: Date, adding = 1) {
   const { mails, dayEnd } = await emailCapDay(tx, settings, now);
-  return mails + adding <= mailsPerDay ? undefined : dayEnd;
+  if (mails + adding <= mailsPerDay) return undefined;
+  return dayEnd;
 }
 
 /**

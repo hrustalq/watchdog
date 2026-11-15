@@ -139,9 +139,8 @@ export function nextRetry(error: unknown, attempts: number, from: Date, failed: 
   const windowEnd = addHours(from, 24);
   if (error instanceof FinalSendError || !isBefore(failed, windowEnd)) return undefined;
   const backoff = firstRetryDelayMs * 2 ** (attempts - 1);
-  return error instanceof RetryAfterSendError
-    ? addMilliseconds(failed, error.retryAfterMs)
-    : min([addMilliseconds(failed, backoff), windowEnd]);
+  if (error instanceof RetryAfterSendError) return addMilliseconds(failed, error.retryAfterMs);
+  return min([addMilliseconds(failed, backoff), windowEnd]);
 }
 
 /**
