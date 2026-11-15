@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createEgressFetch, decryptSecret, linkChat, loadConfig, pollSource } from "@watchdog/core";
+import { sha256Hex } from "@watchdog/shared/utils/sha256-hex";
 import {
   account,
   and,
@@ -619,7 +619,7 @@ describe("Sources", () => {
 
     describe("a rate limit holding a Source's polls", () => {
       // The pause githubGet keeps, keyed as it keeps it: the token's SHA-256 and its API resource.
-      const tokenHash = (token: string) => createHash("sha256").update(token).digest("hex");
+      const tokenHash = sha256Hex;
       const secrets = { encryptionKey, authSecret: "unused-by-pause-tests" };
       const listed = async (workspaceId: string, id: string) =>
         (await listSources(db, workspaceId, 0, secrets)).find((entry) => entry.id === id);

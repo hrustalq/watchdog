@@ -16,6 +16,7 @@ import {
   type Tx,
   workspace,
 } from "@watchdog/db";
+import { httpUrl } from "@watchdog/shared/utils/http-url";
 import { isUuid } from "./uuid.ts";
 
 export const providerTypes = [
@@ -64,11 +65,6 @@ export const modelProblemMessage: Record<ModelProblem, string> = {
   "output-price": "Enter a price per million tokens as a number, such as 2.50, or leave it blank.",
 };
 
-const webUrl = (text: string) => {
-  const url = URL.parse(text.trim());
-  return url !== null && (url.protocol === "http:" || url.protocol === "https:") ? url : undefined;
-};
-
 /** Without a trailing slash, an address has one spelling to compare. */
 const address = (url: URL) => `${url.origin}${url.pathname}`.replace(/\/+$/, "");
 
@@ -86,8 +82,8 @@ const maxPriceSentBack = 50;
  * that can hold one: people paste keys into a base URL's user name or query.
  */
 export function modelFormValues(input: ModelInput): Record<string, string> {
-  const url = webUrl(input.baseUrl);
-  const baseUrl = url === undefined ? "" : address(url);
+  const url = httpUrl(input.baseUrl);
+  const baseUrl = url === null ? "" : address(url);
   return {
     providerType: input.providerType,
     baseUrl: baseUrl.length > maxBaseUrlSentBack ? "" : baseUrl,
@@ -121,7 +117,7 @@ export function modelFormFromSentBack(kept: Record<string, string>) {
  * it, and `address` drops it.
  */
 function cleanBaseUrl(text: string) {
-  const url = webUrl(text);
+  const url = httpUrl(text);
   const usable = url?.username === "" && url.password === "" && url.search === "" && url.hash === "";
   return usable ? address(url) : undefined;
 }

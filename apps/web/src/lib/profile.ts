@@ -1,5 +1,6 @@
 // A Workspace's Profile, as its screen changes it. `loadProfile` in @watchdog/core reads it.
 import { type Db, profile } from "@watchdog/db";
+import { storableText } from "@watchdog/shared/utils/storable-text";
 
 /** The body goes on every Agent call, so its length is a cost on every Item. */
 export const maxProfileBody = 4000;
@@ -26,7 +27,7 @@ export interface ProfileInput {
  * two, so the form's count only agrees with this one here. Postgres text refuses a NUL and half a
  * surrogate pair.
  */
-const cleanBody = (text: string) => text.replaceAll("\0", "").toWellFormed().replaceAll("\r\n", "\n").trim();
+const cleanBody = (text: string) => storableText(text).replaceAll("\r\n", "\n").trim();
 
 /** Creates or replaces the Workspace's Profile. An over-long body or unknown language changes nothing. */
 export async function saveProfile(
