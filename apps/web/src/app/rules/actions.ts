@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 import { isMap, type RuleProblem, yamlWithoutScript } from "@/lib/rule-draft";
 import { isRuleType, removeRule, type RuleTarget, saveRule, setRuleEnabled } from "@/lib/rules";
+import { clearSentBack, keepSentBack } from "@/lib/sent-back";
 import { requireWorkspace, server } from "@/lib/server";
 
 export interface SaveState {
@@ -15,14 +16,19 @@ const asTarget = (value: unknown): RuleTarget | undefined =>
     ? { type: value.type, id: value.id }
     : undefined;
 
-// A URL this long is safe through Caddy and Node, whose limit on all the headers is 16 KB.
-const maxDraftInUrl = 6000;
+// Encoded, because the path also scopes the draft's cookie, and a `;` there would add to it.
+const editorPath = (target: RuleTarget | null) =>
+  target === null ? "/rules/new" : `/rules/${target.type}/${encodeURIComponent(target.id)}`;
 
-/** Where a browser without JavaScript goes to see what was wrong: the page checks the draft again. */
-function editorWithDraft(target: RuleTarget | null, draft: string) {
-  const path = target === null ? "/rules/new" : `/rules/${target.type}/${target.id}`;
-  const query = new URLSearchParams({ draft }).toString();
-  return query.length > maxDraftInUrl ? `${path}?draft-too-long=1` : `${path}?${query}`;
+/**
+ * Where a browser without JavaScript goes to see what was wrong: the page checks the draft again.
+ * The draft goes in a cookie for that editor, never the URL, because a link can't set one (#134).
+ */
+async function editorWithDraft(target: RuleTarget | null, draft: string) {
+  const path = editorPath(target);
+  // A draft too long for the cookie isn't kept, and the editor says so.
+  await keepSentBack(path, { draft });
+  return `${path}?sent-back=1`;
 }
 
 /**
@@ -45,8 +51,11 @@ export async function saveRuleAction(
 
   const { db, mode, ruleLimits } = server();
   const result = await saveRule(db, workspace.id, target, yaml, mode, ruleLimits);
-  if ("saved" in result) redirect("/rules?saved=1");
-  if (typeof withoutScript === "string") redirect(editorWithDraft(target, yaml));
+  if ("saved" in result) {
+    await clearSentBack(editorPath(target));
+    redirect("/rules?saved=1");
+  }
+  if (typeof withoutScript === "string") redirect(await editorWithDraft(target, yaml));
   return { problems: result.problems };
 }
 

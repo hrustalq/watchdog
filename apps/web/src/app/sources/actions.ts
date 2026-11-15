@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireWorkspace, server } from "@/lib/server";
 import { replaceInboxToken } from "@/lib/inbox";
+import { clearSentBack, keepSentBack } from "@/lib/sent-back";
 import {
   addFormSource,
   addValues,
@@ -28,24 +29,27 @@ const text = (formData: FormData, name: string) => {
 
 /**
  * Checks the feed, repo or search and saves it as a Source of the user's Workspace. A problem goes
- * back to the form as a code, with what was entered but the token, so the page can say what's wrong
- * and keep the values.
+ * back to the form as a code in the URL, so the page can say what's wrong, and what was entered but
+ * the token goes in a cookie, so the page can keep it. A link can't set one (#134).
  */
 export async function addSource(formData: FormData) {
   const { workspace } = await requireWorkspace();
   const values = addValues((name) => text(formData, name));
-  // Read apart from the values, which go into the URL: the token never leaves the server.
+  // Read apart from the values, which go back to the browser: the token never leaves the server.
   const token = text(formData, "token");
   const { db, fetch, mode, encryptionKey, renderers, telegramAvailable } = server();
   // The form says Telegram isn't set up, and a post from before that isn't one to act on.
   if (values.type === "telegram" && !telegramAvailable) redirect("/sources");
   const result = await addFormSource(db, { fetch, mode, encryptionKey, renderers }, workspace.id, { ...values, token });
+  if ("source" in result) await clearSentBack("/sources");
   // An inbox's page shows its URL, once. The id in the URL is all it carries.
   if ("source" in result && values.type === "webhook") redirect(`/sources/${result.source.id}/inbox`);
   if ("source" in result && result.code !== undefined) await showSourceLink(result.source.id, result.code);
   // The type stays chosen, so a second repo or feed can follow without choosing it again.
   if ("source" in result) redirect(`/sources?${new URLSearchParams({ added: "1", type: values.type })}`);
-  const back = new URLSearchParams({ error: result.problem, ...values });
+  await keepSentBack("/sources", { ...values });
+  // The type picks the form to show, even when the values were too long to keep.
+  const back = new URLSearchParams({ error: result.problem, type: values.type });
   if (result.status !== undefined) back.set("status", result.status);
   // Only that a token was pasted, so the form can ask for it again.
   if (token.trim() !== "") back.set("pasted", "1");

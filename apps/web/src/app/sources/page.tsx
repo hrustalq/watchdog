@@ -7,6 +7,7 @@ import { dataBox, field, fieldError, label, textBox, textLink } from "@/componen
 import { FocusOnMount } from "@/components/focus-on-mount";
 import { HealthChip } from "@/components/health";
 import { Timestamp } from "@/components/timestamp";
+import { readSentBack } from "@/lib/sent-back";
 import { requireWorkspace, server } from "@/lib/server";
 import {
   addProblems,
@@ -71,7 +72,8 @@ async function AddSourceFormWithOutcome({ params }: { params: Awaited<PageProps<
     const value = params[name];
     return typeof value === "string" ? value : "";
   };
-  const values = addValues(param);
+  // The URL picks the form, and nothing in it fills one (#134).
+  const blank = addValues((name) => (name === "type" ? param("type") : ""));
   const { db, mode, renderers, telegramAvailable } = server();
   const { workspace } = await requireWorkspace();
   // The token field says whether it's needed, which depends on a GitHub sign-in.
@@ -84,7 +86,7 @@ async function AddSourceFormWithOutcome({ params }: { params: Awaited<PageProps<
         mode={mode}
         renderers={renderers}
         telegramAvailable={telegramAvailable}
-        values={{ ...addValues(() => ""), type: values.type }}
+        values={blank}
       />
     );
   }
@@ -93,6 +95,10 @@ async function AddSourceFormWithOutcome({ params }: { params: Awaited<PageProps<
   if (problem === undefined) {
     return <AddSourceForm githubSignIn={githubSignIn} mode={mode} renderers={renderers} telegramAvailable={telegramAvailable} />;
   }
+  // Only the user's own refused form leaves what it held in the cookie. None means it was too long.
+  const sentBack = await readSentBack();
+  const values = sentBack === undefined ? blank : addValues((name) => sentBack[name] ?? "");
+  const lost = sentBack === undefined ? " What you entered was too long to bring back, so enter it again." : "";
   // Only the code travels in the URL, so the Source it's already watched as is looked up.
   const watching = problem === "duplicate" ? await watchedSourceName(db, workspace.id, values) : undefined;
   const shown = { ...values, status: param("status"), mode, source: watching };
@@ -104,7 +110,7 @@ async function AddSourceFormWithOutcome({ params }: { params: Awaited<PageProps<
       renderers={renderers}
       telegramAvailable={telegramAvailable}
       tokenDropped={param("pasted") !== ""}
-      error={{ field: problemField(problem, values.type, values), message: problemMessage(problem, shown) }}
+      error={{ field: problemField(problem, values.type, values), message: problemMessage(problem, shown) + lost }}
     />
   );
 }

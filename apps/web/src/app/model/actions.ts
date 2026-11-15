@@ -3,16 +3,17 @@
 import { redirect } from "next/navigation";
 import {
   type ModelInput,
-  modelFormQuery,
-  modelTestQuery,
+  modelFormValues,
   removeModel,
   saveModel,
   testConnection,
   testModelSettings,
 } from "@/lib/model";
+import { clearSentBack, keepSentBack } from "@/lib/sent-back";
 import { requireWorkspace, server } from "@/lib/server";
 
-// Every action ends in a redirect, as on Sources, and the page reads the outcome from the URL.
+// Every action ends in a redirect, as on Sources. The page reads the outcome from the URL, and what
+// the form held after a refusal or a test from a cookie, because a link can't set one (#134).
 
 const text = (formData: FormData, name: string) => {
   const value = formData.get(name);
@@ -37,7 +38,11 @@ export async function saveModelAction(formData: FormData) {
   const input = modelInput(formData);
   const { db, encryptionKey } = server();
   const result = await saveModel(db, encryptionKey, workspace.id, input);
-  if ("problem" in result) redirect(`/model?${modelFormQuery(result.problem, input).toString()}`);
+  if ("problem" in result) {
+    await keepSentBack("/model", modelFormValues(input));
+    redirect(`/model?${new URLSearchParams({ error: result.problem })}`);
+  }
+  await clearSentBack("/model");
   redirect(result.keyLeftBehind ? "/model?saved=key-left-behind" : "/model?saved=1");
 }
 
@@ -51,15 +56,18 @@ export async function testConnectionAction() {
 
 /**
  * Tests what the form holds without saving it, so a wrong address is found before it replaces the
- * working model. The values come back in the URL, without the key, as they do after a refusal.
+ * working model. The values come back, without the key, as they do after a refusal.
  */
 export async function testModelSettingsAction(formData: FormData) {
   const { workspace } = await requireWorkspace();
   const input = modelInput(formData);
   const { db, agentFetch, encryptionKey } = server();
   const result = await testModelSettings(db, { fetch: agentFetch, encryptionKey }, workspace.id, input);
-  if ("problem" in result) redirect(`/model?${modelFormQuery(result.problem, input).toString()}`);
-  redirect(`/model?${modelTestQuery(result.outcome, input, result.modelConfigId).toString()}`);
+  await keepSentBack("/model", modelFormValues(input));
+  if ("problem" in result) redirect(`/model?${new URLSearchParams({ error: result.problem })}`);
+  // The id names the row the call was metered against, where a failure's reason is. No call, no id.
+  const id = result.modelConfigId === undefined ? {} : { formTestId: result.modelConfigId };
+  redirect(`/model?${new URLSearchParams({ formTest: result.outcome, ...id })}`);
 }
 
 export async function removeModelAction() {
