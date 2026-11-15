@@ -78,7 +78,7 @@ await startDelivery(deliveryDb, boss, {
     sendCapNotice: (workspaceId: string) => sendEmailCapNotice(deliveryDb, workspaceId, mailer, alertFrom),
   }),
 });
-await startPipeline(
+const pipeline = await startPipeline(
   db,
   boss,
   { fetch: createAgentFetch(config), encryptionKey: config.encryptionKey },
@@ -128,7 +128,10 @@ const stopTelegramSessions =
       });
 
 // The first SIGTERM or SIGINT stops pg-boss, which stops the tick and lets running polls and sends finish.
-// A second signal while it stops is ignored.
+// A second signal while it stops is ignored. pg-boss waits 30 s for running jobs and then fails them for a
+// retry, but a model call can take 240 s and keeps running. So the pools end only once the pipeline's jobs
+// have settled, and an answer that arrives before Compose's 40 s grace runs out still writes its
+// `agent_call` row (docs: Processing pipeline, "The pipeline job").
 let stopping = false;
 const stop = async () => {
   if (stopping) return;
@@ -138,6 +141,9 @@ const stop = async () => {
   stopTelegramSessions?.();
   try {
     await boss.stop();
+    const jobs = pipeline.running();
+    if (jobs > 0) console.log(`pg-boss stopped; waiting for ${String(jobs)} pipeline job(s) to settle`);
+    await pipeline.settled();
     await db.$client.end();
     await deliveryDb.$client.end();
     console.log("Worker stopped: pg-boss stopped cleanly");

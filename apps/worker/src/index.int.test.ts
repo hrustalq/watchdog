@@ -1,11 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { createServer } from "node:http";
+import { json } from "node:stream/consumers";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { itemEnqueuer, pollSource, processItemQueue } from "@watchdog/core";
+import { agentItemQueue, itemEnqueuer, pollSource, processItemQueue } from "@watchdog/core";
 import {
   action,
+  agentCall,
   classifier,
   closeDb,
   createDb,
@@ -17,6 +19,7 @@ import {
   itemCategory,
   itemLog,
   migrate,
+  modelConfig,
   source,
   user,
   workspace,
@@ -151,7 +154,10 @@ describe("worker", () => {
     expect(existsSync(ready)).toBe(true);
     expect(await telegramBotQueues(postgres.url)).toBe(0);
 
+    // Idle, it stops at once: well inside pg-boss's 30 s wait for running jobs, which a regression would hit.
+    const stopping = Date.now();
     expect(await worker.stop()).toBe(0);
+    expect(Date.now() - stopping).toBeLessThan(20_000);
     expect(worker.output()).toContain("pg-boss stopped");
     expect(existsSync(ready)).toBe(false);
   }, bootBudget);
@@ -400,6 +406,131 @@ describe("worker", () => {
       await expectClassifiedSoon(itemId);
       expect(await restarted.stop()).toBe(0);
     }, 150_000);
+
+    /**
+     * An OpenAI-compatible model on loopback, which the spawned worker reaches through its egress guard. Its
+     * first request waits until the test releases it, and every other one answers at once. Without the
+     * structured output flag the system message ends with the output's JSON Schema, which picks the answer.
+     */
+    async function holdingModel() {
+      let release: () => void = () => undefined;
+      const released = new Promise<void>((resolve) => (release = resolve));
+      let requests = 0;
+      const server = createServer((request, response) => {
+        void (async () => {
+          requests += 1;
+          const first = requests === 1;
+          const body = (await json(request)) as { messages: { content: string }[] };
+          if (first) await released;
+          const system = body.messages[0]?.content ?? "";
+          const { properties } = JSON.parse(system.slice(system.lastIndexOf("\n") + 1)) as {
+            properties: Record<string, { items?: { enum?: string[] } }>;
+          };
+          const answer =
+            "categories" in properties
+              ? { categories: properties.categories?.items?.enum ?? [] }
+              : { summary: "A summary.", reasoning: "Fine.", severity: 1, importance: 2 };
+          response.setHeader("content-type", "application/json");
+          response.end(
+            JSON.stringify({
+              id: "fake",
+              object: "chat.completion",
+              created: 0,
+              model: "fake-model",
+              choices: [{ index: 0, message: { role: "assistant", content: JSON.stringify(answer) }, finish_reason: "stop" }],
+              usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+            }),
+          );
+        })();
+      });
+      await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const address = server.address();
+      if (address === null || typeof address === "string") throw new Error("The model has no port");
+      return {
+        baseUrl: `http://127.0.0.1:${String(address.port)}/v1`,
+        requests: () => requests,
+        release,
+        close: () => server.close(),
+      };
+    }
+
+    it("meters a call that answers after SIGTERM, and processes its Item once restarted", async () => {
+      const model = await holdingModel();
+      try {
+        await (await startWorker(postgres.url)).kill();
+        // A Workspace with a model and an Agent-backed Classifier, so the Item's job makes a call.
+        const id = crypto.randomUUID();
+        await db.insert(user).values({ id, name: "Owner", email: `${id}@example.com` });
+        const [ws] = await db.insert(workspace).values({ name: "Workspace", ownerUserId: id }).returning();
+        const workspaceId = ws?.id ?? "";
+        await db
+          .insert(modelConfig)
+          .values({ workspaceId, providerType: "openai-compatible", baseUrl: model.baseUrl, modelName: "fake-model" });
+        await db.insert(classifier).values({
+          workspaceId,
+          name: "leads",
+          kind: "agent",
+          definition: { classifier: "leads", prompt: "Find leads", categories: ["lead"] },
+        });
+        const [src] = await db
+          .insert(source)
+          .values({
+            workspaceId,
+            type: "rss",
+            name: "Feed",
+            config: { url: "https://feeds.test/agent.rss" },
+            schedule: "*/15 * * * *",
+            nextPollAt: new Date(Date.now() + 60 * 60 * 1000),
+          })
+          .returning();
+        await pollSource(db, src?.id ?? "", {
+          fetch: () => Promise.resolve(new Response(feed())),
+          enqueueItems: itemEnqueuer(boss),
+          secrets: { encryptionKey: Buffer.alloc(32), authSecret: "unused-by-rss-sources" },
+        });
+        const itemId = (await itemOf(src?.id ?? "")) ?? "";
+        const job = async () =>
+          (
+            await db.$client.query<{ id: string; state: string; retry_count: number }>(
+              "select id, state, retry_count from pgboss.job where name = $1 and data->>'itemId' = $2",
+              [agentItemQueue, itemId],
+            )
+          ).rows;
+
+        const worker = await startWorker(postgres.url);
+        await vi.waitFor(() => { expect(model.requests()).toBe(1); }, { timeout: 30_000, interval: 100 });
+        const exited = worker.stop();
+        // pg-boss waits 30 s for the job and then fails it. The model answers only after that.
+        await vi.waitFor(() => { expect(worker.output()).toContain("pg-boss stopped"); }, {
+          timeout: 60_000,
+          interval: 250,
+        });
+        model.release();
+        expect(await exited).toBe(0);
+
+        const calls = await db.select().from(agentCall).where(eq(agentCall.itemId, itemId));
+        expect(calls).toEqual(
+          expect.arrayContaining([expect.objectContaining({ purpose: "classify", attempt: 1, status: "ok" })]),
+        );
+        // The stop failed the job for a retry. pg-boss counts the retry when it starts the job again.
+        expect(await job()).toMatchObject([{ state: "retry", retry_count: 0 }]);
+
+        // Stands in for waiting out the retry's backoff.
+        await db.$client.query("update pgboss.job set start_after = now() where id = $1", [(await job())[0]?.id]);
+        const restarted = await startWorker(postgres.url);
+        await vi.waitFor(async () => { expect(await job()).toMatchObject([{ state: "completed", retry_count: 1 }]); }, {
+          timeout: 90_000,
+          interval: 250,
+        });
+        expect(await processedAt(itemId)).not.toBeNull();
+        expect(await db.select().from(itemCategory).where(eq(itemCategory.itemId, itemId))).toMatchObject([
+          { category: "lead" },
+        ]);
+        expect(await restarted.stop()).toBe(0);
+      } finally {
+        model.close();
+      }
+    }, bootBudget + 120_000);
 
     /** A Delivery of a captured Item to a new Destination of that type, with its job queued. */
     async function queueDelivery(type: "email" | "telegram") {

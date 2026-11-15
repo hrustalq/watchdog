@@ -36,7 +36,8 @@ export async function createPipelineQueue(boss: PgBoss) {
 }
 
 /**
- * Call before anything can capture: queueing a job fails on a queue that doesn't exist.
+ * Call before anything can capture: queueing a job fails on a queue that doesn't exist. `settled`
+ * resolves once every running job's handler has returned.
  * `jsonPathNodes` is the hosted plan's node limit for an Item's JSONPath fields, and a self-hosted
  * install leaves it undefined.
  */
@@ -53,7 +54,11 @@ export async function startPipeline(
     ...(jsonPathNodes !== undefined && { jsonPathNodes }),
   };
 
-  const work = async ([job]: JobWithMetadata<{ itemId: string }>[]) => {
+  // The jobs whose handler hasn't returned. A stop can fail a job while its model call keeps running,
+  // and the worker keeps the database open until these settle, so the call's answer is still metered.
+  const running = new Set<Promise<void>>();
+
+  const handle = async ([job]: JobWithMetadata<{ itemId: string }>[]) => {
     if (job === undefined) return;
     const { itemId } = job.data;
     try {
@@ -62,6 +67,13 @@ export async function startPipeline(
       console.error(`Processing Item ${itemId} failed:`, error);
       throw error;
     }
+  };
+  const work = (jobs: JobWithMetadata<{ itemId: string }>[]) => {
+    const run = handle(jobs);
+    running.add(run);
+    const done = () => running.delete(run);
+    run.then(done, done);
+    return run;
   };
 
   // Naming the first type argument stops inference, so the options' type has to be named too.
@@ -75,4 +87,10 @@ export async function startPipeline(
     { ...plainLimits, includeMetadata: true },
     work,
   );
+  return {
+    running: () => running.size,
+    settled: async () => {
+      await Promise.allSettled(running);
+    },
+  };
 }
