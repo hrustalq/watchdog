@@ -1,8 +1,9 @@
+import { addMinutes } from "date-fns";
 import { describe, expect, it } from "vitest";
 import { type HealthState, healthAfter } from "./health.ts";
 
 const created = new Date("2026-11-03T12:00:00Z");
-const minutesLater = (minutes: number) => new Date(created.getTime() + minutes * 60_000);
+const minutesLater = (minutes: number) => addMinutes(created, minutes);
 const fresh: HealthState = { health: "ok", consecutiveFailures: 0, lastSuccessAt: null, createdAt: created };
 
 /** The state after `count` failed polls in a row, a minute apart from `start`. */

@@ -1,5 +1,6 @@
 // Sends one Delivery and records how it went (docs: Actions and delivery, "Deliveries"; ADR 0028). The
 // worker's deliver queue calls this once per job.
+import { addHours, addMilliseconds, isBefore, min, subHours } from "date-fns";
 import {
   action,
   and,
@@ -121,9 +122,7 @@ export interface DeliverDeps {
   now?: () => Date;
 }
 
-const hourMs = 60 * 60 * 1000;
 const firstRetryDelayMs = 30_000;
-const retryWindowMs = 24 * hourMs;
 /** Short enough that the Log's sentence keeps what follows the reason. */
 const reasonLength = 500;
 
@@ -137,14 +136,12 @@ export const failureReason = (error: unknown) =>
  * A told wait can pass the mark, because an attempt sooner than that would only be refused.
  */
 export function nextRetry(error: unknown, attempts: number, from: Date, failed: Date) {
-  const windowEnd = from.getTime() + retryWindowMs;
-  if (error instanceof FinalSendError || failed.getTime() >= windowEnd) return undefined;
+  const windowEnd = addHours(from, 24);
+  if (error instanceof FinalSendError || !isBefore(failed, windowEnd)) return undefined;
   const backoff = firstRetryDelayMs * 2 ** (attempts - 1);
-  return new Date(
-    error instanceof RetryAfterSendError
-      ? failed.getTime() + error.retryAfterMs
-      : Math.min(failed.getTime() + backoff, windowEnd),
-  );
+  return error instanceof RetryAfterSendError
+    ? addMilliseconds(failed, error.retryAfterMs)
+    : min([addMilliseconds(failed, backoff), windowEnd]);
 }
 
 /**
@@ -339,7 +336,7 @@ async function applySchedule(
   const sends = await tx
     .select({ at: sentMessage.sentAt })
     .from(sentMessage)
-    .where(and(eq(sentMessage.destinationId, target.id), gt(sentMessage.sentAt, new Date(now.getTime() - hourMs))))
+    .where(and(eq(sentMessage.destinationId, target.id), gt(sentMessage.sentAt, subHours(now, 1))))
     .orderBy(sentMessage.sentAt);
   const recentSends = sends.map(({ at }) => at);
 
@@ -414,7 +411,7 @@ async function send(
   } catch (error) {
     // No attempt was made, so nothing is recorded: the job goes again when the turn comes.
     if (error instanceof NotYetSendError) {
-      const at = new Date(now().getTime() + error.waitMs);
+      const at = addMilliseconds(now(), error.waitMs);
       for (const row of rows) await recording((tx) => deferDelivery(tx, row.id, at, deps.retryDelivery));
       return;
     }
@@ -535,7 +532,7 @@ export async function deliver(db: Db, deliveryId: string, deps: DeliverDeps): Pr
   // the row its jobs would hold in turn.
   const turnMs = sender.deferTurn?.(found.destination, found.nextAttemptAt);
   if (turnMs !== undefined) {
-    const at = new Date(now().getTime() + turnMs);
+    const at = addMilliseconds(now(), turnMs);
     await db.transaction((tx) => deferDelivery(tx, deliveryId, at, deps.retryDelivery));
     return;
   }

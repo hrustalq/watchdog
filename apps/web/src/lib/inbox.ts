@@ -2,6 +2,7 @@
 // is shown and replaced (docs: Actions and delivery, "Webhook inbox (intake)"; Security and privacy,
 // "Source credentials").
 import { createHash, randomBytes } from "node:crypto";
+import { addMinutes, differenceInMilliseconds } from "date-fns";
 import { captureItems, type CaptureDeps, cleanPayload, decryptSecret, encryptSecret, webhookConfig, webhookDraft } from "@watchdog/core";
 import { and, type Db, eq, isNotNull, item, source, sql } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
@@ -55,7 +56,7 @@ export async function receiveInbox(
     });
   if (inbox === undefined) return answer(401, { error: "Unknown inbox" });
   if (inbox.requests > perMinute) {
-    const resetsIn = (inbox.windowStart?.getTime() ?? at.getTime()) + 60_000 - at.getTime();
+    const resetsIn = differenceInMilliseconds(addMinutes(inbox.windowStart ?? at, 1), at);
     return answer(
       429,
       { error: `This inbox takes at most ${String(perMinute)} requests a minute` },

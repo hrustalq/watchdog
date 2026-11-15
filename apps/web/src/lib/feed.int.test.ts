@@ -1,3 +1,5 @@
+import { addDays, addMinutes, startOfDay, subDays, subHours, subMinutes } from "date-fns";
+import { tz } from "@date-fns/tz";
 import { createServer } from "node:http";
 import { createEgressFetch, deliver, loadConfig, pollSource, processItem, type Sender, sendDigest } from "@watchdog/core";
 import { fakeLlm } from "@watchdog/core/testing";
@@ -37,9 +39,9 @@ import {
 } from "./feed.ts";
 
 const now = new Date("2026-11-03T15:00:00Z");
-const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000);
+const hoursAgo = (hours: number) => subHours(now, hours);
 // Top's window runs on the database's clock, so its tests date Items from the real time.
-const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+const daysAgo = (days: number) => subDays(new Date(), days);
 
 /** The value, which the test expects to be there. */
 function present<T>(value: T | undefined): T {
@@ -337,8 +339,8 @@ describe("Feed", () => {
       const seeded = await seed();
       const [inside, justInside, justOutside, eightDays] = await insertItems(seeded, [
         { importance: 1, severity: 1, capturedAt: daysAgo(1), publishedAt: daysAgo(30) },
-        { importance: 2, severity: 2, capturedAt: new Date(daysAgo(7).getTime() + 60_000) },
-        { importance: 5, severity: 5, capturedAt: new Date(daysAgo(7).getTime() - 60_000) },
+        { importance: 2, severity: 2, capturedAt: addMinutes(daysAgo(7), 1) },
+        { importance: 5, severity: 5, capturedAt: subMinutes(daysAgo(7), 1) },
         { importance: 5, severity: 5, capturedAt: daysAgo(8) },
       ]);
 
@@ -790,7 +792,7 @@ describe("Feed", () => {
       await processItem(db, itemId, pipelineDeps);
       const [queued] = await db.select({ id: delivery.id }).from(delivery).where(eq(delivery.itemId, itemId));
       // Failures that outlast the 24 hours of retries end the Delivery failed, with no retry at all.
-      const dayAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+      const dayAgo = subDays(now, 1);
       await db.update(delivery).set({ createdAt: dayAgo, attempts: 12 }).where(eq(delivery.id, present(queued).id));
       await deliver(db, present(queued).id, { ...refusingDeps, now: () => now });
 
@@ -835,7 +837,7 @@ describe("Feed", () => {
         .values({ workspaceId: seeded.workspaceId, type: "email", name: "Work inbox", config: { address: "w@example.com" }, confirmedAt: new Date() })
         .returning();
       await db.insert(actionDestination).values({ actionId, destinationId: present(later).id });
-      await db.update(action).set({ updatedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) }).where(eq(action.id, actionId));
+      await db.update(action).set({ updatedAt: subDays(new Date(), 14) }).where(eq(action.id, actionId));
       const [itemId = ""] = await insertItems(seeded, [{ title: "A launch" }]);
       await processItem(db, itemId, pipelineDeps);
       const sentAt = new Date();
@@ -854,14 +856,14 @@ describe("Feed", () => {
       const [fired] = await itemActions(db, seeded.workspaceId, itemId);
       expect(present(fired).digestSent).toMatchObject([{ destination: "Team inbox", failed: false }]);
       // The Workspace's timezone, where the cap's day ends, as Item detail writes it.
-      const dayEnd = new Date(Date.UTC(sentAt.getUTCFullYear(), sentAt.getUTCMonth(), sentAt.getUTCDate() + 1));
+      const dayEnd = startOfDay(addDays(sentAt, 1, { in: tz("UTC") }), { in: tz("UTC") });
       expect(present(fired).digestTo).toMatchObject([{ destination: "Work inbox", heldUntil: dayEnd }]);
     });
 
     it("still lists a Digest after it sends, with each Destination it went to and when", async () => {
       const { seeded, actionId } = await withAction("digest");
       // Saved two weeks ago, so its weekly schedule has come.
-      await db.update(action).set({ updatedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) }).where(eq(action.id, actionId));
+      await db.update(action).set({ updatedAt: subDays(new Date(), 14) }).where(eq(action.id, actionId));
       const [itemId = ""] = await insertItems(seeded, [{ title: "A launch" }]);
       await processItem(db, itemId, pipelineDeps);
       const sentAt = new Date();
@@ -870,7 +872,7 @@ describe("Feed", () => {
 
       const [fired] = await itemActions(db, seeded.workspaceId, itemId);
       expect(fired).toMatchObject({ name: "Weekly", deliveries: [], digestTo: [], digestSent: [{ destination: "Team inbox", failed: false }] });
-      expect(present(present(fired).digestSent[0]).at.getTime()).toBeGreaterThan(sentAt.getTime() - 60_000);
+      expect(present(present(fired).digestSent[0]).at.getTime()).toBeGreaterThan(subMinutes(sentAt, 1).getTime());
     });
 
     it("shows a Destination that failed in a Digest another Destination got", async () => {
@@ -880,7 +882,7 @@ describe("Feed", () => {
         .values({ workspaceId: seeded.workspaceId, type: "email", name: "Backup", config: { address: "b@example.com" }, confirmedAt: new Date() })
         .returning();
       await db.insert(actionDestination).values({ actionId, destinationId: present(backup).id });
-      await db.update(action).set({ updatedAt: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) }).where(eq(action.id, actionId));
+      await db.update(action).set({ updatedAt: subDays(new Date(), 14) }).where(eq(action.id, actionId));
       const [itemId = ""] = await insertItems(seeded, [{ title: "A launch" }]);
       await processItem(db, itemId, pipelineDeps);
       const refusing: Sender = {

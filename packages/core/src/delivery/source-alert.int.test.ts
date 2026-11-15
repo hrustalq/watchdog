@@ -1,3 +1,4 @@
+import { addMinutes } from "date-fns";
 import {
   closeDb,
   createDb,
@@ -28,7 +29,7 @@ function present<T>(value: T | undefined): T {
 }
 
 const start = new Date("2026-11-03T15:00:00Z");
-const minutesLater = (minutes: number) => new Date(start.getTime() + minutes * 60_000);
+const minutesLater = (minutes: number) => addMinutes(start, minutes);
 const appUrl = "https://watchdog.test";
 
 describe("Source Health alerts", () => {

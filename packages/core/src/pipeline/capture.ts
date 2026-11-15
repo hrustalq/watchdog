@@ -1,5 +1,6 @@
 // The capture stage: drafts from any Source type become Items, whether a poll fetched them or a
 // push delivered them (docs: Processing pipeline, "Stages").
+import { addMilliseconds, subMilliseconds } from "date-fns";
 import { and, type Db, eq, inArray, item, itemLog, source, sql, type Tx } from "@watchdog/db";
 import { queueSourceAlerts } from "../delivery/source-alert.ts";
 import { failingPollGapMs, healthAfter } from "../sources/health.ts";
@@ -102,7 +103,7 @@ export async function captureItems(
     let capture: ItemDraft[];
     let backfillColumns = {};
     if (isBackfill) {
-      const start = at.getTime() - backfill.window;
+      const start = subMilliseconds(at, backfill.window).getTime();
       capture = unique
         .filter((draft) => draft.publishedAt !== null && published(draft) >= start)
         .sort((a, b) => published(b) - published(a))
@@ -113,7 +114,7 @@ export async function captureItems(
       backfillColumns = { backfilledAt: at, backfillSkippedIds: skipped };
     } else {
       // A type without a Backfill captures every new draft, however old.
-      const start = backfill && backfilledAt ? backfilledAt.getTime() - backfill.window : -Infinity;
+      const start = backfill && backfilledAt ? subMilliseconds(backfilledAt, backfill.window).getTime() : -Infinity;
       const skipped = new Set(locked.backfillSkippedIds ?? []);
       const candidates = unique.filter(
         (draft) => !skipped.has(draft.externalId) && published(draft) >= start,
@@ -190,7 +191,7 @@ async function recordOutcome(
   const error = "error" in outcome ? outcome.error : null;
   const after = healthAfter(before, { at: outcome.at, failed: error !== null });
   // Only a poll fails here, so only a Schedule Source, which has a next poll, is put off.
-  const nextHourly = new Date(outcome.at.getTime() + failingPollGapMs).toISOString();
+  const nextHourly = addMilliseconds(outcome.at, failingPollGapMs).toISOString();
   const set =
     "error" in outcome
       ? {

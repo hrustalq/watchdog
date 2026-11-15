@@ -1,4 +1,5 @@
 // The Schedule Trigger: when a Source is next polled (docs: Sources and ingestion, "Scheduling").
+import { addMilliseconds } from "date-fns";
 import { CronExpressionParser } from "cron-parser";
 import { offsetAt, wallToInstant } from "./timezone.ts";
 import type { Config } from "./config.ts";
@@ -70,7 +71,7 @@ export function nextPollAt(schedule: string, mode: Mode, now: Date, random = Mat
   const firings = CronExpressionParser.parse(usable.trim(), { currentDate: now, tz: "UTC" });
   const next = firings.next().getTime();
   const interval = firings.next().getTime() - next;
-  return new Date(next + random() * Math.min(interval / 10, minute));
+  return addMilliseconds(new Date(next), random() * Math.min(interval / 10, minute));
 }
 
 /**
@@ -81,7 +82,7 @@ export function nextPollAt(schedule: string, mode: Mode, now: Date, random = Mat
 export function nextFiring(schedule: string, after: Date, timezone = "UTC"): Date {
   const start = after.getTime();
   const firings = CronExpressionParser.parse(schedule.trim(), {
-    currentDate: new Date(start + offsetAt(start, timezone)),
+    currentDate: addMilliseconds(after, offsetAt(start, timezone)),
     tz: "UTC",
   });
   for (;;) {

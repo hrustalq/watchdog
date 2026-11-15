@@ -1,45 +1,21 @@
 // The wall clock in an IANA timezone, and the instant a wall clock reading happens (docs: the
 // cron-parser gotcha page). A wall clock is milliseconds since 1970 as if UTC read the same numbers.
+import { tzOffset } from "@date-fns/tz";
+
 const day = 24 * 60 * 60 * 1000;
+const minute = 60 * 1000;
 
-const formats = new Map<string, Intl.DateTimeFormat>();
-
-function formatterFor(timezone: string) {
-  let format = formats.get(timezone);
-  if (format === undefined) {
-    format = new Intl.DateTimeFormat("en-US", {
-      timeZone: timezone,
-      hourCycle: "h23",
-      year: "numeric",
-      month: "numeric",
-      day: "numeric",
-      hour: "numeric",
-      minute: "numeric",
-      second: "numeric",
-    });
-    formats.set(timezone, format);
-  }
-  return format;
+/**
+ * How far a timezone's wall clock is ahead of UTC at an instant, in milliseconds. `tzOffset` reads
+ * the second it lands in, so a reading the clocks repeat takes the offset it has then.
+ */
+export function offsetAt(instant: number, timezone: string) {
+  return tzOffset(timezone, new Date(instant)) * minute;
 }
 
 /** What the wall clock in `timezone` reads at an instant, to the second. */
 export function wallClockAt(instant: number, timezone: string) {
-  const parts = new Map<string, number>();
-  for (const { type, value } of formatterFor(timezone).formatToParts(instant)) parts.set(type, Number(value));
-  const part = (name: string, fallback: number) => parts.get(name) ?? fallback;
-  return Date.UTC(
-    part("year", 1970),
-    part("month", 1) - 1,
-    part("day", 1),
-    part("hour", 0),
-    part("minute", 0),
-    part("second", 0),
-  );
-}
-
-/** How far a timezone's wall clock is ahead of UTC at an instant, in milliseconds. */
-export function offsetAt(instant: number, timezone: string) {
-  return wallClockAt(instant, timezone) - Math.floor(instant / 1000) * 1000;
+  return Math.floor(instant / 1000) * 1000 + offsetAt(instant, timezone);
 }
 
 /**

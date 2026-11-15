@@ -1,5 +1,6 @@
 // A GitHub issues Source: a repo's new issues, not PRs, through the REST API with `since` and an
 // ETag (docs: Sources and ingestion, "Issues").
+import { subMilliseconds } from "date-fns";
 import { z } from "zod";
 import { capBody, type ItemDraft, tidyText } from "../item.ts";
 import type { Polled } from "../types.ts";
@@ -35,7 +36,7 @@ export async function pollIssues(
   now: Date,
 ): Promise<Polled> {
   const first = fetchState.since === undefined || fetchState.from === undefined;
-  const start = new Date(now.getTime() - clockMargin).toISOString();
+  const start = subMilliseconds(now, clockMargin).toISOString();
   const since = fetchState.since ?? start;
   const from = Date.parse(fetchState.from ?? start);
   const query = first
