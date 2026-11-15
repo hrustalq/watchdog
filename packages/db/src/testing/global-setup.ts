@@ -2,7 +2,6 @@
 // file's startPostgres() creates its own database (#436). The server starts on the first file that asks,
 // so a run with no database test, such as the pre-push hook's unit run, needs no Docker.
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import type { TestProject } from "vitest/node";
 import { startPostgresServer, type TestPostgres } from "./postgres.ts";
 
@@ -19,7 +18,9 @@ export default async function setup(project: TestProject) {
     );
   });
   await new Promise<void>((resolve) => broker.listen(0, "127.0.0.1", resolve));
-  project.provide("postgresBroker", `http://127.0.0.1:${String((broker.address() as AddressInfo).port)}`);
+  const address = broker.address();
+  if (address === null || typeof address === "string") throw new Error("The test Postgres broker has no port");
+  project.provide("postgresBroker", `http://127.0.0.1:${String(address.port)}`);
   return async () => {
     broker.close();
     await server?.then(({ stop }) => stop(), () => undefined);
