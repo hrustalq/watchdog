@@ -8,6 +8,7 @@ import {
   problemsInDraft,
   type RuleTarget,
 } from "@/lib/rules";
+import { readSentBack } from "@/lib/sent-back";
 import { server } from "@/lib/server";
 import { listSources } from "@/lib/sources";
 import { RuleEditor } from "./rule-editor";
@@ -35,7 +36,9 @@ export async function EditorScreen({
 }) {
   const { db, encryptionKey, mode } = server();
   const workspaceId = workspace.id;
-  const sentBack = typeof query.draft === "string" ? query.draft : undefined;
+  // Only a refusal the user's own browser posted leaves its draft in the cookie, so a link can't fill
+  // the editor (#134).
+  const sentBack = query["sent-back"] === undefined ? undefined : (await readSentBack())?.draft;
   const [hasModel, unreadableKey, sources, categories, destinations, declared, problems] = await Promise.all([
     hasActiveModel(db, workspaceId),
     hasUnreadableKey(db, encryptionKey, workspaceId),

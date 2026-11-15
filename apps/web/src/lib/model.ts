@@ -71,46 +71,47 @@ const webUrl = (text: string) => {
 /** Without a trailing slash, an address has one spelling to compare. */
 const address = (url: URL) => `${url.origin}${url.pathname}`.replace(/\/+$/, "");
 
-/** A URL this long is safe through Caddy and Node, whose limit on all the headers is 16 KB. */
-const maxBaseUrlInUrl = 2000;
+/**
+ * Longer than any real value, and short enough that the form's values always fit in their cookie. A
+ * model name keeps one character past its limit, so a name refused as too long still shows as one.
+ */
+const maxBaseUrlSentBack = 2000;
+const maxModelNameSentBack = 201;
+const maxPriceSentBack = 50;
 
-/** The form's values, as the URL carries them back after a submit that saved nothing. */
-function formValuesQuery(input: ModelInput) {
+/**
+ * The form's values after a submit that saved nothing, a refusal or a test, for the page to fill the
+ * form with again. The key never comes back, so the form asks for it again. Nor does anything else
+ * that can hold one: people paste keys into a base URL's user name or query.
+ */
+export function modelFormValues(input: ModelInput): Record<string, string> {
   const url = webUrl(input.baseUrl);
   const baseUrl = url === undefined ? "" : address(url);
-  const query = new URLSearchParams({
+  return {
     providerType: input.providerType,
-    baseUrl: baseUrl.length > maxBaseUrlInUrl ? "" : baseUrl,
-    modelName: input.modelName,
-    inputPrice: input.inputPrice,
-    outputPrice: input.outputPrice,
-  });
-  if (input.structured) query.set("structured", "1");
-  if (input.clearKey) query.set("clearKey", "1");
-  if (input.apiKey.trim() !== "") query.set("keyTyped", "1");
-  return query;
+    baseUrl: baseUrl.length > maxBaseUrlSentBack ? "" : baseUrl,
+    modelName: input.modelName.slice(0, maxModelNameSentBack),
+    inputPrice: input.inputPrice.slice(0, maxPriceSentBack),
+    outputPrice: input.outputPrice.slice(0, maxPriceSentBack),
+    ...(input.structured ? { structured: "1" } : {}),
+    ...(input.clearKey ? { clearKey: "1" } : {}),
+    ...(input.apiKey.trim() === "" ? {} : { keyTyped: "1" }),
+  };
 }
 
-/**
- * The form's URL after a refusal. The key never goes in a URL, so the form asks for it again. Nor
- * does anything else that can hold one: people paste keys into a base URL's user name or query.
- */
-export function modelFormQuery(problem: ModelProblem, input: ModelInput) {
-  const query = formValuesQuery(input);
-  query.set("error", problem);
-  return query;
-}
-
-/**
- * The form's URL after a test of what it holds: the values stay filled in, and the outcome says what
- * that call did. `modelConfigId` names the row the call was metered against, which is where the
- * reason for a failure is; it's left out when no call was made.
- */
-export function modelTestQuery(outcome: TestOutcome, input: ModelInput, modelConfigId?: string) {
-  const query = formValuesQuery(input);
-  query.set("formTest", outcome);
-  if (modelConfigId !== undefined) query.set("formTestId", modelConfigId);
-  return query;
+/** The form again from what `modelFormValues` kept. */
+export function modelFormFromSentBack(kept: Record<string, string>) {
+  const field = (name: string) => kept[name] ?? "";
+  return {
+    providerType: field("providerType"),
+    baseUrl: field("baseUrl"),
+    modelName: field("modelName"),
+    clearKey: field("clearKey") !== "",
+    structured: field("structured") !== "",
+    inputPrice: field("inputPrice"),
+    outputPrice: field("outputPrice"),
+    keyTyped: field("keyTyped") !== "",
+  };
 }
 
 /**

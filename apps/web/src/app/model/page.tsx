@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import {
   getModel,
   lastFailedCall,
+  modelFormFromSentBack,
   modelProblems,
   providerTypes,
   type StoredKey,
@@ -15,6 +16,7 @@ import {
   type TestOutcome,
   workerKeyMismatch,
 } from "@/lib/model";
+import { readSentBack } from "@/lib/sent-back";
 import { requireWorkspace, server } from "@/lib/server";
 import { Notice } from "../sign-in/notice";
 import { SubmitButton } from "../sign-in/submit-button";
@@ -105,18 +107,11 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
           inputPrice: model.inputPricePerMillion?.toString() ?? "",
           outputPrice: model.outputPricePerMillion?.toString() ?? "",
         };
-  const values: ModelFormValues =
-    problem === undefined && formTest === undefined
-      ? saved
-      : {
-          providerType: param("providerType"),
-          baseUrl: param("baseUrl"),
-          modelName: param("modelName"),
-          clearKey: param("clearKey") !== "",
-          structured: param("structured") !== "",
-          inputPrice: param("inputPrice"),
-          outputPrice: param("outputPrice"),
-        };
+  // Only a refusal or a test the user made leaves its values in the cookie, so a link that only
+  // names one shows the saved model (#134).
+  const sentBack = problem === undefined && formTest === undefined ? undefined : await readSentBack();
+  const { keyTyped, ...values }: ModelFormValues & { keyTyped: boolean } =
+    sentBack === undefined ? { ...saved, keyTyped: false } : modelFormFromSentBack(sentBack);
 
   // A call the form's test made says why it failed on the row it was metered against.
   const formTestReason =
@@ -236,7 +231,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
               values={values}
               storedKey={model?.storedKey ?? "none"}
               problem={problem}
-              keyTyped={param("keyTyped") !== ""}
+              keyTyped={keyTyped}
             />
           </div>
         </details>

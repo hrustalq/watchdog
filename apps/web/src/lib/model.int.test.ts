@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { createAgentFetch, decryptSecret, keyFingerprint } from "@watchdog/core";
 import { type FakeRequest, fakeLlm } from "@watchdog/core/testing";
@@ -18,6 +19,7 @@ import {
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { hasActiveModel } from "./rules.ts";
+import { encodeSentBack } from "./sent-back.ts";
 import {
   getModel,
   hasUnreadableKey,
@@ -25,8 +27,8 @@ import {
   type ModelDeps,
   type ModelInput,
   type ModelProblem,
-  modelFormQuery,
-  modelTestQuery,
+  modelFormFromSentBack,
+  modelFormValues,
   type PriceProblem,
   removeModel,
   saveModel,
@@ -957,13 +959,12 @@ describe("the Model screen", () => {
     });
   });
 
-  describe("going back to the form after a refusal", () => {
+  describe("going back to the form after a refusal or a test", () => {
     it("keeps what was entered, and never the key", () => {
-      const query = modelFormQuery("model-name", input({ apiKey, structured: true, inputPrice: "2" }));
+      const values = modelFormValues(input({ apiKey, structured: true, inputPrice: "2" }));
 
-      expect(query.toString()).not.toContain(apiKey);
-      expect(Object.fromEntries(query)).toEqual({
-        error: "model-name",
+      expect(JSON.stringify(values)).not.toContain(apiKey);
+      expect(values).toEqual({
         providerType: "openai-compatible",
         baseUrl: "https://llm.test/v1",
         modelName: "fake-model",
@@ -980,72 +981,67 @@ describe("the Model screen", () => {
       ["a fragment", "https://llm.test/v1#sk-sentinel", "https://llm.test/v1"],
       ["no address at all", "sk-sentinel", ""],
       ["another scheme", "ftp://sk-sentinel@llm.test/v1", ""],
-    ])("doesn't put a secret in the URL when a base URL holds %s", (_what, baseUrl, kept) => {
-      const query = modelFormQuery("base-url", input({ baseUrl }));
+    ])("doesn't keep a secret when a base URL holds %s", (_what, baseUrl, kept) => {
+      const values = modelFormValues(input({ baseUrl }));
 
-      expect(query.toString()).not.toContain("sk-sentinel");
-      expect(query.get("baseUrl")).toBe(kept);
+      expect(JSON.stringify(values)).not.toContain("sk-sentinel");
+      expect(values.baseUrl).toBe(kept);
     });
 
-    it("leaves out a base URL too long to go in a URL", () => {
-      const query = modelFormQuery("base-url", input({ baseUrl: `https://llm.test/${"x".repeat(3000)}` }));
-
-      expect(query.get("baseUrl")).toBe("");
+    it("leaves out a base URL too long to keep", () => {
+      expect(modelFormValues(input({ baseUrl: `https://llm.test/${"x".repeat(3000)}` })).baseUrl).toBe("");
     });
 
     it("says nothing about a key that wasn't typed", () => {
-      const query = modelFormQuery("base-url", input());
+      const values = modelFormValues(input());
 
-      expect(query.has("keyTyped")).toBe(false);
-      expect(query.has("structured")).toBe(false);
+      expect(values).not.toHaveProperty("keyTyped");
+      expect(values).not.toHaveProperty("structured");
     });
 
-    it("carries the ticked box through a refusal", () => {
-      const query = modelFormQuery("model-name", input({ clearKey: true }));
+    it("cuts a model name or price too long to keep, so the values always fit their cookie", () => {
+      const noise = (length: number) => randomBytes(length).toString("hex").slice(0, length);
+      const values = modelFormValues(
+        input({
+          baseUrl: `https://llm.test/${noise(1980)}`,
+          modelName: noise(5000),
+          inputPrice: noise(5000),
+          outputPrice: noise(5000),
+          structured: true,
+          clearKey: true,
+          apiKey,
+        }),
+      );
 
-      expect(query.get("clearKey")).toBe("1");
+      expect(values.modelName).toHaveLength(201);
+      expect(encodeSentBack(values)).toBeDefined();
     });
 
-    it("keeps the box ticked when the new key is what's refused", () => {
-      const query = modelFormQuery("api-key", input({ apiKey, clearKey: true }));
+    it("fills the form with what it kept", () => {
+      const kept = modelFormValues(input({ apiKey, clearKey: true, structured: true, inputPrice: "2" }));
 
-      expect(query.get("clearKey")).toBe("1");
-      expect(query.get("keyTyped")).toBe("1");
-      expect(query.toString()).not.toContain(apiKey);
-    });
-  });
-
-  describe("going back to the form after a test", () => {
-    it("keeps the settings that were tested, and never the key", () => {
-      const query = modelTestQuery("failed", input({ apiKey, inputPrice: "2", structured: true }), "6f1d5a2c-5b1b-4f0e-9c11-2c1d3e4f5a6b");
-
-      expect(query.toString()).not.toContain(apiKey);
-      expect(Object.fromEntries(query)).toEqual({
+      expect(modelFormFromSentBack(kept)).toEqual({
         providerType: "openai-compatible",
         baseUrl: "https://llm.test/v1",
         modelName: "fake-model",
+        clearKey: true,
+        structured: true,
         inputPrice: "2",
         outputPrice: "",
-        structured: "1",
-        keyTyped: "1",
-        formTest: "failed",
-        formTestId: "6f1d5a2c-5b1b-4f0e-9c11-2c1d3e4f5a6b",
+        keyTyped: true,
       });
     });
 
-    it("leaves the row out when the test made no call", () => {
-      const query = modelTestQuery("unreadable-key", input());
-
-      expect(query.get("formTest")).toBe("unreadable-key");
-      expect(query.has("formTestId")).toBe(false);
-      expect(query.has("keyTyped")).toBe(false);
+    it("carries the ticked box through a refusal", () => {
+      expect(modelFormValues(input({ clearKey: true })).clearKey).toBe("1");
     });
 
-    it("doesn't put a secret in the URL when a base URL holds one", () => {
-      const query = modelTestQuery("ok", input({ baseUrl: "https://llm.test/v1beta?key=sk-sentinel" }), undefined);
+    it("keeps the box ticked when the new key is what's refused", () => {
+      const values = modelFormValues(input({ apiKey, clearKey: true }));
 
-      expect(query.toString()).not.toContain("sk-sentinel");
-      expect(query.get("baseUrl")).toBe("https://llm.test/v1beta");
+      expect(values.clearKey).toBe("1");
+      expect(values.keyTyped).toBe("1");
+      expect(JSON.stringify(values)).not.toContain(apiKey);
     });
   });
 

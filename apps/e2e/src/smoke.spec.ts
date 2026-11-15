@@ -375,7 +375,8 @@ test("the Rules editor keeps a draft only where it should, with and without Java
     const box = noScript.getByLabel("Rule as YAML");
     await box.fill(rule("("));
     await noScript.getByRole("button", { name: "Save rule" }).click();
-    await expect(noScript).toHaveURL(/[?&]draft=/);
+    // The draft comes back from a cookie, and the URL only says a save was refused (#134).
+    await expect(noScript).toHaveURL(/\/rules\/new\?sent-back=1$/);
     await expect(box).toHaveValue(rule("("));
     // Not the page's HTML, which holds the reason in React's data even when nothing shows it.
     await expect(box).toHaveAccessibleDescription(reason);
@@ -935,6 +936,57 @@ test("Check now and Remove keep the keyboard focus in the Sources screen", async
     await expect(row, "the Source is still on the screen after Remove").toHaveCount(0, { timeout: 15_000 });
     await expect(page.locator("#watched")).toBeFocused();
   });
+});
+
+// A refused form's values come back through a cookie its action sets, never the URL, so a link can't
+// fill a form the user might then save (#134). Without JavaScript is where the values have to come
+// back from the server. It runs after the Correction test, which saved the fake-llm model.
+test("a link can't fill the Model, Rules or Sources form, and a refused form keeps its values", async ({ page, browser }) => {
+  test.setTimeout(120_000);
+  await signInAgain(page);
+  const origin = new URL(page.url()).origin;
+  const context = await browser.newContext({ javaScriptEnabled: false, storageState: await page.context().storageState() });
+  const noScript = await context.newPage();
+  const field = (label: string) => noScript.getByLabel(label, { exact: true });
+
+  // The Model screen needs JavaScript (its page says why), and its form's refusal is a redirect either way.
+  await test.step("a link that names a refusal shows the saved model", async () => {
+    await page.goto(`${origin}/model?error=input-price&baseUrl=https://example.com/v1&modelName=theirs`);
+    await expect(visibleField(page, "Base URL")).toHaveValue("http://fake-llm:8080/v1");
+    await expect(visibleField(page, "Model name")).toHaveValue("fake-model");
+  });
+
+  await test.step("a link with a draft opens an empty new rule", async () => {
+    await noScript.goto(`${origin}/rules/new?draft=classifier:%20x`);
+    await expect(field("Rule as YAML")).not.toHaveValue(/classifier: x/);
+  });
+
+  await test.step("a link with a feed URL shows an empty Add Source form", async () => {
+    await noScript.goto(`${origin}/sources?error=duplicate&url=https://example.com/feed`);
+    await expect(field("RSS feed URL")).toHaveValue("");
+  });
+
+  await test.step("a refused model comes back with what was typed, and none of it in the URL", async () => {
+    await page.goto(`${origin}/model?error=base-url`);
+    await visibleField(page, "Base URL").fill("https://someone:secret@llm.test/v1");
+    await visibleField(page, "Model name").fill("typed-model");
+    await page.getByRole("button", { name: "Save model" }).click();
+    await expect(page).toHaveURL(/\/model\?error=base-url$/);
+    // The credentials never come back, and the rest of the address does.
+    await expect(visibleField(page, "Base URL")).toHaveValue("https://llm.test/v1");
+    await expect(visibleField(page, "Model name")).toHaveValue("typed-model");
+  });
+
+  await test.step("a refused Source comes back with what was typed, and none of it in the URL", async () => {
+    await noScript.goto(`${origin}/sources`);
+    await field("RSS feed URL").fill("not a feed address");
+    await field("Name (optional)").fill("Kept name");
+    await noScript.getByRole("button", { name: "Add Source" }).click();
+    await expect(noScript).toHaveURL(/\/sources\?error=invalid-url&type=rss$/);
+    await expect(field("RSS feed URL")).toHaveValue("not a feed address");
+    await expect(field("Name (optional)")).toHaveValue("Kept name");
+  });
+  await context.close();
 });
 
 // A link checker or a monitor reads the status, and Next.js fixes a page's status before the page's
