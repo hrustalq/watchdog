@@ -1,3 +1,4 @@
+import { subDays, subHours } from "date-fns";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { closeDb, createDb, type Db, eq, item, migrate, source, sourceAlert, user, workspace } from "@watchdog/db";
@@ -10,8 +11,7 @@ import { sourceTypes } from "../sources/types.ts";
 import { captureItems, pollSource, type PollSourceDeps } from "./capture.ts";
 
 const now = new Date("2026-11-03T15:00:00Z");
-const day = 24 * 60 * 60 * 1000;
-const hoursAgo = (hours: number) => new Date(now.getTime() - hours * 60 * 60 * 1000);
+const hoursAgo = (hours: number) => subHours(now, hours);
 
 interface Entry {
   id: string;
@@ -115,7 +115,7 @@ describe("pollSource", () => {
     expect(items).toHaveLength(30);
     for (const captured of items) {
       expect(captured.isBackfill).toBe(true);
-      expect(captured.publishedAt?.getTime()).toBeGreaterThanOrEqual(now.getTime() - 7 * day);
+      expect(captured.publishedAt?.getTime()).toBeGreaterThanOrEqual(subDays(now, 7).getTime());
       expect(captured.language).toBe("en");
       expect(captured.workspaceId).toBe(workspaceId);
       expect(captured.summary).toBeNull();
@@ -146,7 +146,7 @@ describe("pollSource", () => {
     const src = await newSource();
     const first = [
       ...hourly("e", 80),
-      { id: "old", published: new Date(now.getTime() - 8 * day) },
+      { id: "old", published: subDays(now, 8) },
       { id: "undated" },
     ];
     serve(src.url, rss(first));

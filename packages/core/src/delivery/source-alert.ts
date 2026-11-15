@@ -1,6 +1,7 @@
 // Source failing and Source recovered alerts (docs: Actions and delivery, "Source Health alerts"). One row
 // per Source change and recipient, sent through the senders Deliveries use, under the same settings.
 import { randomUUID } from "node:crypto";
+import { addMinutes, subHours } from "date-fns";
 import {
   and,
   type Db,
@@ -192,7 +193,7 @@ export async function sendSourceAlert(db: Db, alertId: string, deps: SourceAlert
     // A row whose Source has an alert still waiting from before this change is held back, so a recovery
     // never arrives before the failure it ends. The rest of the change goes now.
     const at = now();
-    const later = new Date(at.getTime() + 60_000);
+    const later = addMinutes(at, 1);
     const blocked = new Set(
       (
         await tx
@@ -268,7 +269,7 @@ export async function sendSourceAlert(db: Db, alertId: string, deps: SourceAlert
             .where(
               and(
                 eq(sentMessage.destinationId, target.id),
-                gt(sentMessage.sentAt, new Date(at.getTime() - 60 * 60 * 1000)),
+                gt(sentMessage.sentAt, subHours(at, 1)),
               ),
             )
             .orderBy(sentMessage.sentAt);

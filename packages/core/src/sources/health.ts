@@ -1,4 +1,5 @@
 // A Source's Health after a poll or push ends (docs: Sources and ingestion, "Source Health").
+import { differenceInHours } from "date-fns";
 import type { source } from "@watchdog/db";
 
 type SourceRow = typeof source.$inferSelect;
@@ -7,9 +8,9 @@ export type HealthState = Pick<SourceRow, "health" | "consecutiveFailures" | "la
 
 const degradedAfter = 3;
 const failingAfter = 10;
-const failingAfterMs = 24 * 60 * 60 * 1000;
+const failingAfterHours = 24;
 /** Failures in a row before the 24 hours with no success count. */
-const failingAfterMsFrom = 2;
+const failingAfterHoursFrom = 2;
 
 /** A failing Source is polled at most this often until it recovers. */
 export const failingPollGapMs = 60 * 60 * 1000;
@@ -30,7 +31,7 @@ export function healthAfter(
   const failing =
     state.health === "failing" ||
     consecutiveFailures >= failingAfter ||
-    (consecutiveFailures >= failingAfterMsFrom && outcome.at.getTime() - since.getTime() >= failingAfterMs);
+    (consecutiveFailures >= failingAfterHoursFrom && differenceInHours(outcome.at, since) >= failingAfterHours);
   const otherwise = consecutiveFailures >= degradedAfter ? "degraded" : "ok";
   return { health: failing ? "failing" : otherwise, consecutiveFailures, lastSuccessAt: state.lastSuccessAt };
 }

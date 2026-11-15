@@ -1,10 +1,10 @@
 // robots.txt, read before each fetch of a website Source's page (docs: Sources and ingestion,
 // "Website change detection"; ADR 0015), under RFC 9309.
+import { addDays } from "date-fns";
 import type { createEgressFetch } from "../../egress/egress.ts";
 
 /** The User-Agent product token robots.txt groups name Watchdog by. */
 const token = "watchdog";
-const day = 24 * 60 * 60 * 1000;
 /** RFC 9309 lets a crawler stop parsing after 500 KiB. */
 const maxParsedBytes = 500 * 1024;
 
@@ -30,7 +30,7 @@ export async function checkRobots(
   let cached = cache.get(page.origin);
   if (cached === undefined || cached.until <= now) {
     for (const [origin, entry] of cache) if (entry.until <= now) cache.delete(origin);
-    cached = { rules: await fetchRules(url, deps), until: now + day };
+    cached = { rules: await fetchRules(url, deps), until: addDays(deps.now, 1).getTime() };
     cache.set(page.origin, cached);
   }
   if (!allows(cached.rules, encoded(page.pathname + page.search))) {

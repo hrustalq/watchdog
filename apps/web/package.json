@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",
+    "@date-fns/tz": "^1.5.0",
     "@shadcn/react": "^0.3.1",
     "@watchdog/core": "workspace:*",
     "@watchdog/db": "workspace:*",

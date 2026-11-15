@@ -1,4 +1,8 @@
+import { format } from "date-fns";
+import { tz } from "@date-fns/tz";
 import { cn } from "@/lib/utils";
+
+const utc = tz("UTC");
 
 /**
  * A UTC time in Data type, as Schedules run in UTC. To the minute, or the second for a Log.
@@ -10,9 +14,9 @@ export function Timestamp({ at, seconds = false, className }: { at: Date; second
   const iso = at.toISOString();
   return (
     <time dateTime={iso} className={cn("font-mono text-[0.8125rem]", className)}>
-      <span className="whitespace-nowrap">{iso.slice(0, 10)}</span>{" "}
+      <span className="whitespace-nowrap">{format(at, "yyyy-MM-dd", { in: utc })}</span>{" "}
       <span className="whitespace-nowrap">
-        {iso.slice(11, seconds ? 19 : 16)} UTC
+        {format(at, seconds ? "HH:mm:ss" : "HH:mm", { in: utc })} UTC
       </span>
     </time>
   );

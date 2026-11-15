@@ -1,6 +1,7 @@
 // What GitHub's issues and mentions kinds share: the token, the API headers and the rate limits
 // (docs: Sources and ingestion, "The token" and "Rate limits").
 import { createHash } from "node:crypto";
+import { addMinutes, startOfMinute } from "date-fns";
 import { account, and, type Db, eq, githubRateLimit, sql, workspace } from "@watchdog/db";
 import { symmetricDecrypt } from "better-auth/crypto";
 import { decryptSecret } from "../../secrets/secrets.ts";
@@ -152,7 +153,7 @@ export async function githubGet(
   if (resource === "search") {
     // One row per token counts its calls in the current minute, so concurrent polls on several
     // workers take turns at the row and can't both take the last call.
-    const minute = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
+    const minute = startOfMinute(now);
     const [counted] = await db
       .insert(githubRateLimit)
       .values({ tokenHash, resource, windowStart: minute, windowCalls: 1 })
@@ -165,7 +166,7 @@ export async function githubGet(
         },
       })
       .returning({ calls: githubRateLimit.windowCalls });
-    if ((counted?.calls ?? 0) > searchPerMinute) return { deferUntil: new Date(minute.getTime() + 60_000) };
+    if ((counted?.calls ?? 0) > searchPerMinute) return { deferUntil: addMinutes(minute, 1) };
   }
 
   const response = await fetch(url, {

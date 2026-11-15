@@ -1,15 +1,17 @@
 // What a Workspace's model calls add up to, as the Usage screen shows it (ADR 0008). Months are UTC
 // and written `YYYY-MM`. Every query is scoped to the Workspace.
+import { addMonths, format, parse, startOfMonth } from "date-fns";
+import { tz, TZDate } from "@date-fns/tz";
 import { agentCall, and, type Db, eq, gte, lt, modelConfig, type SQL, sql } from "@watchdog/db";
 
-const monthStart = (month: string) => new Date(`${month}-01T00:00:00.000Z`);
+const utc = tz("UTC");
 
-const monthOf = (at: Date) => at.toISOString().slice(0, 7);
+const monthStart = (month: string) => startOfMonth(parse(month, "yyyy-MM", new TZDate(0, "UTC")));
+
+const monthOf = (at: Date) => format(at, "yyyy-MM", { in: utc });
 
 export function shiftMonth(month: string, by: number) {
-  const date = monthStart(month);
-  date.setUTCMonth(date.getUTCMonth() + by);
-  return monthOf(date);
+  return monthOf(addMonths(monthStart(month), by));
 }
 
 /** The month a URL asks for. Anything but a real month up to `now` means the current one. */
@@ -18,8 +20,7 @@ export function parseMonth(value: unknown, now: Date) {
   return typeof value === "string" && /^20\d{2}-(0[1-9]|1[0-2])$/.test(value) && value <= current ? value : current;
 }
 
-export const monthLabel = (month: string) =>
-  new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(monthStart(month));
+export const monthLabel = (month: string) => format(monthStart(month), "MMMM yyyy", { in: utc });
 
 /** Prices have no currency, so neither does this. A cost too small to show still isn't nothing. */
 export const formatCost = (cost: number) =>

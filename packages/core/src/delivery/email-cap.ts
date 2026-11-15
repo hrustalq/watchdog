@@ -1,6 +1,8 @@
 // Hosted sends a Workspace at most 50 alert mails per local day (docs: Actions and delivery, "The hosted
 // email cap"; Business model and licensing). Self-hosted has no cap, so it passes none of this.
-import { and, type Db, eq, sentMessage, sql, type Tx, user, workspace } from "@watchdog/db";
+import { addDays, startOfDay } from "date-fns";
+import { TZDate } from "@date-fns/tz";
+import { and, type Db, eq, gte, lt, sentMessage, sql, type Tx, user, workspace } from "@watchdog/db";
 import type { Mailer } from "../mail/mailer.ts";
 
 const mailsPerDay = 50;
@@ -22,27 +24,25 @@ export async function takeEmailCapTurn(tx: Tx, workspaceId: string) {
 }
 
 /**
- * The mails a Workspace has sent in its local day so far, and when that day ends. The local day comes
- * from Postgres, because a cron iterator throws on a day whose midnight doesn't exist. A group-less
- * `count(*)` always gives one row; the fallback is for the type, and claims no room.
+ * The mails a Workspace has sent in its local day so far, and when that day ends. The day's first
+ * instant is the one that exists, so a day whose midnight the clocks skip starts when they land past
+ * it. A group-less `count(*)` always gives one row; the fallback is for the type, and claims no room.
  */
 async function emailCapDay(tx: Tx, settings: typeof workspace.$inferSelect, now: Date) {
-  const timezone = sql`${settings.timezone}::text`;
-  const today = sql`(${now.toISOString()}::timestamptz at time zone ${timezone})::date`;
+  const dayStart = startOfDay(new TZDate(now.getTime(), settings.timezone));
+  const dayEnd = startOfDay(addDays(dayStart, 1));
   const [sent] = await tx
-    .select({
-      mails: sql<number>`count(*)`.mapWith(Number),
-      dayEnd: sql<Date>`((${today} + 1)::timestamp at time zone ${timezone})`.mapWith(sentMessage.sentAt),
-    })
+    .select({ mails: sql<number>`count(*)`.mapWith(Number) })
     .from(sentMessage)
     .where(
       and(
         eq(sentMessage.workspaceId, settings.id),
         eq(sentMessage.type, "email"),
-        sql`${sentMessage.sentAt} >= (${today}::timestamp at time zone ${timezone})`,
+        gte(sentMessage.sentAt, dayStart),
+        lt(sentMessage.sentAt, dayEnd),
       ),
     );
-  return sent ?? { mails: mailsPerDay, dayEnd: now };
+  return sent === undefined ? { mails: mailsPerDay, dayEnd: now } : { ...sent, dayEnd };
 }
 
 /**

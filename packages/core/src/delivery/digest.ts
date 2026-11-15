@@ -1,6 +1,7 @@
 // Sends a Digest on its schedule: the Items it collected, in one message per Destination (docs: Actions
 // and delivery, "Digests" and "Deliveries"). The worker's sweep finds the due ones, and a job per Digest
 // sends it.
+import { isAfter } from "date-fns";
 import {
   action,
   actionDestination,
@@ -56,9 +57,9 @@ interface Schedulable {
 function isDue({ definition, digestRanAt, updatedAt, timezone }: Schedulable, now: Date) {
   const digest = digestOf(definition);
   if (digest === undefined) return false;
-  const since = digestRanAt !== null && digestRanAt > updatedAt ? digestRanAt : updatedAt;
+  const since = digestRanAt !== null && isAfter(digestRanAt, updatedAt) ? digestRanAt : updatedAt;
   try {
-    return nextFiring(digest.schedule, since, timezone) <= now;
+    return !isAfter(nextFiring(digest.schedule, since, timezone), now);
   } catch {
     // A timezone Intl doesn't know. The Settings screen checks it, so this is a row written by hand.
     return false;

@@ -1,6 +1,7 @@
 // The Feed as the Workspace screen reads it, in its Top and Latest views (docs: Processing pipeline,
 // "Feed"). Every query is scoped to the Workspace, so another Workspace's Item id behaves like a
 // missing one.
+import { isValid, parseISO } from "date-fns";
 import { localDateTime } from "@watchdog/core";
 import {
   action,
@@ -41,8 +42,8 @@ function isStamp(text: string) {
   const seconds = stampPattern.exec(text)?.[1];
   // Postgres has no year 0, and a JS Date rolls a day that doesn't exist into the next month.
   if (seconds === undefined || seconds.startsWith("0000")) return false;
-  const date = new Date(`${seconds}Z`);
-  return !Number.isNaN(date.getTime()) && date.toISOString().startsWith(seconds);
+  const date = parseISO(`${seconds}Z`);
+  return isValid(date) && date.toISOString().startsWith(seconds);
 }
 
 /**
