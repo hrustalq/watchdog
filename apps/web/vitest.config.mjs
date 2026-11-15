@@ -4,5 +4,5 @@ import { defineConfig } from "vitest/config";
 // The `@/` alias mirrors tsconfig's paths, so a component test can load a component that imports it.
 export default defineConfig({
   resolve: { alias: [{ find: /^@\//, replacement: `${import.meta.dirname}/src/` }] },
-  test: { testTimeout: 60_000, hookTimeout: 60_000 },
+  test: { testTimeout: 60_000, hookTimeout: 60_000, globalSetup: ["@watchdog/db/testing/global-setup"] },
 });

@@ -1,7 +1,3 @@
 # Test files known to flake under a loaded full run. The gate in scripts/test-gate.mjs
 # reruns exactly these files once when they are the only failures; every other failure
 # fails the build. Keep each line repo-relative, and remove the line when its issue closes.
-# #436: a testcontainers connection and a Settings read that four suites at once starve;
-# both pass when their own package runs alone.
-packages/db/src/rule.int.test.ts
-apps/web/src/lib/settings.int.test.ts
