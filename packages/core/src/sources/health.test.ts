@@ -37,17 +37,30 @@ describe("healthAfter", () => {
     expect(failing(2, recovered, 4)).toMatchObject({ health: "ok", consecutiveFailures: 2 });
   });
 
-  it("is failing on a failed poll 24 hours after the last success, however few failed", () => {
+  it("is failing on the second failed poll in a row 24 hours after the last success", () => {
     const succeeded = { ...fresh, lastSuccessAt: minutesLater(60) };
-    const justUnder = healthAfter(succeeded, { at: minutesLater(60 + 24 * 60 - 1), failed: true });
-    expect(justUnder).toMatchObject({ health: "ok", consecutiveFailures: 1 });
-    const dayLater = healthAfter(succeeded, { at: minutesLater(60 + 24 * 60), failed: true });
-    expect(dayLater).toMatchObject({ health: "failing", consecutiveFailures: 1 });
+    const once = failing(1, succeeded, 61);
+    const justUnder = healthAfter(once, { at: minutesLater(60 + 24 * 60 - 1), failed: true });
+    expect(justUnder).toMatchObject({ health: "ok", consecutiveFailures: 2 });
+    const dayLater = healthAfter(once, { at: minutesLater(60 + 24 * 60), failed: true });
+    expect(dayLater).toMatchObject({ health: "failing", consecutiveFailures: 2 });
+  });
+
+  it("keeps a daily Source ok on its first failed poll and makes it failing on the second", () => {
+    const day = 24 * 60;
+    const succeeded = { ...fresh, lastSuccessAt: minutesLater(day) };
+    const first = { ...succeeded, ...healthAfter(succeeded, { at: minutesLater(2 * day), failed: true }) };
+    expect(first).toMatchObject({ health: "ok", consecutiveFailures: 1 });
+    expect(healthAfter(first, { at: minutesLater(3 * day), failed: true })).toMatchObject({
+      health: "failing",
+      consecutiveFailures: 2,
+    });
   });
 
   it("counts the 24 hours from when a Source that never succeeded was created", () => {
-    expect(healthAfter(fresh, { at: minutesLater(24 * 60 - 1), failed: true }).health).toBe("ok");
-    expect(healthAfter(fresh, { at: minutesLater(24 * 60), failed: true }).health).toBe("failing");
+    const once = failing(1);
+    expect(healthAfter(once, { at: minutesLater(24 * 60 - 1), failed: true }).health).toBe("ok");
+    expect(healthAfter(once, { at: minutesLater(24 * 60), failed: true }).health).toBe("failing");
   });
 
   it("keeps a failing Source failing on another failed poll, and its last success", () => {
