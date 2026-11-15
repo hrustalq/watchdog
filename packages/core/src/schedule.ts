@@ -61,13 +61,19 @@ function findError(schedule: string, mode: Mode | undefined) {
   return undefined;
 }
 
+/** The schedule a poll reads: the one asked for when the mode accepts it, the default otherwise. */
+function usableSchedule(schedule: string, mode: Mode) {
+  if (scheduleError(schedule, mode) === undefined) return schedule;
+  return defaultSchedule;
+}
+
 /**
  * When a Source on this schedule is next polled after `now`: the schedule's next firing plus up to
  * 10% of its interval, at most 60 s, so Sources on one schedule don't all poll in the same second.
  * A schedule the mode refuses polls on the default instead.
  */
 export function nextPollAt(schedule: string, mode: Mode, now: Date, random = Math.random): Date {
-  const usable = scheduleError(schedule, mode) === undefined ? schedule : defaultSchedule;
+  const usable = usableSchedule(schedule, mode);
   const firings = CronExpressionParser.parse(usable.trim(), { currentDate: now, tz: "UTC" });
   const next = firings.next().getTime();
   const interval = firings.next().getTime() - next;

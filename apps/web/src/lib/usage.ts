@@ -14,19 +14,28 @@ export function shiftMonth(month: string, by: number) {
   return monthOf(addMonths(monthStart(month), by));
 }
 
+/** A month a URL can ask for, `YYYY-MM`. */
+const monthPattern = /^20\d{2}-(0[1-9]|1[0-2])$/;
+
+/** Whether a value is a real month up to `current`. */
+function isMonthUpTo(value: unknown, current: string): value is string {
+  return typeof value === "string" && monthPattern.test(value) && value <= current;
+}
+
 /** The month a URL asks for. Anything but a real month up to `now` means the current one. */
 export function parseMonth(value: unknown, now: Date) {
   const current = monthOf(now);
-  return typeof value === "string" && /^20\d{2}-(0[1-9]|1[0-2])$/.test(value) && value <= current ? value : current;
+  if (!isMonthUpTo(value, current)) return current;
+  return value;
 }
 
 export const monthLabel = (month: string) => format(monthStart(month), "MMMM yyyy", { in: utc });
 
 /** Prices have no currency, so neither does this. A cost too small to show still isn't nothing. */
-export const formatCost = (cost: number) =>
-  cost > 0 && cost < 0.0001
-    ? "<0.0001"
-    : cost.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+export function formatCost(cost: number) {
+  if (cost > 0 && cost < 0.0001) return "<0.0001";
+  return cost.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+}
 
 export const purposeLabel: Record<(typeof agentCall.$inferSelect)["purpose"], string> = {
   classify: "Classify",
@@ -57,6 +66,12 @@ export interface UsageTally {
 /** Whether a cost leaves calls out, so the real one can only be higher. */
 export const isFloor = (tally: UsageTally) => tally.unpricedCalls > 0 || tally.withoutTokens > 0;
 
+/** The cost two tallies add to: null only when neither recorded a price. */
+function addCost(a: number | null, b: number | null) {
+  if (a === null && b === null) return null;
+  return (a ?? 0) + (b ?? 0);
+}
+
 const add = (a: UsageTally, b: UsageTally): UsageTally => ({
   calls: a.calls + b.calls,
   failed: a.failed + b.failed,
@@ -64,15 +79,20 @@ const add = (a: UsageTally, b: UsageTally): UsageTally => ({
   outputTokens: a.outputTokens + b.outputTokens,
   withoutTokens: a.withoutTokens + b.withoutTokens,
   unpricedCalls: a.unpricedCalls + b.unpricedCalls,
-  cost: a.cost === null && b.cost === null ? null : (a.cost ?? 0) + (b.cost ?? 0),
+  cost: addCost(a.cost, b.cost),
 });
 
 /** One row per key, largest first. Other fields come from the key's first row, so the caller narrows the type. */
 function rollUp<Row extends UsageTally>(rows: Row[], keyOf: (row: Row) => string) {
   const groups = new Map<string, Row>();
   for (const row of rows) {
-    const seen = groups.get(keyOf(row));
-    groups.set(keyOf(row), seen === undefined ? row : { ...seen, ...add(seen, row) });
+    const key = keyOf(row);
+    const seen = groups.get(key);
+    if (seen === undefined) {
+      groups.set(key, row);
+      continue;
+    }
+    groups.set(key, { ...seen, ...add(seen, row) });
   }
   const tokens = (row: Row) => row.inputTokens + row.outputTokens;
   return [...groups.values()].toSorted(
@@ -94,6 +114,12 @@ const cost = sql<number>`coalesce(sum(
       + coalesce(${agentCall.outputTokens}, 0) * ${agentCall.outputPricePerMillion}) / 1000000
   end
 ), 0)`.mapWith(Number);
+
+/** The month of a Workspace's first call, or undefined when it has never made one. */
+function firstMonthOf(first: { at: Date } | undefined) {
+  if (first === undefined) return undefined;
+  return monthOf(first.at);
+}
 
 /**
  * A month's usage per model, one line per provider type, base URL and model name, so a model
@@ -167,6 +193,6 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
     models,
     purposes,
     total: rows.reduce<UsageTally>(add, nothing),
-    firstMonth: first === undefined ? undefined : monthOf(first.at),
+    firstMonth: firstMonthOf(first),
   };
 }

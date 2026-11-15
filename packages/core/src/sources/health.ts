@@ -15,6 +15,23 @@ const failingAfterHoursFrom = 2;
 /** A failing Source is polled at most this often until it recovers. */
 export const failingPollGapMs = 60 * 60 * 1000;
 
+/** Whether failed polls have gone on for a day, counted from the last success or from creation. */
+function failingForADay(consecutiveFailures: number, at: Date, since: Date) {
+  return consecutiveFailures >= failingAfterHoursFrom && differenceInHours(at, since) >= failingAfterHours;
+}
+
+/** The Health after another failure: a failing Source stays failing until a success. */
+function failedHealth(state: HealthState, consecutiveFailures: number, at: Date): SourceRow["health"] {
+  const since = state.lastSuccessAt ?? state.createdAt;
+  const failing =
+    state.health === "failing" ||
+    consecutiveFailures >= failingAfter ||
+    failingForADay(consecutiveFailures, at, since);
+  if (failing) return "failing";
+  if (consecutiveFailures >= degradedAfter) return "degraded";
+  return "ok";
+}
+
 /**
  * The Health columns after an outcome. One success makes a Source ok. Failures count in a row: degraded
  * at 3, failing at 10, or failing from the second failed poll in a row when nothing has succeeded for
@@ -27,11 +44,9 @@ export function healthAfter(
 ): Pick<SourceRow, "health" | "consecutiveFailures" | "lastSuccessAt"> {
   if (!outcome.failed) return { health: "ok", consecutiveFailures: 0, lastSuccessAt: outcome.at };
   const consecutiveFailures = state.consecutiveFailures + 1;
-  const since = state.lastSuccessAt ?? state.createdAt;
-  const failing =
-    state.health === "failing" ||
-    consecutiveFailures >= failingAfter ||
-    (consecutiveFailures >= failingAfterHoursFrom && differenceInHours(outcome.at, since) >= failingAfterHours);
-  const otherwise = consecutiveFailures >= degradedAfter ? "degraded" : "ok";
-  return { health: failing ? "failing" : otherwise, consecutiveFailures, lastSuccessAt: state.lastSuccessAt };
+  return {
+    health: failedHealth(state, consecutiveFailures, outcome.at),
+    consecutiveFailures,
+    lastSuccessAt: state.lastSuccessAt,
+  };
 }

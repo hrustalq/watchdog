@@ -34,7 +34,8 @@ export function wallInstants(wall: number, timezone: string) {
  */
 export function wallToInstant(wall: number, timezone: string) {
   const instants = wallInstants(wall, timezone);
-  return instants.length > 0 ? Math.min(...instants) : wall - offsetAt(wall - day, timezone);
+  if (instants.length > 0) return Math.min(...instants);
+  return wall - offsetAt(wall - day, timezone);
 }
 
 const step = 15 * 60 * 1000;
