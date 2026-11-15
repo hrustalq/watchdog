@@ -1,4 +1,5 @@
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { get } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { PostgreSqlContainer } from "@testcontainers/postgresql";
@@ -17,8 +18,8 @@ export interface TestPostgres {
 
 declare module "vitest" {
   export interface ProvidedContext {
-    /** The run's shared Postgres server, which `global-setup.ts` starts. */
-    postgresServerUrl?: string;
+    /** Answers with the URL of the run's shared Postgres server, started by `global-setup.ts`. */
+    postgresBroker?: string;
   }
 }
 
@@ -38,15 +39,30 @@ export async function startPostgresServer(): Promise<TestPostgres> {
   };
 }
 
+/** The shared server's URL, asked of the global setup with node:http, which a test's stubbed fetch can't reach. */
+function sharedServer(broker: string) {
+  return new Promise<string>((resolve, reject) => {
+    get(broker, (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (chunk: string) => (body += chunk));
+      response.on("end", () => {
+        if (response.statusCode === 200) resolve(body);
+        else reject(new Error(`The test Postgres server didn't start: ${body}`));
+      });
+    }).on("error", reject);
+  });
+}
+
 /**
- * A throwaway database for an integration test. Needs Docker. On the server the package's global setup
- * started it's a new database, created in well under a second, so test files don't each start a
- * container, which starved a machine running four packages at once (#436). Without that setup it
- * starts a server of its own.
+ * A throwaway database for an integration test. Needs Docker. On the package's shared server it's a new
+ * database, created in well under a second, so test files don't each start a container, which starved a
+ * machine running four packages at once (#436). Without the global setup it starts a server of its own.
  */
 export async function startPostgres(): Promise<TestPostgres> {
-  const serverUrl = inject("postgresServerUrl");
-  if (serverUrl === undefined) return startPostgresServer();
+  const broker = inject("postgresBroker");
+  if (broker === undefined) return startPostgresServer();
+  const serverUrl = await sharedServer(broker);
   const name = `test_${crypto.randomUUID().replaceAll("-", "")}`;
   const admin = async (statement: string) => {
     const client = new Client({ connectionString: serverUrl });
