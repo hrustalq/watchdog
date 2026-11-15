@@ -9,7 +9,7 @@ import {
   testConnection,
   testModelSettings,
 } from "@/lib/model";
-import { clearSentBack, keepSentBack } from "@/lib/sent-back";
+import { keepSentBack } from "@/lib/sent-back";
 import { requireWorkspace, server } from "@/lib/server";
 
 // Every action ends in a redirect, as on Sources. The page reads the outcome from the URL, and what
@@ -42,7 +42,6 @@ export async function saveModelAction(formData: FormData) {
     await keepSentBack("/model", modelFormValues(input));
     redirect(`/model?${new URLSearchParams({ error: result.problem })}`);
   }
-  await clearSentBack("/model");
   redirect(result.keyLeftBehind ? "/model?saved=key-left-behind" : "/model?saved=1");
 }
 

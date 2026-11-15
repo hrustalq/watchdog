@@ -5,7 +5,8 @@ import { server } from "./server.ts";
  * What a refused form held, for the page its action redirects to. It goes in a cookie, never the URL
  * (#134): a link can't set a cookie, so a URL alone never fills a form, and the values stay out of
  * access logs and browser history. Each screen scopes the cookie to its own path, and it lasts long
- * enough for the redirect and a reload. A page can't delete a cookie, so the next save clears it.
+ * enough for the redirect and a reload. It isn't cleared after a save: only a page whose URL says
+ * a form was refused reads it.
  */
 export type SentBack = Record<string, string>;
 
@@ -20,11 +21,11 @@ export function encodeSentBack(values: SentBack): string | undefined {
   return value.length > maxValueLength ? undefined : value;
 }
 
-export function decodeSentBack(value: string | undefined): SentBack | undefined {
-  if (value === undefined || value === "") return undefined;
+/** Undefined for no cookie, or one that isn't ours. An empty value is bad JSON, which throws. */
+export function decodeSentBack(value = ""): SentBack | undefined {
   try {
     const parsed: unknown = JSON.parse(Buffer.from(value, "base64url").toString());
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+    if (typeof parsed !== "object" || parsed === null) return undefined;
     const entries = Object.entries(parsed);
     return entries.every(([, field]) => typeof field === "string") ? Object.fromEntries(entries) : undefined;
   } catch {
@@ -49,10 +50,6 @@ async function setSentBack(path: string, value: string, maxAge: number) {
 export async function keepSentBack(path: string, values: SentBack) {
   const value = encodeSentBack(values);
   await setSentBack(path, value ?? "", value === undefined ? 0 : maxAgeSeconds);
-}
-
-export async function clearSentBack(path: string) {
-  await setSentBack(path, "", 0);
 }
 
 /** The values kept for this page, if any. Only a page whose URL says a form was refused reads them. */

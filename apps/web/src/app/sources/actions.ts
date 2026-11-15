@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireWorkspace, server } from "@/lib/server";
 import { replaceInboxToken } from "@/lib/inbox";
-import { clearSentBack, keepSentBack } from "@/lib/sent-back";
+import { keepSentBack } from "@/lib/sent-back";
 import {
   addFormSource,
   addValues,
@@ -41,7 +41,6 @@ export async function addSource(formData: FormData) {
   // The form says Telegram isn't set up, and a post from before that isn't one to act on.
   if (values.type === "telegram" && !telegramAvailable) redirect("/sources");
   const result = await addFormSource(db, { fetch, mode, encryptionKey, renderers }, workspace.id, { ...values, token });
-  if ("source" in result) await clearSentBack("/sources");
   // An inbox's page shows its URL, once. The id in the URL is all it carries.
   if ("source" in result && values.type === "webhook") redirect(`/sources/${result.source.id}/inbox`);
   if ("source" in result && result.code !== undefined) await showSourceLink(result.source.id, result.code);

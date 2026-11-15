@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { isMap, type RuleProblem, yamlWithoutScript } from "@/lib/rule-draft";
 import { isRuleType, removeRule, type RuleTarget, saveRule, setRuleEnabled } from "@/lib/rules";
-import { clearSentBack, keepSentBack } from "@/lib/sent-back";
+import { keepSentBack } from "@/lib/sent-back";
 import { requireWorkspace, server } from "@/lib/server";
 
 export interface SaveState {
@@ -51,10 +51,7 @@ export async function saveRuleAction(
 
   const { db, mode, ruleLimits } = server();
   const result = await saveRule(db, workspace.id, target, yaml, mode, ruleLimits);
-  if ("saved" in result) {
-    await clearSentBack(editorPath(target));
-    redirect("/rules?saved=1");
-  }
+  if ("saved" in result) redirect("/rules?saved=1");
   if (typeof withoutScript === "string") redirect(await editorWithDraft(target, yaml));
   return { problems: result.problems };
 }
