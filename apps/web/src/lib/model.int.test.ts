@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { createAgentFetch, decryptSecret, keyFingerprint } from "@watchdog/core";
 import { type FakeRequest, fakeLlm } from "@watchdog/core/testing";
@@ -18,6 +19,7 @@ import {
 import { startPostgres } from "@watchdog/db/testing";
 import { beforeAll, describe, expect, it } from "vitest";
 import { hasActiveModel } from "./rules.ts";
+import { encodeSentBack } from "./sent-back.ts";
 import {
   getModel,
   hasUnreadableKey,
@@ -25,6 +27,7 @@ import {
   type ModelDeps,
   type ModelInput,
   type ModelProblem,
+  modelFormFromSentBack,
   modelFormValues,
   type PriceProblem,
   removeModel,
@@ -994,6 +997,39 @@ describe("the Model screen", () => {
 
       expect(values).not.toHaveProperty("keyTyped");
       expect(values).not.toHaveProperty("structured");
+    });
+
+    it("cuts a model name or price too long to keep, so the values always fit their cookie", () => {
+      const noise = (length: number) => randomBytes(length).toString("hex").slice(0, length);
+      const values = modelFormValues(
+        input({
+          baseUrl: `https://llm.test/${noise(1980)}`,
+          modelName: noise(5000),
+          inputPrice: noise(5000),
+          outputPrice: noise(5000),
+          structured: true,
+          clearKey: true,
+          apiKey,
+        }),
+      );
+
+      expect(values.modelName).toHaveLength(201);
+      expect(encodeSentBack(values)).toBeDefined();
+    });
+
+    it("fills the form with what it kept", () => {
+      const kept = modelFormValues(input({ apiKey, clearKey: true, structured: true, inputPrice: "2" }));
+
+      expect(modelFormFromSentBack(kept)).toEqual({
+        providerType: "openai-compatible",
+        baseUrl: "https://llm.test/v1",
+        modelName: "fake-model",
+        clearKey: true,
+        structured: true,
+        inputPrice: "2",
+        outputPrice: "",
+        keyTyped: true,
+      });
     });
 
     it("carries the ticked box through a refusal", () => {

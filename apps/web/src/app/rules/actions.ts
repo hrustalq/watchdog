@@ -26,9 +26,7 @@ const editorPath = (target: RuleTarget | null) =>
  */
 async function editorWithDraft(target: RuleTarget | null, draft: string) {
   const path = editorPath(target);
-  // A draft too long for the cookie isn't kept, and the editor says so.
-  await keepSentBack(path, { draft });
-  return `${path}?sent-back=1`;
+  return (await keepSentBack(path, { draft })) ? `${path}?sent-back=1` : `${path}?draft-too-long=1`;
 }
 
 /**

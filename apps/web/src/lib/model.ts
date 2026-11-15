@@ -71,8 +71,13 @@ const webUrl = (text: string) => {
 /** Without a trailing slash, an address has one spelling to compare. */
 const address = (url: URL) => `${url.origin}${url.pathname}`.replace(/\/+$/, "");
 
-/** Longer than any real base URL, and short enough that the form's values fit in their cookie. */
+/**
+ * Longer than any real value, and short enough that the form's values always fit in their cookie. A
+ * model name keeps one character past its limit, so a name refused as too long still shows as one.
+ */
 const maxBaseUrlSentBack = 2000;
+const maxModelNameSentBack = 201;
+const maxPriceSentBack = 50;
 
 /**
  * The form's values after a submit that saved nothing, a refusal or a test, for the page to fill the
@@ -85,12 +90,27 @@ export function modelFormValues(input: ModelInput): Record<string, string> {
   return {
     providerType: input.providerType,
     baseUrl: baseUrl.length > maxBaseUrlSentBack ? "" : baseUrl,
-    modelName: input.modelName,
-    inputPrice: input.inputPrice,
-    outputPrice: input.outputPrice,
+    modelName: input.modelName.slice(0, maxModelNameSentBack),
+    inputPrice: input.inputPrice.slice(0, maxPriceSentBack),
+    outputPrice: input.outputPrice.slice(0, maxPriceSentBack),
     ...(input.structured ? { structured: "1" } : {}),
     ...(input.clearKey ? { clearKey: "1" } : {}),
     ...(input.apiKey.trim() === "" ? {} : { keyTyped: "1" }),
+  };
+}
+
+/** The form again from what `modelFormValues` kept. */
+export function modelFormFromSentBack(kept: Record<string, string>) {
+  const field = (name: string) => kept[name] ?? "";
+  return {
+    providerType: field("providerType"),
+    baseUrl: field("baseUrl"),
+    modelName: field("modelName"),
+    clearKey: field("clearKey") !== "",
+    structured: field("structured") !== "",
+    inputPrice: field("inputPrice"),
+    outputPrice: field("outputPrice"),
+    keyTyped: field("keyTyped") !== "",
   };
 }
 

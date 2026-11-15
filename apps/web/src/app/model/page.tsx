@@ -7,6 +7,7 @@ import { buttonVariants } from "@/components/ui/button";
 import {
   getModel,
   lastFailedCall,
+  modelFormFromSentBack,
   modelProblems,
   providerTypes,
   type StoredKey,
@@ -109,19 +110,8 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
   // Only a refusal or a test the user made leaves its values in the cookie, so a link that only
   // names one shows the saved model (#134).
   const sentBack = problem === undefined && formTest === undefined ? undefined : await readSentBack();
-  const back = (name: string) => sentBack?.[name] ?? "";
-  const values: ModelFormValues =
-    sentBack === undefined
-      ? saved
-      : {
-          providerType: back("providerType"),
-          baseUrl: back("baseUrl"),
-          modelName: back("modelName"),
-          clearKey: back("clearKey") !== "",
-          structured: back("structured") !== "",
-          inputPrice: back("inputPrice"),
-          outputPrice: back("outputPrice"),
-        };
+  const { keyTyped, ...values }: ModelFormValues & { keyTyped: boolean } =
+    sentBack === undefined ? { ...saved, keyTyped: false } : modelFormFromSentBack(sentBack);
 
   // A call the form's test made says why it failed on the row it was metered against.
   const formTestReason =
@@ -241,7 +231,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
               values={values}
               storedKey={model?.storedKey ?? "none"}
               problem={problem}
-              keyTyped={back("keyTyped") !== ""}
+              keyTyped={keyTyped}
             />
           </div>
         </details>

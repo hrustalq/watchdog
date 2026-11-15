@@ -95,10 +95,10 @@ async function AddSourceFormWithOutcome({ params }: { params: Awaited<PageProps<
   if (problem === undefined) {
     return <AddSourceForm githubSignIn={githubSignIn} mode={mode} renderers={renderers} telegramAvailable={telegramAvailable} />;
   }
-  // Only the user's own refused form leaves what it held in the cookie. None means it was too long.
+  // Only the user's own refused form leaves what it held in the cookie.
   const sentBack = await readSentBack();
   const values = sentBack === undefined ? blank : addValues((name) => sentBack[name] ?? "");
-  const lost = sentBack === undefined ? " What you entered was too long to bring back, so enter it again." : "";
+  const lost = param("too-long") === "" ? "" : " What you entered was too long to bring back, so enter it again.";
   // Only the code travels in the URL, so the Source it's already watched as is looked up.
   const watching = problem === "duplicate" ? await watchedSourceName(db, workspace.id, values) : undefined;
   const shown = { ...values, status: param("status"), mode, source: watching };

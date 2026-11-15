@@ -46,9 +46,10 @@ export async function addSource(formData: FormData) {
   if ("source" in result && result.code !== undefined) await showSourceLink(result.source.id, result.code);
   // The type stays chosen, so a second repo or feed can follow without choosing it again.
   if ("source" in result) redirect(`/sources?${new URLSearchParams({ added: "1", type: values.type })}`);
-  await keepSentBack("/sources", { ...values });
+  const kept = await keepSentBack("/sources", { ...values });
   // The type picks the form to show, even when the values were too long to keep.
   const back = new URLSearchParams({ error: result.problem, type: values.type });
+  if (!kept) back.set("too-long", "1");
   if (result.status !== undefined) back.set("status", result.status);
   // Only that a token was pasted, so the form can ask for it again.
   if (token.trim() !== "") back.set("pasted", "1");

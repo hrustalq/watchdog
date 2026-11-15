@@ -38,8 +38,7 @@ export async function EditorScreen({
   const workspaceId = workspace.id;
   // Only a refusal the user's own browser posted leaves its draft in the cookie, so a link can't fill
   // the editor (#134).
-  const refused = query["sent-back"] !== undefined;
-  const sentBack = refused ? (await readSentBack())?.draft : undefined;
+  const sentBack = query["sent-back"] === undefined ? undefined : (await readSentBack())?.draft;
   const [hasModel, unreadableKey, sources, categories, destinations, declared, problems] = await Promise.all([
     hasActiveModel(db, workspaceId),
     hasUnreadableKey(db, encryptionKey, workspaceId),
@@ -50,7 +49,7 @@ export async function EditorScreen({
     sentBack === undefined ? [] : problemsInDraft(db, workspaceId, target, sentBack, mode),
   ]);
   const tooLong =
-    !refused || sentBack !== undefined
+    query["draft-too-long"] === undefined
       ? []
       : [{ path: "", message: "That rule wasn't saved, and it's too long to bring back without JavaScript. Check it for mistakes and try again." }];
   return (
