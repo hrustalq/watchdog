@@ -1,6 +1,6 @@
 import { Bell } from "lucide-react";
 import Link from "next/link";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { eq, source } from "@watchdog/db";
 import { CategoryList, Rating } from "@/components/rating";
 import { Timestamp } from "@/components/timestamp";
@@ -11,10 +11,8 @@ import { feedPage, parseCursor, parseTopCursor, topPage, type FeedItem } from "@
 import { lastFailedCall, hasUnreadableKey } from "@/lib/model";
 import { hasActiveModel } from "@/lib/rules";
 import { requireWorkspace, server } from "@/lib/server";
-import { signOut } from "./actions";
 import { RatingStepper } from "./correct-rating";
 import { FeedRefresher } from "./feed-refresher";
-import { HeaderMenu } from "./header-menu";
 import { ModelFailureNotice, UnreadableKeyNotice } from "./model-failure-notice";
 import { modelLink } from "./rules/words";
 
@@ -37,7 +35,7 @@ const backLink =
   "self-start inline-flex min-h-6 items-center rounded-sm text-sm font-medium text-foreground underline underline-offset-4 outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60";
 
 export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
-  const [{ user, workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
+  const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
   const latest = params.view === "latest";
   const edit = params.edit === "1";
   // A malformed cursor is ignored, so the page is the view's first one and keeps refreshing.
@@ -64,35 +62,6 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
   const failure = before === undefined ? await lastFailedCall(db, workspace.id) : undefined;
   return (
     <div className="flex flex-1 flex-col">
-      <header className="relative flex h-12 items-center justify-between gap-2 border-b px-4 md:gap-4">
-        <p className="flex min-w-0 flex-1 items-baseline gap-2">
-          {/* Until there's room for both, the name needs it more than its label does. */}
-          <span className="hidden text-xs font-medium tracking-[0.01em] text-muted-foreground lg:inline">
-            Workspace
-          </span>
-          <span className="truncate text-title">{workspace.name}</span>
-        </p>
-        <span className="hidden truncate text-sm text-muted-foreground lg:inline">{user.email}</span>
-        {/* Below md the links would crush the name, so they and Sign out wait behind the menu. */}
-        <nav aria-label="Workspace" className="shrink-0 md:hidden">
-          <HeaderMenu>
-            <HeaderLinks />
-            <form action={signOut} className="mt-1 border-t pt-1">
-              <Button type="submit" variant="ghost" className="w-full justify-start">
-                Sign out
-              </Button>
-            </form>
-          </HeaderMenu>
-        </nav>
-        <nav aria-label="Workspace" className="hidden shrink-0 items-center gap-3 md:flex">
-          <HeaderLinks />
-        </nav>
-        <form action={signOut} className="hidden shrink-0 md:block">
-          <Button type="submit" variant="outline">
-            Sign out
-          </Button>
-        </form>
-      </header>
       {/* The list ignores clicks while its rows settle, which FeedRefresher signals. */}
       <Page gap={4} className="flex-1 [&:has([data-settling])_ol]:pointer-events-none">
         {/* On every page, since a Rating can arrive for an Item on an older one. The key starts it
@@ -143,15 +112,6 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
       </Page>
     </div>
   );
-}
-
-function HeaderLinks() {
-  const links = ["Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings"];
-  return links.map((label) => (
-    <Link key={label} href={`/${label.toLowerCase()}`} className={buttonVariants({ variant: "ghost" })}>
-      {label}
-    </Link>
-  ));
 }
 
 /** Top or Latest. The URL holds the choice, so it survives a reload and "Show older". */

@@ -37,7 +37,7 @@ async function Setup({ searchParams }: Pick<PageProps<"/setup">, "searchParams">
       <>
         <PageHeader
           title="This setup link doesn't work"
-          description="It's out of date or already used. Until Watchdog has an admin, it prints a new setup link each time it starts. If you run it, the latest one is in the web container's log."
+          description="It's out of date or already used. Until Watchdog has an admin, a new setup link is printed at startup: in the web container's log, or by the setup command of a serverless deployment."
         />
         <Link
           href="/sign-in"

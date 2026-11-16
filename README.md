@@ -51,6 +51,14 @@ Then open http://localhost:3000. The containers start in this order:
 
 The packages share `tsconfig.base.json`. `apps/worker`, `packages/core` and `packages/db` are ES modules that Node runs as TypeScript directly, without a build step. Mark type-only imports with `import type`, and give relative imports their `.ts` extension.
 
+## Deploying web to Vercel (temporary, free)
+
+The free split deployment runs the Next.js app on Vercel, Postgres on Supabase's free plan, and the
+worker with Obscura on a machine that stays awake (the Mac mini). Vercel can't run the worker: it is
+a long-running pg-boss process, and web and worker only share the database. The runbook, costs and
+limits are in [`deploy/vercel/README.md`](deploy/vercel/README.md). It is a stopgap before the
+self-hosted stack has its own host; the same secrets and a `pg_dump` move it back.
+
 ## Changing the database schema
 
 Edit the Drizzle schema in `packages/db/src/schema/`, then run `pnpm --filter @watchdog/db db:generate` to write a migration into `packages/db/migrations/` and commit both. The worker applies pending migrations at boot, and `pnpm --filter @watchdog/db db:migrate` applies them by hand.

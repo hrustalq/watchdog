@@ -11,6 +11,7 @@ import { createDb } from "@watchdog/db";
 import { PgBoss } from "pg-boss";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 import { createAuth, enabledProviders } from "./auth.ts";
 import { isInstanceAdmin } from "./instance.ts";
 import { pathHeader, returnTo, signInPath } from "./return-to.ts";
@@ -18,7 +19,8 @@ import { workspaceFor } from "./workspace.ts";
 
 function start() {
   const config = loadConfig();
-  const db = createDb(config.databaseUrl);
+  // Vercel runs a new instance per cold start, so each one holds at most a few pooler slots.
+  const db = createDb(config.databaseUrl, config.serverless ? { max: 3 } : {});
   const mailer = createMailer(config);
   const auth = createAuth({
     mode: config.mode,
@@ -96,6 +98,8 @@ function start() {
           supervise: false,
           schedule: false,
           migrate: false,
+          // A function that starts on a bad database fails instead of holding the request open.
+          connectionTimeoutMillis: 5_000,
         });
         client.on("error", (error) => {
           process.stderr.write(`pg-boss error: ${error.message}\n`);
@@ -125,7 +129,7 @@ export function server() {
  * The signed-in user, their Workspace, and whether they're the admin of this self-hosted install.
  * Without a valid session it redirects to sign-in, which returns to this page.
  */
-export async function requireWorkspace() {
+export const requireWorkspace = cache(async () => {
   const requestHeaders = await headers();
   const { auth, db, mode } = server();
   const session = await auth.api.getSession({ headers: requestHeaders });
@@ -135,4 +139,4 @@ export async function requireWorkspace() {
     mode === "self-hosted" && isInstanceAdmin(db, session.user),
   ]);
   return { user: session.user, workspace, admin };
-}
+});

@@ -37,6 +37,10 @@ const placeholderKey = Buffer.from("replace-with-32-random-key-bytes");
 const schema = z
   .object({
     WATCHDOG_MODE: z.enum(["self-hosted", "hosted"]).default("self-hosted"),
+    // Set by Vercel on its builds and functions, never by an operator. The serverless web process
+    // keeps its database pools small and leaves the setup link to `pnpm --filter @watchdog/web
+    // setup-url`, because every cold start would otherwise rotate the token.
+    VERCEL: z.string().optional(),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, error: invalid("must be a postgres:// URL") }),
     BETTER_AUTH_SECRET: z.string().min(32, "must be at least 32 characters"),
     BETTER_AUTH_URL: z.url({ protocol: /^https?$/, error: invalid("must be an http(s) URL") }),
@@ -127,6 +131,7 @@ const schema = z
   )
   .transform((env) => ({
     mode: env.WATCHDOG_MODE,
+    serverless: env.VERCEL === "1",
     databaseUrl: env.DATABASE_URL,
     auth: { secret: env.BETTER_AUTH_SECRET, url: env.BETTER_AUTH_URL },
     encryptionKey: env.WATCHDOG_ENCRYPTION_KEY,

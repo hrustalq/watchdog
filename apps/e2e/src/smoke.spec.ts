@@ -259,7 +259,7 @@ test("a new install with no model classifies its first RSS Source's Items and le
   });
 
   await test.step("an Item that doesn't meet the Condition gets no Category", async () => {
-    await page.getByRole("link", { name: "Feed", exact: true }).click();
+    await page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("link", { name: "Feed", exact: true }).click();
     await page.getByRole("link", { name: other }).click();
     // The rate row is the last of a run, so by then the classify row would be there. Its text says
     // "release", and the Classifier tests only the title.
@@ -545,7 +545,7 @@ test("a Correction changes the Rating the Agent gives a later, similar Item", as
     await expect(log.filter({ hasText: "Corrected the Rating" })).toContainText(
       "Corrected the Rating from Severity 1, Importance 2 to Severity 1, Importance 5",
     );
-    await page.getByRole("link", { name: "Feed", exact: true }).click();
+    await page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("link", { name: "Feed", exact: true }).click();
   });
 
   await test.step("a second Source's similar Item is rated Importance 5 and leads Top", async () => {
@@ -842,7 +842,7 @@ test("every Source type still in M4 delivers an Item", async ({ page }) => {
       await expect(original, `${title} was read without running the page's script`).toContainText(
         "Rendered text: Partial outage in eu-west",
       );
-      await page.getByRole("link", { name: "Feed", exact: true }).click();
+      await page.getByRole("navigation", { name: "Workspace", exact: true }).getByRole("link", { name: "Feed", exact: true }).click();
     }
     await openFeedItem(page, status);
     await expect(original).toContainText("+ Partial outage in eu-west");
@@ -1023,23 +1023,22 @@ test("a missing Item or rule answers 404, and one that is there answers 200", as
   await expect(page.getByRole("heading", { name: "Nothing here" })).toBeVisible();
 });
 
-/** The Workspace header's menu: the one `details` on the Feed, and `display: none` above `md`. */
-const headerMenu = (page: Page) => page.locator("header details");
+/** More is the one disclosure in the bottom navigation, hidden from `lg` with the rest of the bar. */
+const workspaceMenu = (page: Page) => page.locator("nav details");
 
-/** Opens the header menu with a tap on its summary, and waits until it is open. */
-async function openHeaderMenu(page: Page) {
-  const menu = headerMenu(page);
-  // A bounded click: the default never gives up, and a menu that can't be reached would spend the
-  // test's whole timeout here instead of failing.
+/** Opens More with a tap on its summary, and waits until it is open. */
+async function openWorkspaceMenu(page: Page) {
+  const menu = workspaceMenu(page);
   if ((await menu.getAttribute("open")) === null) await menu.locator("summary").click({ timeout: 15_000 });
   await expect(menu).toHaveAttribute("open");
 }
 
-/** How far the page scrolls sideways, and how tall its header is, as the browser lays them out. */
+/** How far the page scrolls sideways, and how tall its header and bottom bar are. */
 const feedLayout = (page: Page) =>
   page.evaluate(() => ({
     sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
     header: document.querySelector("header")?.getBoundingClientRect().height,
+    bottomBar: document.querySelector("body > div > nav")?.getBoundingClientRect().height,
   }));
 
 /** Where a tap on the link's own words lands: low and left in its row, clear of the open panel. */
@@ -1049,49 +1048,74 @@ async function tapPoint(link: Locator) {
   return { x: box.x + 4, y: box.y + box.height / 2 };
 }
 
-// The Workspace header's phone-width menu (#117) has no guard of its own: the Desktop Chrome project
-// is too wide to show it, and the other tests never open it. This drives it at 360 px on the real
-// build, with the Items the first test captured in the Feed, so an outside tap has a row to land on.
-// It navigates by tapping, because a hard load remounts the page and loses what Next.js keeps for a
-// page it hid (Activity). It runs before the rate limit test below, which uses up the sign-in bucket,
-// and its context without JavaScript signs out last, because signing out ends the session.
-test("the Workspace header menu holds at phone width, with and without JavaScript", async ({ page, browser }) => {
+// This drives the shared navigation on desktop and at 360 px on the real build, with Items in the Feed
+// for the outside-tap check. It navigates by tapping to preserve Next.js's hidden page state, runs before
+// the rate-limit test, and signs the no-JavaScript context out last because that ends the session.
+test("Workspace navigation holds on desktop and phone, with and without JavaScript", async ({ page, browser }) => {
   test.setTimeout(240_000);
   const viewport = { width: 360, height: 720 };
   await signInAgain(page);
+  const desktopNav = page.locator("header nav");
+  for (const label of ["Feed", "Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings"]) {
+    await expect(desktopNav.getByRole("link", { name: label, exact: true })).toBeVisible();
+  }
+  await desktopNav.getByRole("link", { name: "Sources", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Sources", exact: true })).toBeVisible();
+  await expect(desktopNav.getByRole("link", { name: "Sources", exact: true })).toHaveAttribute("aria-current", "page");
+
   const storageState = await page.context().storageState();
   const phone = await browser.newContext({ viewport, storageState });
   const narrow = await phone.newPage();
   // Latest holds every Item; Top leaves the first test's out, because nothing ever rated them.
   const feed = new URL("/?view=latest", page.url()).href;
-  const menu = headerMenu(narrow);
+  const mobileNav = narrow.locator("nav[aria-label='Workspace']");
+  const menu = workspaceMenu(narrow);
   const panel = menu.locator("div");
 
-  await test.step("the header is one row and nothing scrolls sideways, closed or open", async () => {
+  await test.step("the bottom bar keeps its targets and nothing scrolls sideways, closed or open", async () => {
     await narrow.goto(feed);
-    // What an outside tap has to land on, in the Items the first test captured.
     for (const title of ["Security release for psqlodbc", "HypoPG 1.4.5 is out!"]) {
       await expect(feedRow(narrow, title), `"${title}" is not in the Feed`).toBeVisible();
     }
-    for (const open of ["closed", "open"]) {
-      if (open === "open") await openHeaderMenu(narrow);
-      const layout = await feedLayout(narrow);
-      expect(layout.sideways, `the page scrolls sideways with the menu ${open}`).toBe(0);
-      expect(layout.header, `the header is not one 48 px row with the menu ${open}`).toBe(48);
+    for (const label of ["Feed", "Sources", "Rules", "Destinations"]) {
+      const link = mobileNav.getByRole("link", { name: label, exact: true });
+      await expect(link).toBeVisible();
+      expect((await link.boundingBox())?.height, `${label} is shorter than a touch target`).toBe(64);
+      expect(
+        await link.locator("span").evaluate((span) => span.scrollWidth <= span.clientWidth),
+        `${label} is truncated`,
+      ).toBe(true);
     }
+    await expect(mobileNav.getByRole("link", { name: "Feed", exact: true })).toHaveAttribute("aria-current", "page");
+    for (const open of ["closed", "open"]) {
+      if (open === "open") await openWorkspaceMenu(narrow);
+      const layout = await feedLayout(narrow);
+      expect(layout.sideways, `the page scrolls sideways with More ${open}`).toBe(0);
+      expect(layout.header, `the header is not one 48 px row with More ${open}`).toBe(48);
+      expect(layout.bottomBar, `the bottom bar is not 64 px plus its hairline with More ${open}`).toBe(65);
+    }
+  });
+
+  await test.info().attach("desktop-sources", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+  await test.info().attach("phone-feed-more-open", {
+    body: await narrow.screenshot(),
+    contentType: "image/png",
   });
 
   await test.step("script closes the menu on Escape and when focus leaves it", async () => {
     // Escape needs the page's script, and a page too fresh to have it still opens the menu natively,
     // so this also waits for the hydration the rest of the checks need.
     await expect(async () => {
-      await openHeaderMenu(narrow);
+      await openWorkspaceMenu(narrow);
       await narrow.keyboard.press("Escape");
       await expect(menu).not.toHaveAttribute("open", { timeout: 1_000 });
     }).toPass({ timeout: 30_000 });
     await expect(menu.locator("summary"), "Escape left the focus off the menu").toBeFocused();
 
-    await openHeaderMenu(narrow);
+    await openWorkspaceMenu(narrow);
     await narrow.getByRole("link", { name: "Latest", exact: true }).focus();
     await expect(menu, "the menu stayed open with the focus outside it").not.toHaveAttribute("open");
   });
@@ -1099,7 +1123,7 @@ test("the Workspace header menu holds at phone width, with and without JavaScrip
   await test.step("a tap outside the open menu closes it and opens nothing", async () => {
     const row = narrow.getByRole("listitem").first();
     const point = await tapPoint(row.getByRole("link").first());
-    await openHeaderMenu(narrow);
+    await openWorkspaceMenu(narrow);
     // The cover is the summary's ::before, so the tap on the row lands on the summary instead.
     const covering = await narrow.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, point);
     expect(covering, "the tap on the row lands under the menu, not on its cover").toBe("SUMMARY");
@@ -1111,26 +1135,35 @@ test("the Workspace header menu holds at phone width, with and without JavaScrip
     await expect(menu, "the tap outside didn't close the menu").not.toHaveAttribute("open");
   });
 
+  await test.step("a bottom bar link opens its section and marks it current", async () => {
+    await mobileNav.getByRole("link", { name: "Rules", exact: true }).click({ timeout: 15_000 });
+    await expect(narrow.getByRole("heading", { name: "Rules", exact: true })).toBeVisible();
+    await expect(mobileNav.getByRole("link", { name: "Rules", exact: true })).toHaveAttribute("aria-current", "page");
+    await narrow.goBack();
+    await expect(narrow).toHaveURL(feed);
+  });
+
   await test.step("an open menu left through one of its links is closed on return", async () => {
-    await openHeaderMenu(narrow);
-    await panel.getByRole("link", { name: "Sources", exact: true }).click({ timeout: 15_000 });
-    await expect(narrow).toHaveURL(/\/sources$/);
+    await openWorkspaceMenu(narrow);
+    await panel.getByRole("link", { name: "Profile", exact: true }).click({ timeout: 15_000 });
+    await expect(narrow).toHaveURL(/\/profile$/);
+    await expect(workspaceMenu(narrow).locator("summary")).toHaveAttribute("aria-current", "page");
     await narrow.goBack();
     await expect(narrow).toHaveURL(feed);
     await expect(menu, "the menu was open again on the way back").not.toHaveAttribute("open");
   });
 
   await test.step("an open menu left through Back and Forward is closed on return", async () => {
-    await openHeaderMenu(narrow);
+    await openWorkspaceMenu(narrow);
     await narrow.goForward();
-    await expect(narrow).toHaveURL(/\/sources$/);
+    await expect(narrow).toHaveURL(/\/profile$/);
     await narrow.goBack();
     await expect(narrow).toHaveURL(feed);
     await expect(menu, "the menu was open again on the way back").not.toHaveAttribute("open");
   });
 
   await test.step("a Feed refresh leaves an open menu open", async () => {
-    await openHeaderMenu(narrow);
+    await openWorkspaceMenu(narrow);
     // The refresh the Feed does when the tab becomes visible again, rather than the 30-second one. Next
     // asks for it at the page's own URL with a `_rsc` cache-buster appended.
     const [answer] = await Promise.all([
@@ -1148,7 +1181,7 @@ test("the Workspace header menu holds at phone width, with and without JavaScrip
     await narrow.evaluate(() => {
       document.documentElement.style.fontSize = "32px";
     });
-    await openHeaderMenu(narrow);
+    await openWorkspaceMenu(narrow);
     const box = await panel.boundingBox();
     if (box === null) throw new Error("the open panel has no box");
     expect(box.x, "the panel starts off the left of the screen").toBeGreaterThanOrEqual(0);
@@ -1159,29 +1192,31 @@ test("the Workspace header menu holds at phone width, with and without JavaScrip
 
   const noScriptContext = await browser.newContext({ javaScriptEnabled: false, viewport, storageState });
   const noScript = await noScriptContext.newPage();
-  const noScriptMenu = headerMenu(noScript);
+  const noScriptMenu = workspaceMenu(noScript);
   const noScriptPanel = noScriptMenu.locator("div");
 
   await test.step("without JavaScript, the menu opens and its every control is reachable", async () => {
     await noScript.goto(feed);
     await noScriptMenu.locator("summary").click({ timeout: 15_000 });
     await expect(noScriptMenu, "a tap on the summary didn't open the menu without script").toHaveAttribute("open");
-    // Only the panel's own controls: the wide header's copies of them are `display: none` here.
-    await noScriptMenu.locator("summary").focus();
-    for (const label of ["Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings", "Sign out"]) {
-      await noScript.keyboard.press("Tab");
-      await expect(noScript.locator(":focus"), `${label} is not reachable through the menu`).toHaveText(label);
-    }
-    for (const label of ["Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings"]) {
-      await expect(noScriptPanel.getByRole("link", { name: label, exact: true }), `${label} is not in the panel`)
+    for (const label of ["Feed", "Sources", "Rules", "Destinations"]) {
+      await expect(noScript.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: label, exact: true }))
         .toBeVisible();
+    }
+    await noScriptMenu.locator("summary").focus();
+    for (const label of ["Profile", "Model", "Usage", "Settings", "Sign out"]) {
+      await noScript.keyboard.press("Tab");
+      await expect(noScript.locator(":focus"), `${label} is not reachable through More`).toHaveText(label);
+    }
+    for (const label of ["Profile", "Model", "Usage", "Settings"]) {
+      await expect(noScriptPanel.getByRole("link", { name: label, exact: true }), `${label} is not in More`).toBeVisible();
     }
     await expect(noScriptPanel.getByRole("button", { name: "Sign out" })).toBeVisible();
   });
 
   await test.step("without JavaScript, a tap outside the open menu closes it and opens nothing", async () => {
     const point = await tapPoint(noScript.getByRole("listitem").first().getByRole("link").first());
-    await openHeaderMenu(noScript);
+    await openWorkspaceMenu(noScript);
     await noScript.mouse.click(point.x, point.y);
     await noScript.waitForTimeout(1_000);
     expect(noScript.url(), "the tap outside opened the Item under the menu").toBe(feed);
@@ -1189,7 +1224,7 @@ test("the Workspace header menu holds at phone width, with and without JavaScrip
   });
 
   await test.step("without JavaScript, Sign out in the menu ends the session", async () => {
-    await openHeaderMenu(noScript);
+    await openWorkspaceMenu(noScript);
     await noScriptPanel.getByRole("button", { name: "Sign out" }).click({ timeout: 15_000 });
     await expect(noScript).toHaveURL(/\/sign-in/);
     await noScriptContext.close();

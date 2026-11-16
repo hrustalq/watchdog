@@ -16,7 +16,10 @@ export function start() {
     process.exit(1);
   }
   // Not awaited: the server must come up even while the database isn't reachable yet.
-  announceSetup(config);
+  // A serverless platform starts a new instance for most requests, and every boot would rotate the
+  // setup token and invalidate the link an operator just read. There `setup-url` prints one instead
+  // (deploy/vercel/README.md); locally, and in the Docker image, this stays the way in.
+  if (!config.serverless) announceSetup(config);
 }
 
 /**

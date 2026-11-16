@@ -26,14 +26,19 @@ const connectionTimeoutMillis = 5_000;
  */
 const keepAliveInitialDelayMillis = 10_000;
 
-/** A Drizzle client over a pg pool. Pass `loadConfig().databaseUrl` from `@watchdog/core`. */
-export function createDb(databaseUrl: string) {
+/**
+ * A Drizzle client over a pg pool. Pass `loadConfig().databaseUrl` from `@watchdog/core`. `max` caps
+ * the pool: the serverless web deployment passes a small number so each function instance holds only
+ * a few pooler slots, and leaves it out elsewhere for pg's default of 10.
+ */
+export function createDb(databaseUrl: string, { max }: { max?: number } = {}) {
   const db = drizzle({
     connection: {
       connectionString: databaseUrl,
       connectionTimeoutMillis,
       keepAlive: true,
       keepAliveInitialDelayMillis,
+      ...(max !== undefined && { max }),
     },
     schema,
   });
