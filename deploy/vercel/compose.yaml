@@ -1,0 +1,34 @@
+# The worker half of the temporary Vercel deployment (deploy/vercel/README.md): the worker and
+# Obscura on a machine that stays awake, against Supabase. Web and Postgres are not here; Vercel runs
+# web and Supabase holds the database. Only Obscura's own network is used, and no port is published.
+name: watchdog-vercel
+
+services:
+  worker:
+    build:
+      context: ../..
+      dockerfile: apps/worker/Dockerfile
+    env_file: .env
+    # Node as PID 1 ignores SIGTERM until it installs a handler, e.g. while it migrates.
+    init: true
+    # On SIGTERM pg-boss waits up to 30 s for running polls; a model call can run longer.
+    stop_grace_period: 40s
+    depends_on:
+      obscura:
+        condition: service_healthy
+    restart: unless-stopped
+
+  obscura:
+    image: h4ckf0r0day/obscura:0.2.6
+    command: ["serve", "--port", "9222", "--host", "0.0.0.0", "--workers", "2", "--worker-max-rss", "512", "--worker-max-age", "3600"]
+    environment:
+      # The same value as the worker's, from deploy/vercel/.env.
+      OBSCURA_CDP_TOKEN: ${OBSCURA_CDP_TOKEN:?set OBSCURA_CDP_TOKEN in deploy/vercel/.env}
+    # The image has no shell, so its own binary checks the port. Any answer, even the 401 that a
+    # request without the token gets, means the CDP server is up.
+    healthcheck:
+      test: ["CMD", "/obscura", "fetch", "http://127.0.0.1:9222/json/version", "--dump", "original", "--allow-private-network"]
+      timeout: 5s
+      start_period: 30s
+      start_interval: 1s
+    restart: unless-stopped

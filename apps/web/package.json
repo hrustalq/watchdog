@@ -1,6 +1,9 @@
 {
   "name": "@watchdog/web",
   "private": true,
+  "engines": {
+    "node": "26.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -9,7 +12,8 @@
     "lint": "next typegen && oxlint",
     "test": "vitest run --passWithNoTests",
     "test:unit": "vitest run --passWithNoTests --exclude \"**/*.int.test.ts\"",
-    "test:integration": "vitest run --passWithNoTests .int.test.ts"
+    "test:integration": "vitest run --passWithNoTests .int.test.ts",
+    "setup-url": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=../../deploy/vercel/.env scripts/setup-url.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

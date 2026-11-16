@@ -56,6 +56,11 @@ describe("loadConfig", () => {
     expect(loadConfig(minimal).mode).toBe("self-hosted");
   });
 
+  it("recognises a Vercel function process, which tunes the web pool and setup link", () => {
+    expect(loadConfig({ ...minimal, VERCEL: "1" }).serverless).toBe(true);
+    expect(loadConfig(minimal).serverless).toBe(false);
+  });
+
   it("treats an empty variable as unset", () => {
     expect(loadConfig({ ...minimal, WATCHDOG_MODE: "", SMTP_HOST: "" })).toMatchObject({
       mode: "self-hosted",

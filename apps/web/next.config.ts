@@ -15,9 +15,15 @@ const nextConfig: NextConfig = {
   // doesn't log requests.
   logging: { incomingRequests: { ignore: [/^\/api\/inbox\//] } },
   // The Docker image runs .next/standalone/apps/web/server.js. Tracing from the repo root takes
-  // in the workspace packages web imports, which live outside apps/web.
-  output: "standalone",
-  outputFileTracingRoot: fileURLToPath(new URL("../..", import.meta.url)),
+  // in the workspace packages web imports, which live outside apps/web. Vercel builds its own
+  // function bundle and has failed on standalone output (a missing next-server.js.nft.json), so
+  // the Vercel build leaves both settings out.
+  ...(process.env.VERCEL === "1"
+    ? {}
+    : {
+        output: "standalone" as const,
+        outputFileTracingRoot: fileURLToPath(new URL("../..", import.meta.url)),
+      }),
   cacheComponents: true,
   partialPrefetching: true,
   reactCompiler: true,
