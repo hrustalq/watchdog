@@ -1,6 +1,13 @@
 import { and, type Db, eq, workspace } from "@watchdog/db";
 import { isUuid } from "./uuid.ts";
 
+/**
+ * The cookie that names the Workspace a request reads. It is a preference, never an authorization, and
+ * it lives here rather than beside the functions that read it so Proxy can import the name without
+ * reaching `next/headers`.
+ */
+export const activeWorkspaceCookie = "active_workspace";
+
 /** The longest name the screens accept, in characters. */
 export const workspaceNameLimit = 100;
 

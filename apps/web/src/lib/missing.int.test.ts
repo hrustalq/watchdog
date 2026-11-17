@@ -11,6 +11,9 @@ describe("a page that isn't there", () => {
   let ourItem = "";
   let theirItem = "";
   let ourClassifier = "";
+  // A second Workspace of ours, which is what several Workspaces per account makes possible.
+  let second = "";
+  let secondItem = "";
 
   beforeAll(async () => {
     const postgres = await startPostgres();
@@ -49,6 +52,9 @@ describe("a page that isn't there", () => {
     };
     ourItem = await captured(ours);
     theirItem = await captured(theirs);
+    const [other] = await db.insert(workspace).values({ name: "Second", ownerUserId: "us" }).returning({ id: workspace.id });
+    second = other?.id ?? "";
+    secondItem = await captured(second);
     const [rule] = await db.insert(classifier).values({ workspaceId: ours, name: "Launches", kind: "deterministic", definition: {} }).returning({ id: classifier.id });
     ourClassifier = rule?.id ?? "";
     return async () => {
@@ -69,6 +75,16 @@ describe("a page that isn't there", () => {
 
   it("answers another Workspace's Item as missing, as it answers an unknown id", async () => {
     expect(await missing(db, us, `/items/${theirItem}`)).toBe(true);
+  });
+
+  it("answers a sibling Workspace's Item as missing unless the cookie names that Workspace", async () => {
+    // The request reads the oldest Workspace when no cookie says otherwise, and this Item is not there.
+    expect(await missing(db, us, `/items/${secondItem}`)).toBe(true);
+    expect(await missing(db, us, `/items/${secondItem}`, second)).toBe(false);
+    // The cookie moves the answer the other way, so a page never finds a sibling's Item and answers 200.
+    expect(await missing(db, us, `/items/${ourItem}`, second)).toBe(true);
+    // Another owner's id falls back to ours, exactly as `workspaceFor` reads it.
+    expect(await missing(db, us, `/items/${ourItem}`, theirs)).toBe(false);
   });
 
   it("answers a malformed Item id as missing, without asking Postgres", async () => {

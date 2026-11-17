@@ -20,27 +20,28 @@ export const metadata: Metadata = { title: "Workspaces · Watchdog" };
 // the forms work without JavaScript and why a refusal is never a blank page.
 export const instant = false;
 
-/** What a saved action says, by the `saved` value its redirect carries. */
-const savedNotices: Record<string, string> = {
-  created: "Workspace created. You're in it now, and it starts empty.",
-  renamed: "Workspace renamed.",
-  deleted: "Workspace deleted. Its Sources, Items and everything else went with it.",
-};
+/**
+ * What a saved action says, by the `saved` value its redirect carries. A Map, so an edited or made-up
+ * value in the URL is simply absent, rather than finding `Object` through the prototype.
+ */
+const savedNotices = new Map<string, string>([
+  ["created", "Workspace created. You're in it now, and it starts empty."],
+  ["renamed", "Workspace renamed."],
+  ["deleted", "Workspace deleted. Its Sources, Items and everything else went with it."],
+]);
 
 /**
  * What a refusal says when it belongs to no row. A refusal that names a row says it in that row, beside
  * the field that was wrong, so the page never repeats one sentence in two places.
  */
-const pageRefusals: Record<string, string> = {
-  unknown: "That Workspace isn't one of yours.",
-};
+const pageRefusals = new Map<string, string>([["unknown", "That Workspace isn't one of yours."]]);
 
 /** A refused name, said under the field it was typed in. */
-const nameErrors: Record<string, string> = {
-  blank: "Enter a name of 1 to 100 characters.",
-  duplicate: "Another of your Workspaces is already called that.",
-  name: "That isn't this Workspace's name, so nothing was deleted.",
-};
+const nameErrors = new Map<string, string>([
+  ["blank", "Enter a name of 1 to 100 characters."],
+  ["duplicate", "Another of your Workspaces is already called that."],
+  ["name", "That isn't this Workspace's name, so nothing was deleted."],
+]);
 
 export default async function WorkspacesPage({ searchParams }: PageProps<"/workspaces">) {
   const [{ user, workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
@@ -49,13 +50,13 @@ export default async function WorkspacesPage({ searchParams }: PageProps<"/works
     const value = params[name];
     return typeof value === "string" ? value : "";
   };
-  const savedMessage = savedNotices[param("saved")];
-  const refusedMessage = pageRefusals[param("refused")];
+  const savedMessage = savedNotices.get(param("saved"));
+  const refusedMessage = pageRefusals.get(param("refused"));
   // A refusal names the row it belongs to, so that row's form opens again with what it was sent. One
   // with no row is the create form's, which says it under its own field.
   const refusedId = param("id");
   const postedName = param("name");
-  const createError = refusedId === "" ? nameErrors[param("refused")] : undefined;
+  const createError = refusedId === "" ? nameErrors.get(param("refused")) : undefined;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -153,7 +154,19 @@ function WorkspaceRow({
             </SubmitButton>
           </form>
         )}
-        <Disclosure label="Rename" openLabel="Close" open={renameOpen}>
+        <Disclosure
+          label={
+            <>
+              Rename<span className="sr-only"> {workspace.name}</span>
+            </>
+          }
+          openLabel={
+            <>
+              Close<span className="sr-only"> the rename form for {workspace.name}</span>
+            </>
+          }
+          open={renameOpen}
+        >
           <form action={renameWorkspaceAction.bind(null, workspace.id)} className="flex flex-col gap-3">
             <TextField
               id={`rename-${workspace.id}`}
@@ -164,7 +177,7 @@ function WorkspaceRow({
               autoComplete="off"
               maxLength={workspaceNameLimit}
               defaultValue={renameOpen ? postedName : workspace.name}
-              error={nameErrors[refused]}
+              error={nameErrors.get(refused)}
               className="sm:max-w-sm"
             />
             <SubmitButton pendingLabel="Renaming…" variant="outline" className="sm:w-auto sm:self-start">
@@ -172,7 +185,20 @@ function WorkspaceRow({
             </SubmitButton>
           </form>
         </Disclosure>
-        <Disclosure label="Delete" openLabel="Close" open={deleteOpen} bodyClassName="border bg-card">
+        <Disclosure
+          label={
+            <>
+              Delete<span className="sr-only"> {workspace.name}</span>
+            </>
+          }
+          openLabel={
+            <>
+              Close<span className="sr-only"> the delete form for {workspace.name}</span>
+            </>
+          }
+          open={deleteOpen}
+          bodyClassName="border bg-card"
+        >
           {refused === "last" ? (
             <Notice role="alert">
               This is your only Workspace, so it can&apos;t be deleted. Create another one first, or delete your
@@ -196,7 +222,7 @@ function WorkspaceRow({
               type="text"
               required
               autoComplete="off"
-              error={nameErrors[refused]}
+              error={nameErrors.get(refused)}
               controlClassName={cn(dataBox, "sm:max-w-xs")}
             />
             <SubmitButton pendingLabel="Deleting…" variant="destructive" className="sm:w-auto sm:self-start">

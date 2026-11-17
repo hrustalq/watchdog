@@ -1,6 +1,7 @@
 import { getSessionCookie } from "better-auth/cookies";
 import { NextResponse, type NextRequest } from "next/server";
 import { isDetailPath, isItemPath, itemMissHeader, missing, notFoundPath } from "./lib/missing.ts";
+import { activeWorkspaceCookie } from "./lib/workspace.ts";
 import { pathHeader, returnTo, signInPath } from "./lib/return-to.ts";
 import { server } from "./lib/server.ts";
 
@@ -27,7 +28,9 @@ export async function proxy(request: NextRequest) {
   if (isDetailPath(pathname)) {
     const { auth, db } = server();
     const session = await auth.api.getSession({ headers: request.headers });
-    if (session !== null && (await missing(db, session.user.id, pathname))) {
+    // The page reads the Workspace the cookie names, so the miss has to look in that one too.
+    const activeId = request.cookies.get(activeWorkspaceCookie)?.value;
+    if (session !== null && (await missing(db, session.user.id, pathname, activeId))) {
       // The rewrite replaces the address with Next.js's not-found route, so it says what the miss was
       // in a header: a missing Item is the one that explains why an Item can be gone, and another
       // Workspace's Item takes the same road as an id that never existed.
