@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expect, type BrowserContext, type Locator, type Page, test } from "@playwright/test";
 import {
   botMessages,
   confirmationLink,
@@ -16,6 +16,9 @@ import {
 test.describe.configure({ mode: "serial" });
 
 const email = "smoke@example.com";
+
+/** The session the Sources screen test signs in with, reused by the guided setup walk. */
+let savedSession: Awaited<ReturnType<BrowserContext["storageState"]>> | undefined;
 
 // A new Source's Items wait for the worker's next tick, at most a minute, and the Feed's next refresh.
 const untilPolled = { timeout: 150_000 };
@@ -850,20 +853,69 @@ test("every Source type still in M4 delivers an Item", async ({ page }) => {
   });
 });
 
-// The guided setup: from the sidebar, a Source, its Backfill, a starter rule, a Destination and the
-// one Action it offers, all without JavaScript, because every step is a real form or link.
-test("the guided setup takes a Source from the sidebar to a finished watch without JavaScript", async ({ browser, page: signedIn }) => {
-  // One poll's wait for the worker's tick, and a reload loop until its Backfill appears.
-  test.setTimeout(300_000);
-  await signInAgain(signedIn);
-  // The signed-in session, then JavaScript off for every step: each is a real form or link.
+// The Sources screen reads its list without Suspense, so every row, with its Check now, Remove and Get a
+// new link forms, is in the first HTML. A row streamed into a Suspense boundary is in the HTML too, but
+// in a hidden div that only React's script swaps in (docs: A form streamed in behind Suspense needs
+// JavaScript to appear), so this fails if the screen goes back to streaming its list. It runs before the
+// rate limit test below, which uses up the sign-in bucket.
+test("the Sources screen lists each Source and runs its forms without JavaScript", async ({ page, browser }) => {
+  test.setTimeout(240_000);
+  await signInAgain(page);
+  savedSession = await page.context().storageState();
+
   const context = await browser.newContext({
     javaScriptEnabled: false,
-    storageState: await signedIn.context().storageState(),
+    storageState: await page.context().storageState(),
   });
+  const noScript = await context.newPage();
+
+  await test.step("the Source's row, with its Health and last success, is on the first load", async () => {
+    await noScript.goto(new URL("/sources", page.url()).href);
+    const row = sourceRow(noScript, "Platform status");
+    await expect(row, "a row behind a Suspense placeholder isn't in the page a browser reads").toBeVisible();
+    // The words are the chip's own, so this is the chip and not a colour.
+    await expect(row.getByText("Health: ok", { exact: true })).toBeVisible();
+    await expect(row.getByText(/Last success/)).toBeVisible();
+    await expect(row).toContainText(fixturePage("status"));
+  });
+
+  await test.step("Check now makes the Schedule Source due, and a reload shows the poll went", async () => {
+    const row = sourceRow(noScript, "Platform status");
+    const due = row.getByRole("status").filter({ hasText: "A poll is due" });
+    await row.getByRole("button", { name: /^Check now/ }).click();
+    await expect(due).toBeVisible({ timeout: 10_000 });
+    // Nothing follows a poll without JavaScript, so the row's own "Reload this page" is how a person
+    // sees it go: reload until the worker has taken it.
+    await expect(async () => {
+      await noScript.reload();
+      await expect(due).toHaveCount(0, { timeout: 2_000 });
+    }).toPass(untilPolled);
+  });
+
+  await test.step("Remove asks for confirmation and removes the Source", async () => {
+    const row = sourceRow(noScript, "Platform status");
+    await row.getByText("Remove", { exact: true }).click();
+    await row.getByRole("button", { name: /^Remove Source and its Items/ }).click();
+    await expect(
+      noScript.getByRole("heading", { name: "Platform status", level: 3 }),
+      "the Source is still on the screen after Remove",
+    ).toHaveCount(0);
+    await context.close();
+  });
+});
+
+// The guided setup: from the sidebar, a Source, its Backfill, a starter rule, a Destination and the
+// one Action it offers, all without JavaScript, because every step is a real form or link.
+test("the guided setup takes a Source from the sidebar to a finished watch without JavaScript", async ({ browser }) => {
+  // One poll's wait for the worker's tick, and a reload loop until its Backfill appears.
+  test.setTimeout(300_000);
+  const session = savedSession;
+  if (session === undefined) throw new Error("The Sources screen test didn't leave a session");
+  // The Sources screen's session, then JavaScript off for every step: each is a real form or link.
+  const context = await browser.newContext({ javaScriptEnabled: false, storageState: session });
   const page = await context.newPage();
-  // A new page starts blank; open the app in the session the sign-in above left behind.
-  await page.goto(new URL("/", signedIn.url()).href);
+  const app = new URL("/", await setupLink()).href;
+  await page.goto(app);
 
   await test.step("the sidebar opens the guide at its first step", async () => {
     await page.getByRole("link", { name: "Add source" }).click();
@@ -918,63 +970,17 @@ test("the guided setup takes a Source from the sidebar to a finished watch witho
     await expect(page.getByRole("heading", { name: "PostgreSQL news is watching" })).toBeVisible();
     await expect(page.getByText("Guided inbox can receive now.")).toBeVisible();
     await expect(page.getByText("An Action alerts you when Importance is at least 4.")).toBeVisible();
-    // The Rules screen streams its lists behind Suspense, so read them in the JS-enabled page.
-    await signedIn.goto(new URL("/rules", signedIn.url()).href);
-    await expect(signedIn.getByRole("link", { name: "Importance 4 alerts", exact: true })).toBeVisible();
-    await expect(signedIn.getByRole("link", { name: "Bug reports", exact: true })).toBeVisible();
+    // The Rules screen streams its lists behind Suspense, so read them in a JS-enabled context that
+    // uses the same session.
+    const rulesContext = await browser.newContext({ storageState: session });
+    const rules = await rulesContext.newPage();
+    await rules.goto(new URL("/rules", app).href);
+    await expect(rules.getByRole("link", { name: "Importance 4 alerts", exact: true })).toBeVisible();
+    await expect(rules.getByRole("link", { name: "Bug reports", exact: true })).toBeVisible();
+    await rulesContext.close();
   });
 
   await context.close();
-});
-
-// The Sources screen reads its list without Suspense, so every row, with its Check now, Remove and Get a
-// new link forms, is in the first HTML. A row streamed into a Suspense boundary is in the HTML too, but
-// in a hidden div that only React's script swaps in (docs: A form streamed in behind Suspense needs
-// JavaScript to appear), so this fails if the screen goes back to streaming its list. It runs before the
-// rate limit test below, which uses up the sign-in bucket.
-test("the Sources screen lists each Source and runs its forms without JavaScript", async ({ page, browser }) => {
-  test.setTimeout(240_000);
-  await signInAgain(page);
-
-  const context = await browser.newContext({
-    javaScriptEnabled: false,
-    storageState: await page.context().storageState(),
-  });
-  const noScript = await context.newPage();
-
-  await test.step("the Source's row, with its Health and last success, is on the first load", async () => {
-    await noScript.goto(new URL("/sources", page.url()).href);
-    const row = sourceRow(noScript, "Platform status");
-    await expect(row, "a row behind a Suspense placeholder isn't in the page a browser reads").toBeVisible();
-    // The words are the chip's own, so this is the chip and not a colour.
-    await expect(row.getByText("Health: ok", { exact: true })).toBeVisible();
-    await expect(row.getByText(/Last success/)).toBeVisible();
-    await expect(row).toContainText(fixturePage("status"));
-  });
-
-  await test.step("Check now makes the Schedule Source due, and a reload shows the poll went", async () => {
-    const row = sourceRow(noScript, "Platform status");
-    const due = row.getByRole("status").filter({ hasText: "A poll is due" });
-    await row.getByRole("button", { name: /^Check now/ }).click();
-    await expect(due).toBeVisible({ timeout: 10_000 });
-    // Nothing follows a poll without JavaScript, so the row's own "Reload this page" is how a person
-    // sees it go: reload until the worker has taken it.
-    await expect(async () => {
-      await noScript.reload();
-      await expect(due).toHaveCount(0, { timeout: 2_000 });
-    }).toPass(untilPolled);
-  });
-
-  await test.step("Remove asks for confirmation and removes the Source", async () => {
-    const row = sourceRow(noScript, "Platform status");
-    await row.getByText("Remove", { exact: true }).click();
-    await row.getByRole("button", { name: /^Remove Source and its Items/ }).click();
-    await expect(
-      noScript.getByRole("heading", { name: "Platform status", level: 3 }),
-      "the Source is still on the screen after Remove",
-    ).toHaveCount(0);
-    await context.close();
-  });
 });
 
 // Check now and Remove end in a redirect that renders the Sources screen again, and the button that
