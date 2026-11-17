@@ -89,9 +89,17 @@ const time = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
  * The alert settings form as the screen shows them: what's saved, with the defaults a new Workspace
- * starts from and each number as the text its field posts.
+ * starts from and each number as the text its field posts. A window this mode can't hold — a stored
+ * NULL on a hosted install, left by a self-hosted one — shows the default instead of Unlimited,
+ * because that install's form doesn't offer the box and its save would refuse the value.
  */
-export function settingsFormValues(settings: AlertSettings): AlertSettingsForm {
+export function settingsFormValues(settings: AlertSettings, { selfHosted }: { selfHosted: boolean }): AlertSettingsForm {
+  const window = (days: number | null, fallback: number) => ({
+    days: String(days ?? fallback),
+    unlimited: days === null && selfHosted,
+  });
+  const items = window(settings.itemsRetentionDays, 90);
+  const log = window(settings.logRetentionDays, 30);
   return {
     timezone: settings.timezone,
     quietHours: settings.quietHoursStart !== null,
@@ -101,11 +109,10 @@ export function settingsFormValues(settings: AlertSettings): AlertSettingsForm {
     severity5Bypasses: settings.severity5BypassesQuietHours,
     alertsPerHour: String(settings.alertsPerHour),
     burstWindowSeconds: String(settings.burstWindowSeconds),
-    // Unlimited leaves the day count inert, so it shows what a window would start from.
-    itemsRetentionDays: String(settings.itemsRetentionDays ?? 90),
-    itemsUnlimited: settings.itemsRetentionDays === null,
-    logRetentionDays: String(settings.logRetentionDays ?? 30),
-    logUnlimited: settings.logRetentionDays === null,
+    itemsRetentionDays: items.days,
+    itemsUnlimited: items.unlimited,
+    logRetentionDays: log.days,
+    logUnlimited: log.unlimited,
   };
 }
 
@@ -178,16 +185,20 @@ function retentionDays(days: string, unlimited: boolean, selfHosted: boolean) {
   return { days: value } as const;
 }
 
-/** Every field a refusal can name, in the order the form shows them. */
-const settingsFields: readonly AlertSettingsField[] = [
+/** The Delivery tab's fields, in the order its form shows them: the order its check names them in. */
+export const deliveryFields = [
   "timezone",
   "quietHoursStart",
   "quietHoursEnd",
   "alertsPerHour",
   "burstWindowSeconds",
-  "itemsRetentionDays",
-  "logRetentionDays",
-];
+] as const;
+
+/** The Retention tab's fields, the same way. */
+export const retentionFields = ["itemsRetentionDays", "logRetentionDays"] as const;
+
+/** Every field a refusal can name, in the order the page's tabs show them. */
+const settingsFields: readonly AlertSettingsField[] = [...deliveryFields, ...retentionFields];
 
 const isSettingsField = (value: string): value is AlertSettingsField =>
   settingsFields.some((field) => field === value);
@@ -365,7 +376,14 @@ export async function saveDeliverySettings(
     alertsPerHour: form.alertsPerHour,
     burstWindowSeconds: form.burstWindowSeconds,
   };
-  return saveTab(db, workspaceId, (saved) => ({ ...settingsFormValues(saved), ...posted }), deliveryTab, options);
+  const { selfHosted = false } = options;
+  return saveTab(
+    db,
+    workspaceId,
+    (saved) => ({ ...settingsFormValues(saved, { selfHosted }), ...posted }),
+    deliveryTab,
+    options,
+  );
 }
 
 /**
@@ -384,7 +402,14 @@ export async function saveRetentionSettings(
     logRetentionDays: form.logRetentionDays,
     logUnlimited: form.logUnlimited,
   };
-  return saveTab(db, workspaceId, (saved) => ({ ...settingsFormValues(saved), ...posted }), retentionTab, options);
+  const { selfHosted = false } = options;
+  return saveTab(
+    db,
+    workspaceId,
+    (saved) => ({ ...settingsFormValues(saved, { selfHosted }), ...posted }),
+    retentionTab,
+    options,
+  );
 }
 
 /** A quiet hours time to the minute, as the form posts it and the user set it. Postgres reads it back with seconds. */

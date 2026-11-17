@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { formDiffers } from "@/lib/settings-form";
 import { cn } from "@/lib/utils";
 import { Notice } from "@/components/notice";
 import { SubmitButton } from "@/components/submit-button";
@@ -28,14 +29,16 @@ interface SettingsFormProps {
  * A Settings tab's form, which says when its fields differ from what's saved, as the Profile form
  * does. Its fields come from the server, so it reads their values from the form on an `input` or
  * `change` rather than holding each one. Without JavaScript nothing here runs: it's the form it was,
- * with no unsaved state, and the notice after a save.
+ * with no unsaved state, and the notice after a save. The caller keys it on what it arrived with, so a
+ * save's redirect or a refusal comes back to a form that starts clean and focuses its notice or its
+ * first field to fix.
  */
 export function SettingsForm({ action, initial, notice, note, submitLabel, children }: SettingsFormProps) {
   const form = useRef<HTMLFormElement>(null);
   const [dirty, setDirty] = useState(false);
   const check = () => {
     const element = form.current;
-    if (element !== null) setDirty(differs(element, initial));
+    if (element !== null) setDirty(formDiffers(new FormData(element), initial));
   };
 
   return (
@@ -61,21 +64,5 @@ export function SettingsForm({ action, initial, notice, note, submitLabel, child
         </SubmitButton>
       </div>
     </form>
-  );
-}
-
-/** What the form holds for a field, as text: a missing one reads as empty. */
-function textOf(data: FormData, name: string) {
-  const value = data.get(name);
-  return typeof value === "string" ? value : "";
-}
-
-/** Whether this tab's fields, as they stand, are not the ones the form started from. */
-function differs(form: HTMLFormElement, initial: Readonly<Record<string, string | boolean>>) {
-  // The form as it would post, so each kind of field reads the way it saves: a box as on or not, and
-  // the rest as the text it holds.
-  const data = new FormData(form);
-  return Object.entries(initial).some(([name, value]) =>
-    typeof value === "boolean" ? data.has(name) !== value : textOf(data, name) !== value,
   );
 }

@@ -272,7 +272,7 @@ describe("settingsFormValues", () => {
   });
 
   it("shows what's saved, with the times to the minute and the numbers as the fields post them", () => {
-    expect(settingsFormValues(saved({ quietHoursStart: "22:00:00", quietHoursEnd: "07:00:00" }))).toEqual({
+    expect(settingsFormValues(saved({ quietHoursStart: "22:00:00", quietHoursEnd: "07:00:00" }), { selfHosted: true })).toEqual({
       timezone: "Europe/Moscow",
       quietHours: true,
       quietHoursStart: "22:00",
@@ -288,7 +288,7 @@ describe("settingsFormValues", () => {
   });
 
   it("keeps a window field showing what a window would start from while it is unlimited", () => {
-    expect(settingsFormValues(saved({ itemsRetentionDays: null, logRetentionDays: null }))).toMatchObject({
+    expect(settingsFormValues(saved({ itemsRetentionDays: null, logRetentionDays: null }), { selfHosted: true })).toMatchObject({
       itemsRetentionDays: "90",
       itemsUnlimited: true,
       logRetentionDays: "30",
@@ -296,8 +296,23 @@ describe("settingsFormValues", () => {
     });
   });
 
+  it("shows the defaults instead of Unlimited on an install whose mode refuses a null window", () => {
+    // A hosted install keeps both windows, so a row left unlimited by a self-hosted run reads as the
+    // defaults: the box isn't offered, and a save that posted Unlimited would be refused.
+    expect(settingsFormValues(saved({ itemsRetentionDays: null, logRetentionDays: null }), { selfHosted: false })).toMatchObject({
+      itemsRetentionDays: "90",
+      itemsUnlimited: false,
+      logRetentionDays: "30",
+      logUnlimited: false,
+    });
+  });
+
   it("starts quiet hours' times at 22:00 to 07:00 while they're off, so turning them on is one tick", () => {
-    expect(settingsFormValues(saved())).toMatchObject({ quietHours: false, quietHoursStart: "22:00", quietHoursEnd: "07:00" });
+    expect(settingsFormValues(saved(), { selfHosted: true })).toMatchObject({
+      quietHours: false,
+      quietHoursStart: "22:00",
+      quietHoursEnd: "07:00",
+    });
   });
 });
 

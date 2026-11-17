@@ -38,7 +38,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
   // The URL is the state: a missing or unknown tab is Delivery, so a stale link opens the page.
   const tab = resolveSettingsTab(params.tab, { admin });
   const saved = await loadAlertSettings(db, workspace.id);
-  const values = settingsFormValues(saved);
+  const values = settingsFormValues(saved, { selfHosted });
 
   // A refused save comes back with its own tab's form as it was posted, and what's wrong is read from it
   // again. A link whose values pass the check isn't a refusal, so the form shows what's saved, not its values.

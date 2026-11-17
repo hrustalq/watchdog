@@ -8,8 +8,10 @@ import {
   alertsPerHourRange,
   burstWindowRange,
   type DeliverySettingsForm,
+  deliveryFields,
   quietHoursSentence,
   type RetentionSettingsForm,
+  retentionFields,
   retentionRange,
   timezones,
 } from "@/lib/settings";
@@ -18,12 +20,6 @@ import { SettingsForm } from "./settings-form";
 import { ZoneSuggestion } from "./zone-suggestion";
 
 const help = "text-xs text-muted-foreground";
-
-/** The order the Delivery form shows its fields in, which is the order the check names them in. */
-const deliveryFields = ["timezone", "quietHoursStart", "quietHoursEnd", "alertsPerHour", "burstWindowSeconds"] as const;
-
-/** The Retention form's fields, in its own order. */
-const retentionFields = ["itemsRetentionDays", "logRetentionDays"] as const;
 
 /**
  * The line over a refused form: it says that nothing was saved and points at the fields marked below.
@@ -60,13 +56,25 @@ export function DeliveryPanel({
 }) {
   const errorFor = (name: AlertSettingsField) => errors[name];
   const firstError = deliveryFields.find((field) => errors[field] !== undefined);
+  // Only this tab's fields: the page hands over the whole row, and a field this form doesn't show
+  // would make it read as changed for good.
+  const initial = {
+    timezone: values.timezone,
+    quietHours: values.quietHours,
+    quietHoursStart: values.quietHoursStart,
+    quietHoursEnd: values.quietHoursEnd,
+    severity5Bypasses: values.severity5Bypasses,
+    alertsPerHour: values.alertsPerHour,
+    burstWindowSeconds: values.burstWindowSeconds,
+  };
 
   return (
     <>
       {firstError === undefined ? null : <Refused count={deliveryFields.filter((field) => errors[field] !== undefined).length} />}
       <SettingsForm
+        key={JSON.stringify([notice ?? "", initial])}
         action={saveDeliverySettingsAction}
-        initial={values}
+        initial={initial}
         notice={notice}
         submitLabel="Save delivery"
         note="A saved change applies to the next alert, including ones already waiting."
@@ -234,13 +242,21 @@ export function RetentionPanel({
 }) {
   const errorFor = (name: AlertSettingsField) => errors[name];
   const firstError = retentionFields.find((field) => errors[field] !== undefined);
+  // Only this tab's fields, for the same reason as the Delivery tab's.
+  const initial = {
+    itemsRetentionDays: values.itemsRetentionDays,
+    itemsUnlimited: values.itemsUnlimited,
+    logRetentionDays: values.logRetentionDays,
+    logUnlimited: values.logUnlimited,
+  };
 
   return (
     <>
       {firstError === undefined ? null : <Refused count={retentionFields.filter((field) => errors[field] !== undefined).length} />}
       <SettingsForm
+        key={JSON.stringify([notice ?? "", initial])}
         action={saveRetentionSettingsAction}
-        initial={values}
+        initial={initial}
         notice={notice}
         submitLabel="Save retention"
         note="A saved window applies on the next sweep."
