@@ -702,13 +702,24 @@ describe("the Model screen", () => {
       await save(workspaceId, { inputPrice: "0.15", outputPrice: "0.6", pricesFromProvider: true });
       const checked = (await active(workspaceId)).pricingCheckedAt;
 
-      // A different model name is a new row; the prices are the same ones, so they keep their source.
+      // The same model with another setting: the numbers the provider gave it are still its own.
+      await save(workspaceId, { structured: true, inputPrice: "0.15", outputPrice: "0.6" });
+
+      const row = await active(workspaceId);
+      expect(row.pricingSource).toBe("provider");
+      expect(row.pricingCheckedAt?.getTime()).toBe(checked?.getTime());
+    });
+
+    it("marks the prices manual when the name changes, because another model never published them", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { inputPrice: "0.15", outputPrice: "0.6", pricesFromProvider: true });
+
       await save(workspaceId, { modelName: "another-model", inputPrice: "0.15", outputPrice: "0.6" });
 
       const row = await active(workspaceId);
       expect(row.modelName).toBe("another-model");
-      expect(row.pricingSource).toBe("provider");
-      expect(row.pricingCheckedAt?.getTime()).toBe(checked?.getTime());
+      expect(row.pricingSource).toBe("manual");
+      expect(row.pricingCheckedAt).toBeNull();
     });
 
     it("leaves the source null while either price is missing", async () => {

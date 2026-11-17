@@ -14,9 +14,13 @@ export interface ModelPricingValues {
 
 interface ModelPricing extends ModelPricingValues {
   /** The picker's prices, which a save records as the provider's own. */
-  setDetected: (prices: { inputPrice: string; outputPrice: string }) => void;
+  setDetected: (prices: { inputPrice: string; outputPrice: string; modelId: string }) => void;
   /** A typed price is the user's, so the row stops claiming the provider's list. */
   edit: (field: "inputPrice" | "outputPrice", value: string) => void;
+  /** A name that no longer matches the model the prices came from drops them, not just their label. */
+  rename: (modelId: string) => void;
+  /** Another provider or base URL drops prices the old address's list filled, for the same reason. */
+  leaveDestination: () => void;
 }
 
 const ModelPricingContext = createContext<ModelPricing | undefined>(undefined);
@@ -27,17 +31,32 @@ const ModelPricingContext = createContext<ModelPricing | undefined>(undefined);
  */
 export function ModelPricingProvider({ initial, children }: { initial: ModelPricingValues; children: ReactNode }) {
   const [values, setValues] = useState(initial);
+  // The listed id whose prices these are. A name or address that moves away from it drops them:
+  // another model's numbers must never be saved as this one's, and certainly not as the provider's.
+  const [detectedFor, setDetectedFor] = useState<string | undefined>(undefined);
   const pricing = useMemo<ModelPricing>(
     () => ({
       ...values,
-      setDetected: ({ inputPrice, outputPrice }) => {
+      setDetected: ({ inputPrice, outputPrice, modelId }) => {
+        setDetectedFor(modelId);
         setValues({ inputPrice, outputPrice, fromProvider: true });
       },
       edit: (field, value) => {
+        setDetectedFor(undefined);
         setValues((held) => ({ ...held, [field]: value, fromProvider: false }));
       },
+      rename: (modelId) => {
+        if (detectedFor === undefined || detectedFor === modelId) return;
+        setDetectedFor(undefined);
+        setValues({ inputPrice: "", outputPrice: "", fromProvider: false });
+      },
+      leaveDestination: () => {
+        if (detectedFor === undefined) return;
+        setDetectedFor(undefined);
+        setValues({ inputPrice: "", outputPrice: "", fromProvider: false });
+      },
     }),
-    [values],
+    [values, detectedFor],
   );
   return <ModelPricingContext value={pricing}>{children}</ModelPricingContext>;
 }

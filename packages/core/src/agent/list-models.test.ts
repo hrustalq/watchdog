@@ -160,6 +160,16 @@ describe("listing a provider's models", () => {
       ]);
     });
 
+    it("still lists the models when a host's pricing isn't the strings it expected", async () => {
+      const { fetch } = fakeFetch(() =>
+        json({ data: [{ id: "gpt-5", pricing: { prompt: 0.0001, completion: null } }] }),
+      );
+
+      const result = await listModels({ providerType: "openai-compatible", baseUrl: "https://llm.test/v1" }, "k", fetch);
+
+      expect(result.ok && ids(result.models)).toEqual(["gpt-5"]);
+    });
+
     it("never takes a price from another host that happens to send pricing", async () => {
       const { fetch } = fakeFetch(() =>
         json({ data: [{ id: "gpt-5", pricing: { prompt: "0.0001", completion: "0.0002" } }] }),

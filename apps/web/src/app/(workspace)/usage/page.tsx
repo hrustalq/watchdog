@@ -184,8 +184,10 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
 
 /** Where a line's prices came from, when every row on it agrees; a mixed line says nothing. */
 function PriceSource({ source }: { source: "provider" | "manual" | null }) {
-  if (source === "provider") return <span className="block text-xs text-muted-foreground">Prices from the provider</span>;
-  if (source === "manual") return <span className="block text-xs text-muted-foreground">Prices entered by you</span>;
+  if (source === "provider") {
+    return <span className="block text-xs text-muted-foreground">Current prices from the provider</span>;
+  }
+  if (source === "manual") return <span className="block text-xs text-muted-foreground">Current prices entered by you</span>;
   return null;
 }
 

@@ -267,13 +267,16 @@ function priceProvenance(
   current: typeof modelConfig.$inferSelect | undefined,
   prices: { inputPrice: number | null; outputPrice: number | null },
   fromProvider: boolean,
+  sameModel: boolean,
 ) {
   const { inputPrice, outputPrice } = prices;
   if (inputPrice === null || outputPrice === null) return { pricingSource: null, pricingCheckedAt: null };
   if (fromProvider) return { pricingSource: "provider" as const, pricingCheckedAt: sql`now()` };
   const holds = (row: typeof modelConfig.$inferSelect) =>
     row.inputPricePerMillion === inputPrice && row.outputPricePerMillion === outputPrice;
-  if (current !== undefined && holds(current) && current.pricingSource !== null) {
+  // A rename makes a new row: the numbers carried over were never read for the new name, so they
+  // are the user's now, not the provider's.
+  if (sameModel && current !== undefined && holds(current) && current.pricingSource !== null) {
     return { pricingSource: current.pricingSource, pricingCheckedAt: current.pricingCheckedAt };
   }
   return { pricingSource: "manual" as const, pricingCheckedAt: null };
@@ -317,7 +320,10 @@ export async function saveModel(
       .select()
       .from(modelConfig)
       .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
-    const provenance = priceProvenance(current, { inputPrice, outputPrice }, pricesFromProvider);
+    const isCurrent = (row: typeof modelConfig.$inferSelect) =>
+      row.providerType === provider && row.baseUrl === baseUrl && row.modelName === modelName;
+    const sameModel = current !== undefined && isCurrent(current);
+    const provenance = priceProvenance(current, { inputPrice, outputPrice }, pricesFromProvider, sameModel);
 
     if (
       current?.providerType === provider &&

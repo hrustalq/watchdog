@@ -1,6 +1,7 @@
 // Each provider family's own models endpoint, for the Model screen's picker (GitHub issue #488).
 // Separate from `callAgent`: no prompt, no retry, no `agent_call` row, and nothing metered.
 import { perMillion } from "@watchdog/shared/utils/cost";
+import { isRecord } from "@watchdog/shared/utils/is-record";
 import { z } from "zod";
 import { EgressBlockedError } from "../egress/egress.ts";
 import type { AgentFetch } from "./provider.ts";
@@ -47,7 +48,9 @@ const dataPage = z.object({
   data: z.array(
     z.object({
       id: z.string().min(1),
-      pricing: z.object({ prompt: z.string(), completion: z.string() }).partial().optional(),
+      // Read by `priced` only on OpenRouter: a host that sends a number, null or anything else must
+      // still list its models, since the price is an extra and never the reason to refuse a list.
+      pricing: z.unknown().optional(),
     }),
   ),
   has_more: z.boolean().optional(),
@@ -132,6 +135,13 @@ function collect(models: ListedModel[], entries: ListedModel[]) {
   }
 }
 
+/** One field of a host's pricing object, when it really is a string. */
+function priceText(entry: { pricing?: unknown }, field: "prompt" | "completion") {
+  if (!isRecord(entry.pricing)) return undefined;
+  const value = entry.pricing[field];
+  return typeof value === "string" ? value : undefined;
+}
+
 /** A price as a number, or null for anything that isn't a decimal string: a price is never guessed. */
 function pricePerMillion(perToken: string | undefined): number | null {
   if (perToken === undefined) return null;
@@ -170,10 +180,10 @@ async function openAiCompatibleModels(
   const models: ListedModel[] = [];
   collect(
     models,
-    parsed.data.data.map(({ id, pricing }) => ({
-      id,
-      inputPricePerMillion: priced ? pricePerMillion(pricing?.prompt) : null,
-      outputPricePerMillion: priced ? pricePerMillion(pricing?.completion) : null,
+    parsed.data.data.map((entry) => ({
+      id: entry.id,
+      inputPricePerMillion: priced ? pricePerMillion(priceText(entry, "prompt")) : null,
+      outputPricePerMillion: priced ? pricePerMillion(priceText(entry, "completion")) : null,
     })),
   );
   return finish(models);

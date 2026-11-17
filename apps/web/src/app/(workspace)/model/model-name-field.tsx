@@ -187,7 +187,7 @@ export function ModelNameField({
   storedKey: StoredKey;
   error: string | undefined;
 }) {
-  const { inputPrice, outputPrice, setDetected } = useModelPricing();
+  const { inputPrice, outputPrice, setDetected, rename, leaveDestination } = useModelPricing();
   const [value, setValue] = useState(defaultValue);
   const [query, setQuery] = useState("");
   const [listed, setListed] = useState<ListedModels>({ kind: "idle" });
@@ -210,6 +210,8 @@ export function ModelNameField({
       const target = event.target;
       if (target instanceof HTMLElement && (target.id === "provider" || target.id === "base-url")) {
         setListed({ kind: "idle" });
+        // The prices were that address's; another provider must not save them as its own.
+        leaveDestination();
       }
     };
     form.addEventListener("change", reset);
@@ -218,7 +220,7 @@ export function ModelNameField({
       form.removeEventListener("change", reset);
       form.removeEventListener("input", reset);
     };
-  }, []);
+  }, [leaveDestination]);
 
   function posted(name: string) {
     const form = inputRef.current?.form;
@@ -277,10 +279,12 @@ export function ModelNameField({
       onChange={(next) => {
         setValue(next);
         setQuery(next);
+        // A name that moves away from the model whose prices were filled drops them.
+        rename(next);
         // A name that is exactly a listed id takes that model's prices, when the fields hold none.
         const model = listed.kind === "ready" ? listed.models.find(({ id }) => id === next) : undefined;
         const picked = pickPrefill(model, { inputPrice, outputPrice });
-        if (picked !== undefined) setDetected(picked);
+        if (picked !== undefined && model !== undefined) setDetected({ ...picked, modelId: model.id });
       }}
       onOpenChange={opened}
       onLoad={() => void load()}

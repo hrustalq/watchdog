@@ -260,7 +260,8 @@ function pricingProvenance(model: NonNullable<Awaited<ReturnType<typeof getModel
 /** OpenRouter is named as itself, because that is the provider whose prices were read. */
 function modelProviderLabel(baseUrl: string, providerType: string) {
   try {
-    if (new URL(baseUrl).hostname.endsWith("openrouter.ai")) return "OpenRouter";
+    const { hostname } = new URL(baseUrl);
+    if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) return "OpenRouter";
   } catch {
     // A stored URL that no longer parses still gets its family's name.
   }
