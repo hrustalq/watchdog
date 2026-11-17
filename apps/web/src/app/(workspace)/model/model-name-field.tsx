@@ -61,8 +61,12 @@ interface ModelNameFieldViewProps {
   /** A refusal from the server's save, which is about this field rather than the list. */
   error: string | undefined;
   inputRef: React.RefObject<HTMLInputElement | null>;
+  /** Controlled: the list opens on the trigger, or after a load it asked for, and never on typing. */
+  open: boolean;
+  /** What narrows the list. Opening the picker starts it empty, so the whole list shows first. */
+  query: string;
   onChange: (value: string) => void;
-  onOpenChange: (open: boolean) => void;
+  onOpenChange: (open: boolean, reason: string) => void;
   onLoad: () => void;
 }
 
@@ -72,26 +76,46 @@ interface ModelNameFieldViewProps {
  * a typed name whatever loading did. Its status line is the only thing that changes, and it is
  * announced, because a failure here is otherwise invisible until a save.
  */
-export function ModelNameFieldView({ value, listed, error, inputRef, onChange, onOpenChange, onLoad }: ModelNameFieldViewProps) {
+export function ModelNameFieldView({
+  value,
+  listed,
+  error,
+  inputRef,
+  open,
+  query,
+  onChange,
+  onOpenChange,
+  onLoad,
+}: ModelNameFieldViewProps) {
   const id = "model-name";
   const statusId = `${id}-status`;
   const errorId = `${id}-error`;
   const describedBy = error === undefined ? `${statusId} ${id}-help` : `${statusId} ${errorId} ${id}-help`;
   const models = listed.kind === "ready" ? listed.models : [];
+  // The list narrows as the name is typed, as an autocomplete does. Base UI leaves the filtering to
+  // its caller here, so the ids shown and the empty line are decided in one place.
+  const wants = query.trim().toLowerCase();
+  const shown = models.filter((model) => model.toLowerCase().includes(wants));
 
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor={id}>Model name</Label>
       <div className="flex flex-col gap-2 sm:flex-row">
         <Combobox
-          items={models}
+          items={shown}
           value={value}
+          open={open}
           onValueChange={(next) => {
-            if (typeof next === "string") onChange(next);
+            if (typeof next !== "string") return;
+            onChange(next);
+            // A pick is the field's whole job: close the list so it doesn't sit over the form.
+            onOpenChange(false, "item-press");
           }}
           inputValue={value}
           onInputValueChange={onChange}
-          onOpenChange={onOpenChange}
+          onOpenChange={(next, details) => {
+            onOpenChange(next, details.reason);
+          }}
         >
           <ComboboxInput
             ref={inputRef}
@@ -106,16 +130,20 @@ export function ModelNameFieldView({ value, listed, error, inputRef, onChange, o
             aria-describedby={describedBy}
             aria-busy={listed.kind === "loading"}
           />
-          <ComboboxContent>
-            <ComboboxList>
-              {models.map((model) => (
-                <ComboboxItem key={model} value={model} className="font-mono text-[0.8125rem]">
-                  {model}
-                </ComboboxItem>
-              ))}
-            </ComboboxList>
-            <ComboboxEmpty>No match. The box keeps what you typed.</ComboboxEmpty>
-          </ComboboxContent>
+          {/* Mounted only while open: a closed popup that stays on the page covers the fields under
+              it, and a save then can't be clicked. */}
+          {open ? (
+            <ComboboxContent>
+              <ComboboxList>
+                {shown.map((model) => (
+                  <ComboboxItem key={model} value={model} className="font-mono text-[0.8125rem]">
+                    {model}
+                  </ComboboxItem>
+                ))}
+              </ComboboxList>
+              {shown.length === 0 ? <ComboboxEmpty>No match. The box keeps what you typed.</ComboboxEmpty> : null}
+            </ComboboxContent>
+          ) : null}
         </Combobox>
         <Button
           type="button"
@@ -157,7 +185,11 @@ export function ModelNameField({
   error: string | undefined;
 }) {
   const [value, setValue] = useState(defaultValue);
+  const [query, setQuery] = useState("");
   const [listed, setListed] = useState<ListedModels>({ kind: "idle" });
+  const [open, setOpen] = useState(false);
+  // The trigger asked, and the list it wants isn't loaded yet.
+  const wantsOpen = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // A refused save focuses its field, as the text fields do.
@@ -204,16 +236,33 @@ export function ModelNameField({
           ? { kind: "ready", models: outcome.models.map(({ id }) => id) }
           : { kind: "failed", reason: outcome.reason },
       );
+      // The trigger asked for this list, so it opens now that there is one.
+      if (outcome.ok && wantsOpen.current) setOpen(outcome.models.length > 0);
     } catch {
       // A refused session or a failed read mustn't leave the field saying "Loading…" for good.
       setListed({ kind: "failed", reason: "request-failed" });
+    } finally {
+      wantsOpen.current = false;
     }
   }
 
-  function opened(open: boolean) {
-    if (!open || listed.kind !== "idle") return;
+  function opened(next: boolean, reason: string) {
+    if (!next) {
+      setOpen(false);
+      return;
+    }
+    if (listed.kind === "ready") {
+      // Opening the picker shows every id, not only the one the box already holds.
+      setQuery("");
+      setOpen(listed.models.length > 0);
+      return;
+    }
+    // Only the trigger asks for a list: typing in the name box must not start a request, and the
+    // list it would open isn't there yet.
+    if (reason !== "trigger-press" || listed.kind === "loading") return;
     // The saved key counts even though this field is blank: a blank key field keeps it on save.
     if (posted("apiKey") === "" && storedKey !== "set") return;
+    wantsOpen.current = true;
     void load();
   }
 
@@ -223,7 +272,12 @@ export function ModelNameField({
       listed={listed}
       error={error}
       inputRef={inputRef}
-      onChange={setValue}
+      open={open}
+      query={query}
+      onChange={(next) => {
+        setValue(next);
+        setQuery(next);
+      }}
       onOpenChange={opened}
       onLoad={() => void load()}
     />

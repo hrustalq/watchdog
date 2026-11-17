@@ -17,6 +17,8 @@ function field(listed: ListedModels, error?: string) {
       listed={listed}
       error={error}
       inputRef={createRef<HTMLInputElement>()}
+      open={false}
+      query=""
       onChange={() => undefined}
       onOpenChange={() => undefined}
       onLoad={() => undefined}
