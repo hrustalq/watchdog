@@ -862,6 +862,8 @@ test("the guided setup takes a Source from the sidebar to a finished watch witho
     storageState: await signedIn.context().storageState(),
   });
   const page = await context.newPage();
+  // A new page starts blank; open the app in the session the sign-in above left behind.
+  await page.goto(new URL("/", signedIn.url()).href);
 
   await test.step("the sidebar opens the guide at its first step", async () => {
     await page.getByRole("link", { name: "Add source" }).click();
