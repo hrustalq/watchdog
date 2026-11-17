@@ -25,8 +25,9 @@ import {
   loadAlertSettings,
   loadHealthAlertDestinations,
   quietHoursSentence,
-  saveAlertSettings,
+  saveDeliverySettings,
   saveHealthAlertDestinations,
+  saveRetentionSettings,
 } from "./settings.ts";
 
 function present<T>(value: T | undefined): T {
@@ -179,12 +180,12 @@ describe("the Settings screen's alert settings", () => {
   it("saves both retention windows, and Unlimited on a self-hosted install", async () => {
     const workspaceId = await newWorkspace();
 
-    const result = await saveAlertSettings(db, workspaceId, form({ itemsRetentionDays: "180", logRetentionDays: "14" }));
+    const result = await saveRetentionSettings(db, workspaceId, form({ itemsRetentionDays: "180", logRetentionDays: "14" }));
 
     expect(result).toEqual({ saved: true });
     expect(await loadAlertSettings(db, workspaceId)).toMatchObject({ itemsRetentionDays: 180, logRetentionDays: 14 });
 
-    const unlimited = await saveAlertSettings(
+    const unlimited = await saveRetentionSettings(
       db,
       workspaceId,
       form({ itemsUnlimited: true, logUnlimited: true }),
@@ -202,17 +203,61 @@ describe("the Settings screen's alert settings", () => {
     const workspaceId = await newWorkspace();
     const before = await loadAlertSettings(db, workspaceId);
 
-    const result = await saveAlertSettings(db, workspaceId, form({ itemsUnlimited: true, logUnlimited: true }));
+    const result = await saveRetentionSettings(db, workspaceId, form({ itemsUnlimited: true, logUnlimited: true }));
 
     expect("errors" in result && Object.keys(result.errors).sort()).toEqual(["itemsRetentionDays", "logRetentionDays"]);
     expect(await loadAlertSettings(db, workspaceId)).toEqual(before);
+  });
+
+  it("saves one tab's columns and leaves the other tab's as they were", async () => {
+    const workspaceId = await newWorkspace();
+    await saveRetentionSettings(db, workspaceId, form({ itemsRetentionDays: "180", logRetentionDays: "14" }));
+
+    await saveDeliverySettings(db, workspaceId, form({ timezone: "Europe/Moscow", alertsPerHour: "25", burstWindowSeconds: "0" }));
+
+    expect(await loadAlertSettings(db, workspaceId)).toMatchObject({
+      timezone: "Europe/Moscow",
+      alertsPerHour: 25,
+      burstWindowSeconds: 0,
+      itemsRetentionDays: 180,
+      logRetentionDays: 14,
+    });
+
+    await saveRetentionSettings(db, workspaceId, form({ itemsRetentionDays: "365", logRetentionDays: "7" }));
+
+    expect(await loadAlertSettings(db, workspaceId)).toMatchObject({
+      timezone: "Europe/Moscow",
+      alertsPerHour: 25,
+      burstWindowSeconds: 0,
+      itemsRetentionDays: 365,
+      logRetentionDays: 7,
+    });
+  });
+
+  it("checks and writes only its own tab's fields, whatever else the post carries", async () => {
+    const workspaceId = await newWorkspace();
+    await saveRetentionSettings(db, workspaceId, form({ itemsRetentionDays: "180", logRetentionDays: "14" }));
+
+    // A hidden field or a crafted post naming the other tab's settings can't refuse this save or set them.
+    const result = await saveDeliverySettings(
+      db,
+      workspaceId,
+      form({ timezone: "Europe/Moscow", itemsRetentionDays: "0", logRetentionDays: "nope", itemsUnlimited: true }),
+    );
+
+    expect(result).toEqual({ saved: true });
+    expect(await loadAlertSettings(db, workspaceId)).toMatchObject({
+      timezone: "Europe/Moscow",
+      itemsRetentionDays: 180,
+      logRetentionDays: 14,
+    });
   });
 
   it("saves Europe/Moscow 22:00 to 07:00, says so, and holds a Severity 4 alert sent at 23:00 Moscow time", async () => {
     const workspaceId = await newWorkspace();
     const { queue } = await alerting(workspaceId);
 
-    const result = await saveAlertSettings(
+    const result = await saveDeliverySettings(
       db,
       workspaceId,
       form({ timezone: "Europe/Moscow", quietHours: true, quietHoursStart: "22:00", quietHoursEnd: "07:00" }),
@@ -237,7 +282,7 @@ describe("the Settings screen's alert settings", () => {
     const workspaceId = await newWorkspace();
     const before = await loadAlertSettings(db, workspaceId);
 
-    const result = await saveAlertSettings(
+    const result = await saveDeliverySettings(
       db,
       workspaceId,
       form({ timezone: "Mars/Olympus", quietHours: true, quietHoursStart: "25:00", quietHoursEnd: "07:00" }),
@@ -250,7 +295,7 @@ describe("the Settings screen's alert settings", () => {
   it("sends 25 alerts in a minute as 25 messages at a burst window of 0 and 25 alerts an hour", async () => {
     const workspaceId = await newWorkspace();
     const { queue } = await alerting(workspaceId);
-    await saveAlertSettings(db, workspaceId, form({ burstWindowSeconds: "0", alertsPerHour: "25" }));
+    await saveDeliverySettings(db, workspaceId, form({ burstWindowSeconds: "0", alertsPerHour: "25" }));
 
     const { deps, sent } = recording(new Date("2099-01-07T12:00:30Z"));
     const ids = [];
@@ -264,7 +309,7 @@ describe("the Settings screen's alert settings", () => {
   it("holds the last 5 of those 25 at the default of 20 an hour", async () => {
     const workspaceId = await newWorkspace();
     const { queue } = await alerting(workspaceId);
-    await saveAlertSettings(db, workspaceId, form({ burstWindowSeconds: "0" }));
+    await saveDeliverySettings(db, workspaceId, form({ burstWindowSeconds: "0" }));
 
     const { deps, sent } = recording(new Date("2099-01-07T12:00:30Z"));
     const ids = [];
@@ -277,9 +322,9 @@ describe("the Settings screen's alert settings", () => {
 
   it("turns quiet hours off again", async () => {
     const workspaceId = await newWorkspace();
-    await saveAlertSettings(db, workspaceId, form({ quietHours: true, quietHoursStart: "22:00", quietHoursEnd: "07:00" }));
+    await saveDeliverySettings(db, workspaceId, form({ quietHours: true, quietHoursStart: "22:00", quietHoursEnd: "07:00" }));
 
-    await saveAlertSettings(db, workspaceId, form({ quietHours: false, quietHoursStart: "22:00", quietHoursEnd: "07:00" }));
+    await saveDeliverySettings(db, workspaceId, form({ quietHours: false, quietHoursStart: "22:00", quietHoursEnd: "07:00" }));
 
     expect(await loadAlertSettings(db, workspaceId)).toMatchObject({ quietHoursStart: null, quietHoursEnd: null });
   });
@@ -290,7 +335,7 @@ describe("the Settings screen's alert settings", () => {
 
     it("counts a save as changing the settings only when one that times a hold changes", async () => {
       const workspaceId = await newWorkspace();
-      await saveAlertSettings(db, workspaceId, quiet());
+      await saveDeliverySettings(db, workspaceId, quiet());
       // As Postgres writes it back: the times carry seconds, which the form never posts.
       const saved = await loadAlertSettings(db, workspaceId);
 
@@ -306,7 +351,7 @@ describe("the Settings screen's alert settings", () => {
     it("sends a Severity 4 alert held until 07:00 within a minute of quiet hours being turned off at 23:00", async () => {
       const workspaceId = await newWorkspace();
       const { queue } = await alerting(workspaceId);
-      await saveAlertSettings(db, workspaceId, quiet());
+      await saveDeliverySettings(db, workspaceId, quiet());
 
       // 23:00 in Moscow, which is UTC+3 all year, so the alert waits for 07:00 local time.
       const { deps, sent } = recording(new Date("2099-01-07T20:00:00Z"));
@@ -317,7 +362,7 @@ describe("the Settings screen's alert settings", () => {
         nextAttemptAt: new Date("2099-01-08T04:00:00Z"),
       });
 
-      await saveAlertSettings(db, workspaceId, form({ timezone: "Europe/Moscow" }));
+      await saveDeliverySettings(db, workspaceId, form({ timezone: "Europe/Moscow" }));
 
       dueNow(await rowOf(deliveryId));
       await sweep();
@@ -330,7 +375,7 @@ describe("the Settings screen's alert settings", () => {
     it("sends a held Severity 5 alert within a minute of the bypass being turned on, and holds the Severity 4 one", async () => {
       const workspaceId = await newWorkspace();
       const { queue } = await alerting(workspaceId);
-      await saveAlertSettings(db, workspaceId, quiet());
+      await saveDeliverySettings(db, workspaceId, quiet());
 
       const { deps, sent } = recording(new Date("2099-01-07T20:00:00Z"));
       const four = await queue(4);
@@ -340,7 +385,7 @@ describe("the Settings screen's alert settings", () => {
       expect(sent).toHaveLength(0);
       expect((await Promise.all([statusOf(four), statusOf(five)])).map(String).sort()).toEqual(["held", "held"]);
 
-      await saveAlertSettings(db, workspaceId, quiet({ severity5Bypasses: true }));
+      await saveDeliverySettings(db, workspaceId, quiet({ severity5Bypasses: true }));
 
       dueNow(await rowOf(five));
       dueNow(await rowOf(four));
@@ -356,7 +401,7 @@ describe("the Settings screen's alert settings", () => {
     it("sends an alert the rate limit holds within a minute of alerts_per_hour being raised", async () => {
       const workspaceId = await newWorkspace();
       const { queue } = await alerting(workspaceId);
-      await saveAlertSettings(db, workspaceId, form({ alertsPerHour: "2", burstWindowSeconds: "0" }));
+      await saveDeliverySettings(db, workspaceId, form({ alertsPerHour: "2", burstWindowSeconds: "0" }));
 
       const { deps, sent } = recording(new Date("2099-01-07T12:00:00Z"));
       const ids = [await queue(4), await queue(4), await queue(4)];
@@ -366,7 +411,7 @@ describe("the Settings screen's alert settings", () => {
       expect(await rowOf(heldId)).toMatchObject({ status: "held", nextAttemptAt: new Date("2099-01-07T13:00:00Z") });
 
       // A third in the hour is one more than the limit was, so the alert can go.
-      await saveAlertSettings(db, workspaceId, form({ alertsPerHour: "3", burstWindowSeconds: "0" }));
+      await saveDeliverySettings(db, workspaceId, form({ alertsPerHour: "3", burstWindowSeconds: "0" }));
 
       dueNow(await rowOf(heldId));
       await sweep();
@@ -379,7 +424,7 @@ describe("the Settings screen's alert settings", () => {
     it("adds no Log row to a held Item when the same settings are saved again", async () => {
       const workspaceId = await newWorkspace();
       const { queue } = await alerting(workspaceId);
-      await saveAlertSettings(db, workspaceId, quiet());
+      await saveDeliverySettings(db, workspaceId, quiet());
 
       const { deps } = recording(new Date("2099-01-07T20:00:00Z"));
       const deliveryId = await queue(4);
@@ -387,7 +432,7 @@ describe("the Settings screen's alert settings", () => {
       const held = await rowOf(deliveryId);
       expect(await logOf(deliveryId)).toEqual(["Held until 2099-01-08 07:00 Europe/Moscow: quiet hours"]);
 
-      await saveAlertSettings(db, workspaceId, quiet());
+      await saveDeliverySettings(db, workspaceId, quiet());
 
       expect(await rowOf(deliveryId)).toEqual(held);
       expect(await logOf(deliveryId)).toEqual(["Held until 2099-01-08 07:00 Europe/Moscow: quiet hours"]);
@@ -396,7 +441,7 @@ describe("the Settings screen's alert settings", () => {
     it("leaves an alert the hosted email cap holds until the next local day, and its Log alone", async () => {
       const workspaceId = await newWorkspace();
       const { queue } = await alerting(workspaceId, "email");
-      await saveAlertSettings(db, workspaceId, form({ alertsPerHour: "1000", burstWindowSeconds: "0" }));
+      await saveDeliverySettings(db, workspaceId, form({ alertsPerHour: "1000", burstWindowSeconds: "0" }));
       // The day's 50 mails have gone, so the next one is the cap's.
       await db.insert(sentMessage).values(
         Array.from({ length: 50 }, (_, index) => ({
@@ -424,7 +469,7 @@ describe("the Settings screen's alert settings", () => {
       expect(notices).toEqual([workspaceId]);
 
       // The burst window is one the cap doesn't care about, and the hold stays where it was.
-      await saveAlertSettings(db, workspaceId, form({ alertsPerHour: "1000", burstWindowSeconds: "30" }));
+      await saveDeliverySettings(db, workspaceId, form({ alertsPerHour: "1000", burstWindowSeconds: "30" }));
 
       expect(await rowOf(deliveryId)).toMatchObject({
         status: "held",

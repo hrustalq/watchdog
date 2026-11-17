@@ -1,30 +1,36 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { AlertSettingsForm } from "@/lib/settings";
 import { cn } from "@/lib/utils";
 import { Notice } from "@/components/notice";
 import { SubmitButton } from "@/components/submit-button";
-import { saveSettingsAction } from "./actions";
 
 interface SettingsFormProps {
   /**
-   * The values the fields start from: what's saved, or what a refused save posted back. A refused form
-   * arrived with the values it shows, so it doesn't claim changes of its own.
+   * The Server Action this tab's button posts. It comes from the page rather than from this module,
+   * so one form serves the Delivery tab and the Retention tab, and each redirects to its own tab.
    */
-  initial: AlertSettingsForm;
-  /** The last save went through, so its notice is the first thing the form says. */
-  justSaved: boolean;
+  action: (formData: FormData) => Promise<void>;
+  /**
+   * The values the fields start from: what's saved, or what a refused save posted back, and only the
+   * active tab's fields. A field the tab doesn't show can't make the form read as changed.
+   */
+  initial: Readonly<Record<string, string | boolean>>;
+  /** What this tab says after its own save, or none. A notice never crosses to another tab. */
+  notice?: string | undefined;
+  /** What the line above the button says about when the save applies, and the button's own words. */
+  note: string;
+  submitLabel: string;
   children: React.ReactNode;
 }
 
 /**
- * The Settings form, which says when its fields differ from what's saved, as the Profile form does.
- * Its fields come from the server, so it reads their values from the form on an `input` or `change`
- * rather than holding each one. Without JavaScript nothing here runs: it's the form it was, with no
- * unsaved state, and the notice after a save.
+ * A Settings tab's form, which says when its fields differ from what's saved, as the Profile form
+ * does. Its fields come from the server, so it reads their values from the form on an `input` or
+ * `change` rather than holding each one. Without JavaScript nothing here runs: it's the form it was,
+ * with no unsaved state, and the notice after a save.
  */
-export function SettingsForm({ initial, justSaved, children }: SettingsFormProps) {
+export function SettingsForm({ action, initial, notice, note, submitLabel, children }: SettingsFormProps) {
   const form = useRef<HTMLFormElement>(null);
   const [dirty, setDirty] = useState(false);
   const check = () => {
@@ -33,57 +39,43 @@ export function SettingsForm({ initial, justSaved, children }: SettingsFormProps
   };
 
   return (
-    <form
-      ref={form}
-      action={saveSettingsAction}
-      onInput={check}
-      onChange={check}
-      className="flex flex-col gap-6"
-    >
-      {justSaved ? (
+    <form ref={form} action={action} onInput={check} onChange={check} className="flex flex-col gap-6">
+      {notice === undefined ? null : (
         // Each save brings a new page, so the notice is a new node and is read again, even when the
         // fields went nowhere. Hidden, not removed, while the fields hold edits: putting them back
         // returns it.
         <Notice role="status" className={cn(dirty && "hidden")}>
-          Settings saved. The next alert follows them.
+          {notice}
         </Notice>
-      ) : null}
+      )}
 
       {children}
 
       <div className="flex flex-col gap-3">
         <p className="text-sm text-muted-foreground">
-          {dirty ? <strong className="font-medium text-foreground">Unsaved changes. </strong> : null}A saved change
-          applies to the next alert, including ones already waiting.
+          {dirty ? <strong className="font-medium text-foreground">Unsaved changes. </strong> : null}
+          {note}
         </p>
         <SubmitButton pendingLabel="Saving…" className="sm:w-auto sm:self-start">
-          Save settings
+          {submitLabel}
         </SubmitButton>
       </div>
     </form>
   );
 }
 
-/** Whether the fields, as they stand, are not the ones the form started from. */
-function differs(form: HTMLFormElement, initial: AlertSettingsForm) {
+/** What the form holds for a field, as text: a missing one reads as empty. */
+function textOf(data: FormData, name: string) {
+  const value = data.get(name);
+  return typeof value === "string" ? value : "";
+}
+
+/** Whether this tab's fields, as they stand, are not the ones the form started from. */
+function differs(form: HTMLFormElement, initial: Readonly<Record<string, string | boolean>>) {
   // The form as it would post, so each kind of field reads the way it saves: a box as on or not, and
   // the rest as the text it holds.
   const data = new FormData(form);
-  const text = (name: string) => {
-    const value = data.get(name);
-    return typeof value === "string" ? value : "";
-  };
-  return (
-    text("timezone") !== initial.timezone ||
-    data.has("quietHours") !== initial.quietHours ||
-    text("quietHoursStart") !== initial.quietHoursStart ||
-    text("quietHoursEnd") !== initial.quietHoursEnd ||
-    data.has("severity5Bypasses") !== initial.severity5Bypasses ||
-    text("alertsPerHour") !== initial.alertsPerHour ||
-    text("burstWindowSeconds") !== initial.burstWindowSeconds ||
-    text("itemsRetentionDays") !== initial.itemsRetentionDays ||
-    data.has("itemsUnlimited") !== initial.itemsUnlimited ||
-    text("logRetentionDays") !== initial.logRetentionDays ||
-    data.has("logUnlimited") !== initial.logUnlimited
+  return Object.entries(initial).some(([name, value]) =>
+    typeof value === "boolean" ? data.has(name) !== value : textOf(data, name) !== value,
   );
 }

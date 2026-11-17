@@ -674,7 +674,7 @@ test("a high-Severity Item sends a Telegram alert and a mail, and quiet hours ho
     await page.getByLabel("Hold alerts during quiet hours").check();
     await visibleField(page, "From").fill(clock(-1));
     await visibleField(page, "Until").fill(clock(1));
-    await page.getByRole("button", { name: "Save settings" }).click();
+    await page.getByRole("button", { name: "Save delivery" }).click();
     const savedNotice = page.getByRole("status").filter({ hasText: "Settings saved." });
     await expect(savedNotice).toBeVisible();
 
