@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { dataBox, label, textLink } from "@/components/field-classes";
-import { CheckboxField, TextField } from "@/components/form-field";
+import { label, textLink } from "@/components/field-classes";
+import { CheckboxField } from "@/components/form-field";
 import { Notice } from "@/components/notice";
 import { PageBar } from "@/components/page-bar";
 import { Page, PageHeader } from "@/components/page";
@@ -19,7 +19,7 @@ import {
   settingsFormValues,
 } from "@/lib/settings";
 import { cn } from "@/lib/utils";
-import { deleteWorkspaceAction, saveHealthAlertsAction, setSignup } from "./actions";
+import { saveHealthAlertsAction, setSignup } from "./actions";
 import { DeliveryPanel, RetentionPanel } from "./panels";
 import { SettingsTabs } from "./settings-tabs";
 
@@ -85,12 +85,7 @@ export default async function SettingsPage({ searchParams }: PageProps<"/setting
           </>
         ) : null}
 
-        {tab === "workspace" ? (
-          <>
-            <WorkspaceSection name={workspace.name} />
-            <DeleteWorkspaceSection name={workspace.name} email={user.email} refused={params.delete === "name"} />
-          </>
-        ) : null}
+        {tab === "workspace" ? <WorkspaceSection name={workspace.name} /> : null}
 
         {/* Only an admin's URL resolves to Instance, so there is no second check to make here. */}
         {tab === "instance" ? <SignupSection /> : null}
@@ -109,7 +104,10 @@ function postedSettingsForm(tab: SettingsTab, get: (name: string) => unknown) {
   return undefined;
 }
 
-/** The Workspace this page belongs to. Renaming arrives with the Workspace switcher; until then this says the name. */
+/**
+ * The Workspace this page belongs to. Renaming, creating another and deleting one are the Workspaces
+ * screen's, which the sidebar's switcher opens too, so this tab says the name and points there.
+ */
 function WorkspaceSection({ name }: { name: string }) {
   return (
     <Section id="workspace-heading" title="Workspace" tone="panel" gap={4}>
@@ -117,6 +115,17 @@ function WorkspaceSection({ name }: { name: string }) {
         <span className={label}>Name</span>
         <p className="text-sm">{name}</p>
       </div>
+      <p className="max-w-[70ch] text-sm text-muted-foreground">
+        Rename this Workspace, create another or delete one on{" "}
+        <Link href="/workspaces" className={textLink}>
+          Workspaces
+        </Link>
+        . Deleting your account is on{" "}
+        <Link href="/account" className={textLink}>
+          Account
+        </Link>
+        .
+      </p>
     </Section>
   );
 }
@@ -173,51 +182,6 @@ async function HealthAlertsSection({ workspaceId, email }: { workspaceId: string
           </SubmitButton>
         </form>
       )}
-    </Section>
-  );
-}
-
-/**
- * Deletes the Workspace and the account with it, behind a confirmation that names the Workspace
- * (docs: Security and privacy, "Deleting and exporting a Workspace"). It's a form of its own, so
- * nothing else on the page can post it, and it works without JavaScript: the check is the server's.
- */
-function DeleteWorkspaceSection({ name, email, refused }: { name: string; email: string; refused: boolean }) {
-  return (
-    <Section
-      id="delete-heading"
-      title="Delete Workspace"
-      tone="panel"
-      gap={4}
-      description={
-        <>
-          This deletes the Workspace and everything in it in one go: its Sources, Items and their Log, Corrections,
-          Rules, Destinations, Actions, Deliveries, Profile, model settings, Agent calls and Telegram connections. It
-          deletes your account, <span className="break-all">{email}</span>, with them, so it signs you out. It can&apos;t
-          be undone.
-        </>
-      }
-    >
-      {refused ? (
-        <Notice role="alert">
-          That isn&apos;t this Workspace&apos;s name, so nothing was deleted. Type <strong>{name}</strong> to confirm.
-        </Notice>
-      ) : null}
-      <form action={deleteWorkspaceAction} className="flex flex-col gap-4">
-        <TextField
-          id="delete-name"
-          name="name"
-          label={<>Type {name} to confirm</>}
-          type="text"
-          required
-          autoComplete="off"
-          help="The Workspace's name, exactly as it is above."
-          controlClassName={cn(dataBox, "sm:max-w-xs")}
-        />
-        <SubmitButton variant="destructive" pendingLabel="Deleting…" className="sm:w-auto sm:self-start">
-          Delete Workspace
-        </SubmitButton>
-      </form>
     </Section>
   );
 }
