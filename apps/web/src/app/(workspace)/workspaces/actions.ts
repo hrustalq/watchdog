@@ -59,7 +59,7 @@ export async function createWorkspaceAction(formData: FormData) {
   if (created === undefined) back({ refused: "duplicate" });
   await activateWorkspace(created.id, server().baseURL);
   revalidatePath("/", "layout");
-  back({ saved: "created", id: created.id });
+  back({ saved: "created" });
 }
 
 /**
@@ -80,7 +80,7 @@ export async function renameWorkspaceAction(workspaceId: unknown, formData: Form
   if (outcome === "missing") back({ refused: "unknown" });
   if (outcome === "duplicate") back(refused("duplicate"));
   revalidatePath("/", "layout");
-  back({ saved: "renamed", id: workspace.id });
+  back({ saved: "renamed" });
 }
 
 /**
@@ -110,5 +110,5 @@ export async function deleteWorkspaceAction(workspaceId: unknown, formData: Form
     if (next !== undefined) await activateWorkspace(next.id, server().baseURL);
   }
   revalidatePath("/", "layout");
-  back({ saved: "deleted", id: workspace.id });
+  back({ saved: "deleted" });
 }

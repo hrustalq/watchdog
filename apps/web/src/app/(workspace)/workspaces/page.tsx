@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { dataBox } from "@/components/field-classes";
+import Link from "next/link";
+import { dataBox, textLink } from "@/components/field-classes";
 import { Disclosure } from "@/components/disclosure";
 import { TextField } from "@/components/form-field";
 import { Notice } from "@/components/notice";
@@ -26,13 +27,19 @@ const savedNotices: Record<string, string> = {
   deleted: "Workspace deleted. Its Sources, Items and everything else went with it.",
 };
 
-/** What a refused action says, by the `refused` value its redirect carries. */
-const refusedNotices: Record<string, string> = {
+/**
+ * What a refusal says when it belongs to no row. A refusal that names a row says it in that row, beside
+ * the field that was wrong, so the page never repeats one sentence in two places.
+ */
+const pageRefusals: Record<string, string> = {
+  unknown: "That Workspace isn't one of yours.",
+};
+
+/** A refused name, said under the field it was typed in. */
+const nameErrors: Record<string, string> = {
   blank: "Enter a name of 1 to 100 characters.",
   duplicate: "Another of your Workspaces is already called that.",
   name: "That isn't this Workspace's name, so nothing was deleted.",
-  last: "This is your only Workspace, so it can't be deleted. Create another one first, or delete your account on the Account screen.",
-  unknown: "That Workspace isn't one of yours.",
 };
 
 export default async function WorkspacesPage({ searchParams }: PageProps<"/workspaces">) {
@@ -43,7 +50,7 @@ export default async function WorkspacesPage({ searchParams }: PageProps<"/works
     return typeof value === "string" ? value : "";
   };
   const savedMessage = savedNotices[param("saved")];
-  const refusedMessage = refusedNotices[param("refused")];
+  const refusedMessage = pageRefusals[param("refused")];
   // A refusal names the row it belongs to, so that row's form opens again with what it was sent.
   const refusedId = param("id");
   const postedName = param("name");
@@ -123,8 +130,6 @@ function WorkspaceRow({
 }) {
   const renameOpen = refused === "blank" || refused === "duplicate";
   const deleteOpen = refused === "name" || refused === "last";
-  const renameError =
-    refused === "duplicate" ? "Another of your Workspaces is already called that." : undefined;
   return (
     <li className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -156,7 +161,7 @@ function WorkspaceRow({
               autoComplete="off"
               maxLength={workspaceNameLimit}
               defaultValue={renameOpen ? postedName : workspace.name}
-              error={renameError}
+              error={nameErrors[refused]}
               className="sm:max-w-sm"
             />
             <SubmitButton pendingLabel="Renaming…" variant="outline" className="sm:w-auto sm:self-start">
@@ -165,6 +170,16 @@ function WorkspaceRow({
           </form>
         </Disclosure>
         <Disclosure label="Delete" openLabel="Close" open={deleteOpen} bodyClassName="border bg-card">
+          {refused === "last" ? (
+            <Notice role="alert">
+              This is your only Workspace, so it can&apos;t be deleted. Create another one first, or delete your
+              account on{" "}
+              <Link href="/account" className={textLink}>
+                Account
+              </Link>
+              .
+            </Notice>
+          ) : null}
           <p className="max-w-[70ch] text-sm">
             This deletes <strong>{workspace.name}</strong> and everything in it: its Sources, Items and their Log,
             Corrections, Rules, Destinations, Actions, Deliveries, Profile, model settings, Agent calls and Telegram
@@ -178,6 +193,7 @@ function WorkspaceRow({
               type="text"
               required
               autoComplete="off"
+              error={nameErrors[refused]}
               controlClassName={cn(dataBox, "sm:max-w-xs")}
             />
             <SubmitButton pendingLabel="Deleting…" variant="destructive" className="sm:w-auto sm:self-start">
