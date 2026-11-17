@@ -191,6 +191,8 @@ function Sidebar({
       "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
     }
 
+    // max-w-full caps the 18rem at the viewport, which 18rem outgrows at 200% root text: a phone
+    // at a 32px root would otherwise push the sheet past its right edge.
     return (
       <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
         <SheetContent
@@ -198,7 +200,7 @@ function Sidebar({
           data-sidebar="sidebar"
           data-slot="sidebar"
           data-mobile="true"
-          className="w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+          className="w-(--sidebar-width) max-w-full bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
           style={mobileStyle}
           side={side}
         >
