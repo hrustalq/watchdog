@@ -42,6 +42,7 @@ services:
       - ./apps/e2e/fixtures/before-correction.xml:/srv/before-correction.xml:ro
       - ./apps/e2e/fixtures/after-correction.xml:/srv/after-correction.xml:ro
       - ./apps/e2e/fixtures/alerts.xml:/srv/alerts.xml:ro
+      - ./apps/e2e/fixtures/wizard.xml:/srv/wizard.xml:ro
       - telegram-ca:/data/caddy/pki/authorities/local
     # Where the test publishes alerts.xml's later entries.
     tmpfs: [/srv/published]

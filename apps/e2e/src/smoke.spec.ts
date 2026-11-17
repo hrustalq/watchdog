@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expect, type BrowserContext, type Locator, type Page, test } from "@playwright/test";
 import {
   botMessages,
   confirmationLink,
@@ -16,6 +16,9 @@ import {
 test.describe.configure({ mode: "serial" });
 
 const email = "smoke@example.com";
+
+/** The session the Sources screen test signs in with, reused by the guided setup walk. */
+let savedSession: Awaited<ReturnType<BrowserContext["storageState"]>> | undefined;
 
 // A new Source's Items wait for the worker's next tick, at most a minute, and the Feed's next refresh.
 const untilPolled = { timeout: 150_000 };
@@ -858,6 +861,7 @@ test("every Source type still in M4 delivers an Item", async ({ page }) => {
 test("the Sources screen lists each Source and runs its forms without JavaScript", async ({ page, browser }) => {
   test.setTimeout(240_000);
   await signInAgain(page);
+  savedSession = await page.context().storageState();
 
   const context = await browser.newContext({
     javaScriptEnabled: false,
@@ -898,6 +902,85 @@ test("the Sources screen lists each Source and runs its forms without JavaScript
     ).toHaveCount(0);
     await context.close();
   });
+});
+
+// The guided setup: from the sidebar, a Source, its Backfill, a starter rule, a Destination and the
+// one Action it offers, all without JavaScript, because every step is a real form or link.
+test("the guided setup takes a Source from the sidebar to a finished watch without JavaScript", async ({ browser }) => {
+  // One poll's wait for the worker's tick, and a reload loop until its Backfill appears.
+  test.setTimeout(300_000);
+  const session = savedSession;
+  if (session === undefined) throw new Error("The Sources screen test didn't leave a session");
+  // The Sources screen's session, then JavaScript off for every step: each is a real form or link.
+  const context = await browser.newContext({ javaScriptEnabled: false, storageState: session });
+  const page = await context.newPage();
+  const app = new URL("/", await setupLink()).href;
+  await page.goto(app);
+
+  await test.step("the sidebar opens the guide at its first step", async () => {
+    await page.getByRole("link", { name: "Add source" }).click();
+    await expect(page.getByRole("heading", { name: "Set up a watch" })).toBeVisible();
+    await expect(page.getByText("Add without the guide")).toBeVisible();
+  });
+
+  await test.step("step 1 saves a Source and moves to its Items", async () => {
+    await page.getByLabel("RSS feed URL", { exact: true }).fill(fixtureFeed("wizard.xml"));
+    await page.getByRole("button", { name: "Add Source" }).click();
+    await expect(page.getByRole("heading", { name: "Its first Items" })).toBeVisible();
+  });
+
+  await test.step("a step without a Source, or no step at all, goes to one that can run", async () => {
+    const sourceId = new URL(page.url()).searchParams.get("source") ?? "";
+    expect(sourceId).not.toBe("");
+    await page.goto(new URL("/sources/new?step=3&source=not-a-uuid", page.url()).href);
+    await expect(page.getByRole("heading", { name: "Add a Source" })).toBeVisible();
+    await page.goto(new URL(`/sources/new?step=9&source=${sourceId}`, page.url()).href);
+    await expect(page.getByRole("heading", { name: "Its first Items" })).toBeVisible();
+  });
+
+  await test.step("step 2 shows the Backfill after the worker's poll", async () => {
+    await expect(async () => {
+      await page.reload();
+      await expect(page.getByRole("link", { name: "Wizard entry two" })).toBeVisible({ timeout: 1_000 });
+    }).toPass(untilPolled);
+    await expect(page.getByRole("link", { name: "Wizard entry one" })).toBeVisible();
+    await page.getByRole("link", { name: "Continue", exact: true }).click();
+  });
+
+  await test.step("step 3 saves one starter rule through the Rules path", async () => {
+    await expect(page.getByRole("heading", { name: "Starter rules" })).toBeVisible();
+    await page.getByRole("button", { name: "Add rule Bug reports" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Rule saved." })).toBeVisible();
+    await page.getByRole("link", { name: "Continue", exact: true }).click();
+  });
+
+  await test.step("step 4 adds a confirmed Destination and the alert it offers", async () => {
+    await expect(page.getByRole("heading", { name: "Add a Destination" })).toBeVisible();
+    const emailForm = page.locator("details", { has: page.locator("summary", { hasText: "Email address" }) });
+    if ((await emailForm.getAttribute("open")) === null) await emailForm.locator("summary").click();
+    await emailForm.getByLabel("Name", { exact: true }).fill("Guided inbox");
+    await emailForm.getByLabel("Address", { exact: true }).fill(email);
+    await emailForm.getByRole("button", { name: "Add email address" }).click();
+    await expect(page.getByRole("heading", { name: "Alert me when Importance ≥ 4" })).toBeVisible();
+    await page.getByRole("button", { name: "Create the alert" }).click();
+  });
+
+  await test.step("the finish screen names what exists and what still needs a person", async () => {
+    await expect(page.getByRole("heading", { name: "You're set up" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Wizard feed is watching" })).toBeVisible();
+    await expect(page.getByText("Guided inbox can receive now.")).toBeVisible();
+    await expect(page.getByText("An Action alerts you when Importance is at least 4.")).toBeVisible();
+    // The Rules screen streams its lists behind Suspense, so read them in a JS-enabled context that
+    // uses the same session.
+    const rulesContext = await browser.newContext({ storageState: session });
+    const rules = await rulesContext.newPage();
+    await rules.goto(new URL("/rules", app).href);
+    await expect(rules.getByRole("link", { name: "Importance 4 alerts", exact: true })).toBeVisible();
+    await expect(rules.getByRole("link", { name: "Bug reports", exact: true })).toBeVisible();
+    await rulesContext.close();
+  });
+
+  await context.close();
 });
 
 // Check now and Remove end in a redirect that renders the Sources screen again, and the button that

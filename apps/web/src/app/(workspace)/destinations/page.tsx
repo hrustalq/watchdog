@@ -17,7 +17,6 @@ import {
   telegramLinkInCookie,
 } from "@/lib/destinations";
 import { Confirming } from "@/components/confirming";
-import { TextField } from "@/components/form-field";
 import { PageBar } from "@/components/page-bar";
 import { Page, PageHeader } from "@/components/page";
 import { PanelList, PanelRow } from "@/components/panel-list";
@@ -36,14 +35,14 @@ import {
   sendAgainAction,
   testDestinationAction,
 } from "./actions";
+import { EmailDestinationForm, TelegramDestinationForm, WebhookDestinationForm } from "./add-forms";
+import { SecretPanel } from "./secret-panel";
 
 export const metadata: Metadata = { title: "Destinations · Watchdog" };
 
 // The data is read without Suspense, so all of it is in the first HTML. A webhook secret has to reach
 // someone without JavaScript too, and it's shown only this once.
 export const instant = false;
-
-const configurationPage = "https://knowledge.hrustalq.dev/documents/8e6aedb7-ccc1-4057-9f9f-2a881d612d47";
 
 export default async function DestinationsPage({ searchParams }: PageProps<"/destinations">) {
   const [{ workspace }, params] = await Promise.all([requireWorkspace(), searchParams]);
@@ -116,84 +115,25 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
 
         <Section id="add-destination" title="Add a Destination">
           <PanelList as="div">
-            <AddForm title="Email address" open={form === "email" || (form === "" && destinations.length === 0)}>
-              <form action={addEmailAction} className="flex flex-col gap-4">
-                <NameField
-                  id="email-name"
-                  value={form === "email" ? param("name") : ""}
-                  error={form === "email" ? error : undefined}
-                />
-                <TextField
-                  id="address"
-                  label="Address"
-                  type="email"
-                  placeholder="you@example.com"
-                  defaultValue={form === "email" ? param("address") : ""}
-                  error={form === "email" && error?.field === "address" ? error.message : undefined}
-                  help="Any address but your own gets a link to confirm it, and receives nothing until then."
-                  required
-                  maxLength={2048}
-                  autoComplete="email"
-                  spellCheck={false}
-                />
-                <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
-                  Add email address
-                </SubmitButton>
-              </form>
-            </AddForm>
-            <AddForm title="Webhook URL" open={form === "webhook"}>
-              <form action={addWebhookAction} className="flex flex-col gap-4">
-                <NameField
-                  id="webhook-name"
-                  value={form === "webhook" ? param("name") : ""}
-                  error={form === "webhook" ? error : undefined}
-                />
-                <TextField
-                  id="webhook-url"
-                  name="url"
-                  label="URL"
-                  type="url"
-                  placeholder="https://example.com/watchdog"
-                  defaultValue=""
-                  error={form === "webhook" && error?.field === "url" ? error.message : undefined}
-                  help="Watchdog generates a signing secret and shows it once. The URL should answer directly, because a redirect can drop the request's body and signature."
-                  required
-                  maxLength={2048}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
-                  Add webhook
-                </SubmitButton>
-              </form>
-            </AddForm>
-            <AddForm title="Telegram chat" open={form === "telegram"}>
-              {telegramAvailable ? (
-                <form action={addTelegramAction} className="flex flex-col gap-4">
-                  <NameField
-                    id="telegram-name"
-                    value={form === "telegram" ? param("name") : ""}
-                    error={form === "telegram" ? error : undefined}
-                    placeholder="Ops alerts"
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    Next, Watchdog gives you a link and a command to link a private chat or a group.
-                  </p>
-                  <SubmitButton pendingLabel="Adding…" className="sm:w-auto sm:self-start">
-                    Add Telegram chat
-                  </SubmitButton>
-                </form>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Telegram isn&apos;t set up on this install. Whoever runs this Watchdog can set{" "}
-                  <code className="text-data">TELEGRAM_BOT_TOKEN</code>, as the{" "}
-                  <a href={configurationPage} className="underline underline-offset-4">
-                    Configuration page
-                  </a>{" "}
-                  describes.
-                </p>
-              )}
-            </AddForm>
+            <EmailDestinationForm
+              action={addEmailAction}
+              open={form === "email" || (form === "" && destinations.length === 0)}
+              values={{ name: form === "email" ? param("name") : "", address: form === "email" ? param("address") : "" }}
+              error={form === "email" ? error : undefined}
+            />
+            <WebhookDestinationForm
+              action={addWebhookAction}
+              open={form === "webhook"}
+              values={{ name: form === "webhook" ? param("name") : "" }}
+              error={form === "webhook" ? error : undefined}
+            />
+            <TelegramDestinationForm
+              action={addTelegramAction}
+              open={form === "telegram"}
+              values={{ name: form === "telegram" ? param("name") : "" }}
+              error={form === "telegram" ? error : undefined}
+              available={telegramAvailable}
+            />
           </PanelList>
         </Section>
 
@@ -324,26 +264,6 @@ function State({ state, failing }: { state: DestinationState; failing: boolean }
       )}
       {word}
     </span>
-  );
-}
-
-/** The one time a webhook secret is shown. A reload doesn't show it again. */
-function SecretPanel({ secret, name }: { secret: string; name: string | undefined }) {
-  return (
-    <Section id="secret" title={<>The secret for {name ?? "this webhook"}</>} tone="raised" gap={2}>
-      <Notice role="status" tone="plain">
-        Copy it now. Watchdog won&apos;t show it again. Your receiver uses it to check the{" "}
-        <code className="text-data">X-Watchdog-Signature</code> header on every call.
-      </Notice>
-      {/* A text box, because Tab, select-all and copy work on it with no JavaScript and from a keyboard. */}
-      <textarea
-        readOnly
-        rows={2}
-        aria-labelledby="secret"
-        value={secret}
-        className={`${textBox} ${dataBox} resize-none py-1.5`}
-      />
-    </Section>
   );
 }
 
@@ -547,43 +467,3 @@ function TestOutcome({
   );
 }
 
-function AddForm({ title, open, children }: { title: string; open: boolean; children: React.ReactNode }) {
-  return (
-    // Display stays the summary's own, because flex would take away the marker that says it opens.
-    <details name="add-destination" open={open}>
-      <summary className="cursor-pointer rounded-lg border border-transparent px-4 py-3 text-sm font-medium outline-hidden select-none hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/60 focus-visible:ring-inset">
-        {title}
-      </summary>
-      <div className="p-4 pt-2">{children}</div>
-    </details>
-  );
-}
-
-function NameField({
-  id,
-  value,
-  error,
-  placeholder = "Team inbox",
-}: {
-  id: string;
-  value: string;
-  error: { field: string; message: string } | undefined;
-  placeholder?: string;
-}) {
-  return (
-    <TextField
-      id={id}
-      name="name"
-      label="Name"
-      type="text"
-      placeholder={placeholder}
-      defaultValue={value}
-      error={error?.field === "name" ? error.message : undefined}
-      help="Actions refer to it by this name."
-      maxLength={200}
-      autoComplete="off"
-      spellCheck={false}
-      required
-    />
-  );
-}

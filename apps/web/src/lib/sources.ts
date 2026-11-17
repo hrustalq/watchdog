@@ -382,7 +382,7 @@ export const sourceLinkCookieValue = (sourceId: string, code: string) => `${sour
  */
 export async function sourceLinkInCookie(
   db: Db,
-  sources: Awaited<ReturnType<typeof listSources>>,
+  sources: readonly { id: string; name: string; type: string; config: unknown; health: string }[],
   cookie: string | undefined,
 ) {
   const [sourceId, code] = (cookie ?? "").split(".");
@@ -391,7 +391,9 @@ export async function sourceLinkInCookie(
   const { id, name } = row;
   const live = await liveLinkCode(db, code);
   if (live?.sourceId === id) return { status: "pending", id, name, code, expiresAt: live.expiresAt } as const;
-  return "chatId" in row.config && row.health !== "failing" ? ({ status: "linked", id, name } as const) : undefined;
+  return typeof row.config === "object" && row.config !== null && "chatId" in row.config && row.health !== "failing"
+    ? ({ status: "linked", id, name } as const)
+    : undefined;
 }
 
 const cleanPath = (path: string) => withoutNul(path).trim();
@@ -675,6 +677,26 @@ export async function listSources(
   });
   const pauses = await githubPauses(db, workspaceId, rows, secrets);
   return rows.map((row) => ({ ...row, pausedUntil: pauses.get(row.id) }));
+}
+
+/**
+ * One of the Workspace's Sources, with the fields the guided setup's steps read. An id that isn't a
+ * Source of this Workspace reads as missing, as every query here does.
+ */
+export async function guidedSource(db: Db, workspaceId: string, sourceId: string) {
+  if (!isUuid(sourceId)) return undefined;
+  return db.query.source.findFirst({
+    where: and(eq(source.workspaceId, workspaceId), eq(source.id, sourceId)),
+    columns: {
+      id: true,
+      type: true,
+      name: true,
+      config: true,
+      schedule: true,
+      health: true,
+      lastError: true,
+    },
+  });
 }
 
 /**

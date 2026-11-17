@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { dataBox, textBox } from "@/components/field-classes";
+import { dataBox, textBox, textLink } from "@/components/field-classes";
 import { Confirming } from "@/components/confirming";
 import { PageBar } from "@/components/page-bar";
 import { Page, PageHeader } from "@/components/page";
 import { Section } from "@/components/section";
 import { findInbox, inboxUrl, revealInboxToken } from "@/lib/inbox";
 import { requireWorkspace, server } from "@/lib/server";
+import { skippedIn, wizardHref } from "@/lib/wizard";
 import { Notice } from "@/components/notice";
 import { replaceInboxTokenAction } from "../../actions";
 
@@ -23,8 +25,10 @@ const mapped = [
   { field: "externalId", term: "External ID", unmapped: "The body's SHA-256 hash" },
 ] as const;
 
-export default async function InboxPage({ params }: PageProps<"/sources/[id]/inbox">) {
-  const [{ workspace }, { id }] = await Promise.all([requireWorkspace(), params]);
+export default async function InboxPage({ params, searchParams }: PageProps<"/sources/[id]/inbox">) {
+  const [{ workspace }, { id }, query] = await Promise.all([requireWorkspace(), params, searchParams]);
+  const wizard = query.wizard === "1";
+  const skipped = skippedIn(query.skipped);
   const { db, encryptionKey, baseURL } = server();
   const inbox = await findInbox(db, workspace.id, id);
   if (inbox === undefined) notFound();
@@ -41,6 +45,16 @@ export default async function InboxPage({ params }: PageProps<"/sources/[id]/inb
           title={inbox.name}
           description="A webhook inbox. Each POST of JSON, up to 1 MB, becomes one Item in the Feed, at most 60 a minute."
         />
+
+        {wizard ? (
+          <Notice role="status">
+            Give the URL below to whatever sends to Watchdog, then{" "}
+            <Link href={wizardHref(3, inbox.id, {}, skipped)} className={textLink}>
+              continue setting up the Source
+            </Link>
+            .
+          </Notice>
+        ) : null}
 
         {token === undefined ? (
           <Notice role="status">
