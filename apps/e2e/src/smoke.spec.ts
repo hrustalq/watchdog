@@ -1051,7 +1051,7 @@ test("Workspace navigation holds on desktop and phone, with and without JavaScri
   // and deleting the second leaves the first one's Feed as it was. It lives here because the switcher
   // is part of the navigation, and because this test already holds a session: another sign-in would
   // spend part of the rate limit the last test relies on.
-  const feed = new URL("/?view=latest", page.url()).href;
+  const latestFeed = new URL("/?view=latest", page.url()).href;
   const sidebar = page.getByRole("complementary", { name: "Workspace sidebar" });
 
   await test.step("a name the account already has is refused, and a new one is created and entered", async () => {
@@ -1084,7 +1084,7 @@ test("Workspace navigation holds on desktop and phone, with and without JavaScri
   });
 
   await test.step("the new Workspace's Feed is empty, with none of the first Workspace's Items", async () => {
-    await page.goto(feed);
+    await page.goto(latestFeed);
     await expect(page.getByRole("heading", { name: "Nothing is being watched yet" })).toBeVisible();
     for (const title of ["Security release for psqlodbc", "HypoPG 1.4.5 is out!"]) {
       await expect(feedRow(page, title)).toHaveCount(0);
@@ -1098,7 +1098,7 @@ test("Workspace navigation holds on desktop and phone, with and without JavaScri
     await sidebar.getByRole("button", { name: "smoke", exact: true }).click();
     await expect(sidebar.getByLabel("Workspace smoke. Switch Workspace")).toBeVisible();
     // The switch lands on the Feed's default Top view; these Items are on Latest.
-    await page.goto(feed);
+    await page.goto(latestFeed);
     await expect(feedRow(page, "Security release for psqlodbc")).toBeVisible();
 
     await page.reload();
@@ -1117,7 +1117,7 @@ test("Workspace navigation holds on desktop and phone, with and without JavaScri
     await expect(page.getByRole("heading", { name: "Markets desk", level: 3, exact: true })).toHaveCount(0);
 
     // The account is still signed in, and the first Workspace still holds its Feed.
-    await page.goto(feed);
+    await page.goto(latestFeed);
     await expect(feedRow(page, "Security release for psqlodbc")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Feed" })).toBeVisible();
   });
