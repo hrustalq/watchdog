@@ -1027,13 +1027,30 @@ test("a missing Item or rule answers 404, and one that is there answers 200", as
 const sideways = (page: Page) =>
   page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 
-// One account can own several Workspaces (docs: Security and privacy, "Deleting and exporting a
-// Workspace"): a second one starts empty, the sidebar's switcher moves between them, a reload keeps
-// the choice, and deleting the second leaves the first one's Feed as it was. It runs before the
-// navigation test, which ends by using part of the sign-in rate limit.
-test("a second Workspace starts empty, switches from the sidebar, and deletes alone", async ({ page }) => {
+// This drives the shared navigation on desktop and at 360 px on the real build. The sidebar is the
+// one navigation: a persistent aside on desktop, a sheet behind the header's trigger on a phone, and
+// a plain list of links without JavaScript. It runs before the rate-limit test, and signs the
+// no-JavaScript context out last because that ends the session.
+test("Workspace navigation holds on desktop and phone, with and without JavaScript", async ({ page, browser }) => {
   test.setTimeout(240_000);
+  const viewport = { width: 360, height: 720 };
   await signInAgain(page);
+  const sections = ["Feed", "Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings"];
+  const desktopNav = page
+    .getByRole("complementary", { name: "Workspace sidebar" })
+    .getByRole("navigation", { name: "Workspace" });
+  for (const label of sections) {
+    await expect(desktopNav.getByRole("link", { name: label, exact: true })).toBeVisible();
+  }
+  await desktopNav.getByRole("link", { name: "Sources", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Sources", exact: true })).toBeVisible();
+  await expect(desktopNav.getByRole("link", { name: "Sources", exact: true })).toHaveAttribute("aria-current", "page");
+
+  // One account can own several Workspaces (docs: Security and privacy, "Deleting and exporting a
+  // Workspace"): a second one starts empty, the switcher moves between them, a reload keeps the choice,
+  // and deleting the second leaves the first one's Feed as it was. It lives here because the switcher
+  // is part of the navigation, and because this test already holds a session: another sign-in would
+  // spend part of the rate limit the last test relies on.
   const feed = new URL("/?view=latest", page.url()).href;
   const sidebar = page.getByRole("complementary", { name: "Workspace sidebar" });
 
@@ -1041,14 +1058,18 @@ test("a second Workspace starts empty, switches from the sidebar, and deletes al
     await page.goto(new URL("/workspaces", page.url()).href);
     await page.getByLabel("Name", { exact: true }).fill("smoke");
     await page.getByRole("button", { name: "Create Workspace" }).click();
-    await expect(page.getByRole("alert").filter({ hasText: "Another of your Workspaces is already called that." })).toBeVisible();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "Another of your Workspaces is already called that." }),
+    ).toBeVisible();
 
     await page.getByLabel("Name", { exact: true }).fill("Markets");
     await page.getByRole("button", { name: "Create Workspace" }).click();
     await expect(page.getByRole("status").filter({ hasText: "Workspace created." })).toBeVisible();
     // Creating one switches to it, which the sidebar and the row's Active badge both say.
     await expect(sidebar.getByLabel("Workspace Markets. Switch Workspace")).toBeVisible();
-    await expect(page.getByRole("listitem").filter({ hasText: "Markets" }).getByText("Active", { exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("listitem").filter({ hasText: "Markets" }).getByText("Active", { exact: true }),
+    ).toBeVisible();
   });
 
   await test.step("renaming it updates the sidebar's switcher", async () => {
@@ -1070,16 +1091,13 @@ test("a second Workspace starts empty, switches from the sidebar, and deletes al
     }
   });
 
-  // The switcher is the disclosure at the top of the sidebar: its summary opens the list, and each
-  // other Workspace is a button that posts the switch.
-  const switcher = sidebar.getByLabel("Workspace Markets desk. Switch Workspace");
-
   await test.step("the switcher brings the first Workspace back, and a reload keeps it", async () => {
-    await switcher.click();
+    // The switcher is the disclosure at the top of the sidebar: its summary opens the list, and each
+    // other Workspace is a button that posts the switch.
+    await sidebar.getByLabel("Workspace Markets desk. Switch Workspace").click();
     await sidebar.getByRole("button", { name: "smoke", exact: true }).click();
     await expect(sidebar.getByLabel("Workspace smoke. Switch Workspace")).toBeVisible();
-    // The switch lands on the Feed's default Top view; these Items are on Latest, which the rest of
-    // the suite leaves in place.
+    // The switch lands on the Feed's default Top view; these Items are on Latest.
     await page.goto(feed);
     await expect(feedRow(page, "Security release for psqlodbc")).toBeVisible();
 
@@ -1103,26 +1121,6 @@ test("a second Workspace starts empty, switches from the sidebar, and deletes al
     await expect(feedRow(page, "Security release for psqlodbc")).toBeVisible();
     await expect(page.getByRole("heading", { name: "Feed" })).toBeVisible();
   });
-});
-
-// This drives the shared navigation on desktop and at 360 px on the real build. The sidebar is the
-// one navigation: a persistent aside on desktop, a sheet behind the header's trigger on a phone, and
-// a plain list of links without JavaScript. It runs before the rate-limit test, and signs the
-// no-JavaScript context out last because that ends the session.
-test("Workspace navigation holds on desktop and phone, with and without JavaScript", async ({ page, browser }) => {
-  test.setTimeout(240_000);
-  const viewport = { width: 360, height: 720 };
-  await signInAgain(page);
-  const sections = ["Feed", "Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings"];
-  const desktopNav = page
-    .getByRole("complementary", { name: "Workspace sidebar" })
-    .getByRole("navigation", { name: "Workspace" });
-  for (const label of sections) {
-    await expect(desktopNav.getByRole("link", { name: label, exact: true })).toBeVisible();
-  }
-  await desktopNav.getByRole("link", { name: "Sources", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Sources", exact: true })).toBeVisible();
-  await expect(desktopNav.getByRole("link", { name: "Sources", exact: true })).toHaveAttribute("aria-current", "page");
 
   const storageState = await page.context().storageState();
   const phone = await browser.newContext({ viewport, storageState });
