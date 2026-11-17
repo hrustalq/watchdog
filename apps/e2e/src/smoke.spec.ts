@@ -1077,9 +1077,11 @@ test("a second Workspace starts empty, switches from the sidebar, and deletes al
   await test.step("the switcher brings the first Workspace back, and a reload keeps it", async () => {
     await switcher.click();
     await sidebar.getByRole("button", { name: "smoke", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "Nothing is being watched yet" })).toHaveCount(0);
-    await expect(feedRow(page, "Security release for psqlodbc")).toBeVisible();
     await expect(sidebar.getByLabel("Workspace smoke. Switch Workspace")).toBeVisible();
+    // The switch lands on the Feed's default Top view; these Items are on Latest, which the rest of
+    // the suite leaves in place.
+    await page.goto(feed);
+    await expect(feedRow(page, "Security release for psqlodbc")).toBeVisible();
 
     await page.reload();
     await expect(feedRow(page, "HypoPG 1.4.5 is out!")).toBeVisible();
