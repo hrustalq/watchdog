@@ -44,10 +44,15 @@ export async function listModelChoices(
     saved !== undefined &&
     saved.providerType === parsed.providerType &&
     new URL(saved.baseUrl).origin === new URL(parsed.baseUrl).origin;
-  // An unreadable stored key would go as no key and look like a refused one, so the screen says why.
-  let stored: string | null | undefined = null;
-  if (saved !== undefined && sameDestination) stored = readApiKey(saved.apiKeyCiphertext, deps.encryptionKey);
-  if (stored === undefined) return { ok: false, reason: "unreadable-key" };
+  // A typed key is this request's key, so the saved one isn't read at all: an unreadable row mustn't
+  // block a key the user just pasted. Only a blank field reads it, and says so when it can't.
+  let stored: string | null = null;
+  if (parsed.apiKey === "" && saved !== undefined && sameDestination) {
+    const read = readApiKey(saved.apiKeyCiphertext, deps.encryptionKey);
+    // An unreadable key would go as no key and look like a refused one, so the screen says why.
+    if (read === undefined) return { ok: false, reason: "unreadable-key" };
+    stored = read;
+  }
 
   return listModels(
     { providerType: parsed.providerType, baseUrl: parsed.baseUrl },

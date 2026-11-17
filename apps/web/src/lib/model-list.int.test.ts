@@ -182,6 +182,26 @@ describe("the Model screen's model list", () => {
     }
   });
 
+  it("uses a typed key even while the saved one can't be read, so a rotated key never blocks a paste", async () => {
+    const workspaceId = await newWorkspace();
+    const server = await modelServer();
+    try {
+      await saveModelAt(workspaceId, server.baseUrl, storedKey);
+
+      const outcome = await listModelChoices(
+        db,
+        { encryptionKey: Buffer.alloc(32, 9), fetch: deps().fetch },
+        workspaceId,
+        { providerType: "openai-compatible", baseUrl: server.baseUrl, apiKey: "sk-typed" },
+      );
+
+      expect(outcome.ok).toBe(true);
+      expect(server.seen).toEqual(["Bearer sk-typed"]);
+    } finally {
+      await server.stop();
+    }
+  });
+
   it("refuses a base URL the form would refuse, without any request", async () => {
     const workspaceId = await newWorkspace();
     const server = await modelServer();
