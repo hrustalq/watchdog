@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  type AlertSettings,
   type AlertSettingsForm,
-  alertSettingsQuery,
+  type DeliverySettingsForm,
+  deliveryRefusalQuery,
   parseAlertSettings,
   quietHoursSentence,
-  readAlertSettingsForm,
+  readDeliverySettingsForm,
+  readRetentionSettingsForm,
+  type RetentionSettingsForm,
+  resolveSettingsTab,
+  retentionRefusalQuery,
+  settingsFormValues,
+  settingsTabs,
+  settingsTabsFor,
+  settingsTabHref,
   timezones,
 } from "./settings.ts";
 
@@ -184,21 +194,152 @@ describe("timezones", () => {
   });
 });
 
-describe("a refused form's round trip", () => {
+describe("a refused tab's round trip", () => {
+  /** The Delivery tab's fields, taken from a full form so the tests say which fields it owns. */
+  const deliveryOf = (values: Partial<AlertSettingsForm> = {}): DeliverySettingsForm => {
+    const { timezone, quietHours, quietHoursStart, quietHoursEnd, severity5Bypasses, alertsPerHour, burstWindowSeconds } =
+      form(values);
+    return { timezone, quietHours, quietHoursStart, quietHoursEnd, severity5Bypasses, alertsPerHour, burstWindowSeconds };
+  };
+  /** The Retention tab's fields, the same way: a change here must not carry the other tab's. */
+  const retentionOf = (values: Partial<AlertSettingsForm> = {}): RetentionSettingsForm => {
+    const { itemsRetentionDays, itemsUnlimited, logRetentionDays, logUnlimited } = form(values);
+    return { itemsRetentionDays, itemsUnlimited, logRetentionDays, logUnlimited };
+  };
+
   it.each([
-    form(),
-    form({ quietHours: false, severity5Bypasses: true, timezone: "Mars/Olympus", quietHoursStart: "25:00" }),
-  ])("comes back from the query as it was posted", (posted) => {
-    const query = new URLSearchParams(alertSettingsQuery(posted));
+    deliveryOf(),
+    deliveryOf({ quietHours: false, severity5Bypasses: true, timezone: "Mars/Olympus", quietHoursStart: "25:00" }),
+  ])("brings a refused Delivery form back as it was posted, on its own tab", (posted) => {
+    const query = new URLSearchParams(deliveryRefusalQuery(posted));
 
     expect(query.get("refused")).toBe("1");
-    expect(readAlertSettingsForm((name) => query.get(name) ?? undefined)).toEqual(posted);
+    expect(query.get("tab")).toBe("delivery");
+    expect(readDeliverySettingsForm((name) => query.get(name) ?? undefined)).toEqual(posted);
+  });
+
+  it.each([retentionOf(), retentionOf({ itemsRetentionDays: "", itemsUnlimited: true })])(
+    "brings a refused Retention form back as it was posted, on its own tab",
+    (posted) => {
+      const query = new URLSearchParams(retentionRefusalQuery(posted));
+
+      expect(query.get("refused")).toBe("1");
+      expect(query.get("tab")).toBe("retention");
+      expect(readRetentionSettingsForm((name) => query.get(name) ?? undefined)).toEqual(posted);
+    },
+  );
+
+  it("carries only the refused tab's fields, so a link can't reset the other tab's", () => {
+    const query = new URLSearchParams(deliveryRefusalQuery(deliveryOf({ timezone: "Mars/Olympus" })));
+
+    expect([...query.keys()].sort()).toEqual([
+      "alertsPerHour",
+      "burstWindowSeconds",
+      "quietHours",
+      "quietHoursEnd",
+      "quietHoursStart",
+      "refused",
+      "tab",
+      "timezone",
+    ]);
+    expect([...new URLSearchParams(retentionRefusalQuery(retentionOf())).keys()].sort()).toEqual([
+      "itemsRetentionDays",
+      "logRetentionDays",
+      "refused",
+      "tab",
+    ]);
   });
 
   it("reads a missing or repeated field as empty", () => {
-    expect(readAlertSettingsForm((name) => (name === "timezone" ? ["UTC", "UTC"] : undefined))).toMatchObject({
+    expect(readDeliverySettingsForm((name) => (name === "timezone" ? ["UTC", "UTC"] : undefined))).toMatchObject({
       timezone: "",
       quietHours: false,
     });
+  });
+});
+
+describe("settingsFormValues", () => {
+  const saved = (values: Partial<AlertSettings> = {}): AlertSettings => ({
+    timezone: "Europe/Moscow",
+    quietHoursStart: null,
+    quietHoursEnd: null,
+    severity5BypassesQuietHours: false,
+    alertsPerHour: 20,
+    burstWindowSeconds: 60,
+    itemsRetentionDays: 90,
+    logRetentionDays: 30,
+    ...values,
+  });
+
+  it("shows what's saved, with the times to the minute and the numbers as the fields post them", () => {
+    expect(settingsFormValues(saved({ quietHoursStart: "22:00:00", quietHoursEnd: "07:00:00" }), { selfHosted: true })).toEqual({
+      timezone: "Europe/Moscow",
+      quietHours: true,
+      quietHoursStart: "22:00",
+      quietHoursEnd: "07:00",
+      severity5Bypasses: false,
+      alertsPerHour: "20",
+      burstWindowSeconds: "60",
+      itemsRetentionDays: "90",
+      itemsUnlimited: false,
+      logRetentionDays: "30",
+      logUnlimited: false,
+    });
+  });
+
+  it("keeps a window field showing what a window would start from while it is unlimited", () => {
+    expect(settingsFormValues(saved({ itemsRetentionDays: null, logRetentionDays: null }), { selfHosted: true })).toMatchObject({
+      itemsRetentionDays: "90",
+      itemsUnlimited: true,
+      logRetentionDays: "30",
+      logUnlimited: true,
+    });
+  });
+
+  it("shows the defaults instead of Unlimited on an install whose mode refuses a null window", () => {
+    // A hosted install keeps both windows, so a row left unlimited by a self-hosted run reads as the
+    // defaults: the box isn't offered, and a save that posted Unlimited would be refused.
+    expect(settingsFormValues(saved({ itemsRetentionDays: null, logRetentionDays: null }), { selfHosted: false })).toMatchObject({
+      itemsRetentionDays: "90",
+      itemsUnlimited: false,
+      logRetentionDays: "30",
+      logUnlimited: false,
+    });
+  });
+
+  it("starts quiet hours' times at 22:00 to 07:00 while they're off, so turning them on is one tick", () => {
+    expect(settingsFormValues(saved(), { selfHosted: true })).toMatchObject({
+      quietHours: false,
+      quietHoursStart: "22:00",
+      quietHoursEnd: "07:00",
+    });
+  });
+});
+
+describe("the Settings screen's tabs", () => {
+  it("puts Delivery first, so /settings and an unknown tab land on it", () => {
+    expect(settingsTabs.map((tab) => tab.value)).toEqual(["delivery", "retention", "health", "workspace", "instance"]);
+    expect(resolveSettingsTab(undefined, { admin: false })).toBe("delivery");
+    expect(resolveSettingsTab("deliveries", { admin: false })).toBe("delivery");
+    expect(resolveSettingsTab(["retention", "delivery"], { admin: false })).toBe("delivery");
+    expect(resolveSettingsTab("retention", { admin: false })).toBe("retention");
+  });
+
+  it("keeps Instance for an admin, and sends a link to it back to Delivery for everyone else", () => {
+    expect(settingsTabsFor(false).map((tab) => tab.value)).toEqual(["delivery", "retention", "health", "workspace"]);
+    expect(settingsTabsFor(true).map((tab) => tab.value)).toEqual([
+      "delivery",
+      "retention",
+      "health",
+      "workspace",
+      "instance",
+    ]);
+    expect(resolveSettingsTab("instance", { admin: false })).toBe("delivery");
+    expect(resolveSettingsTab("instance", { admin: true })).toBe("instance");
+  });
+
+  it("names each tab, and links it with its own URL", () => {
+    expect(settingsTabs.map((tab) => tab.label)).toEqual(["Delivery", "Retention", "Health alerts", "Workspace", "Instance"]);
+    expect(settingsTabHref("retention")).toBe("/settings?tab=retention");
   });
 });

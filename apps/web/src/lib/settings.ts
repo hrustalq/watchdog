@@ -87,6 +87,80 @@ export interface AlertSettings {
 
 const time = /^([01]\d|2[0-3]):[0-5]\d$/;
 
+/**
+ * The alert settings form as the screen shows them: what's saved, with the defaults a new Workspace
+ * starts from and each number as the text its field posts. A window this mode can't hold — a stored
+ * NULL on a hosted install, left by a self-hosted one — shows the default instead of Unlimited,
+ * because that install's form doesn't offer the box and its save would refuse the value.
+ */
+export function settingsFormValues(settings: AlertSettings, { selfHosted }: { selfHosted: boolean }): AlertSettingsForm {
+  const window = (days: number | null, fallback: number) => ({
+    days: String(days ?? fallback),
+    unlimited: days === null && selfHosted,
+  });
+  const items = window(settings.itemsRetentionDays, 90);
+  const log = window(settings.logRetentionDays, 30);
+  return {
+    timezone: settings.timezone,
+    quietHours: settings.quietHoursStart !== null,
+    // Off, the times are a suggestion, so turning quiet hours on is one tick.
+    quietHoursStart: settings.quietHoursStart?.slice(0, 5) ?? "22:00",
+    quietHoursEnd: settings.quietHoursEnd?.slice(0, 5) ?? "07:00",
+    severity5Bypasses: settings.severity5BypassesQuietHours,
+    alertsPerHour: String(settings.alertsPerHour),
+    burstWindowSeconds: String(settings.burstWindowSeconds),
+    itemsRetentionDays: items.days,
+    itemsUnlimited: items.unlimited,
+    logRetentionDays: log.days,
+    logUnlimited: log.unlimited,
+  };
+}
+
+/**
+ * The Settings screen's tabs, in the order the strip shows them, each one a URL value. A tab is a
+ * whole form's worth of settings: what one save writes and what one notice comes back on.
+ */
+export const settingsTabs = [
+  { value: "delivery", label: "Delivery", adminOnly: false },
+  { value: "retention", label: "Retention", adminOnly: false },
+  { value: "health", label: "Health alerts", adminOnly: false },
+  { value: "workspace", label: "Workspace", adminOnly: false },
+  { value: "instance", label: "Instance", adminOnly: true },
+] as const;
+
+export type SettingsTab = (typeof settingsTabs)[number]["value"];
+
+/**
+ * The tab a URL asks for. Delivery is what `/settings` and a link with no tab show, and an unknown
+ * value, a repeated one or Instance for anyone but an admin falls back to it, so a stale or edited
+ * link opens the page rather than an empty one.
+ */
+export function resolveSettingsTab(value: unknown, { admin }: { admin: boolean }): SettingsTab {
+  return settingsTabs.find((tab) => tab.value === value && (admin || !tab.adminOnly))?.value ?? "delivery";
+}
+
+/** The tabs this user may open: the Instance switch is the install admin's alone. */
+export function settingsTabsFor(admin: boolean): readonly (typeof settingsTabs)[number][] {
+  return settingsTabs.filter((tab) => admin || !tab.adminOnly);
+}
+
+/** A tab's URL. Every tab carries its value, so no link leans on the default. */
+export function settingsTabHref(tab: SettingsTab) {
+  return `/settings?tab=${tab}`;
+}
+
+/** The Delivery tab's form: the timezone, quiet hours with its bypass, and the pacing. */
+export type DeliverySettingsForm = Pick<
+  AlertSettingsForm,
+  "timezone" | "quietHours" | "quietHoursStart" | "quietHoursEnd" | "severity5Bypasses" | "alertsPerHour" | "burstWindowSeconds"
+>;
+
+/** The Retention tab's form: the two windows, and their Unlimited boxes on a self-hosted install. */
+export type RetentionSettingsForm = Pick<
+  AlertSettingsForm,
+  "itemsRetentionDays" | "itemsUnlimited" | "logRetentionDays" | "logUnlimited"
+>;
+
 function whole(text: string, { min, max }: { min: number; max: number }) {
   if (!/^\d{1,4}$/.test(text)) return undefined;
   const value = Number(text);
@@ -111,16 +185,20 @@ function retentionDays(days: string, unlimited: boolean, selfHosted: boolean) {
   return { days: value } as const;
 }
 
-/** Every field a refusal can name, in the order the form shows them. */
-const settingsFields: readonly AlertSettingsField[] = [
+/** The Delivery tab's fields, in the order its form shows them: the order its check names them in. */
+export const deliveryFields = [
   "timezone",
   "quietHoursStart",
   "quietHoursEnd",
   "alertsPerHour",
   "burstWindowSeconds",
-  "itemsRetentionDays",
-  "logRetentionDays",
-];
+] as const;
+
+/** The Retention tab's fields, the same way. */
+export const retentionFields = ["itemsRetentionDays", "logRetentionDays"] as const;
+
+/** Every field a refusal can name, in the order the page's tabs show them. */
+const settingsFields: readonly AlertSettingsField[] = [...deliveryFields, ...retentionFields];
 
 const isSettingsField = (value: string): value is AlertSettingsField =>
   settingsFields.some((field) => field === value);
@@ -220,23 +298,118 @@ export async function loadAlertSettings(db: Db | Tx, workspaceId: string): Promi
   return row;
 }
 
-/** Saves all of the form, or none of it when a field is wrong. */
-export async function saveAlertSettings(
+/** What a save answers: it went through, or the fields that are wrong, in the form's order. */
+type SaveSettingsResult = { saved: true } | { errors: Partial<Record<AlertSettingsField, string>> };
+
+/**
+ * One tab's columns: the ones its save writes, and the row as it stands afterwards, which is how the
+ * hold check sees a change to a setting it times.
+ */
+type TabColumns = (before: AlertSettings, values: AlertSettings) => {
+  write: Partial<typeof workspace.$inferInsert>;
+  after: AlertSettings;
+};
+
+/** What a Delivery save writes, leaving the Retention tab's windows as they are. */
+const deliveryTab: TabColumns = (before, values) => {
+  const write = {
+    timezone: values.timezone,
+    quietHoursStart: values.quietHoursStart,
+    quietHoursEnd: values.quietHoursEnd,
+    severity5BypassesQuietHours: values.severity5BypassesQuietHours,
+    alertsPerHour: values.alertsPerHour,
+    burstWindowSeconds: values.burstWindowSeconds,
+  };
+  return { write, after: { ...before, ...write } };
+};
+
+/** What a Retention save writes, and the row afterwards. A window doesn't time a hold, so this one
+ * changes none. */
+const retentionTab: TabColumns = (before, values) => {
+  const write = { itemsRetentionDays: values.itemsRetentionDays, logRetentionDays: values.logRetentionDays };
+  return { write, after: { ...before, ...write } };
+};
+
+/**
+ * Saves one tab, and only that tab's columns. The form is checked against what's saved for every
+ * field the tab doesn't own, so a save can't be refused by a field it never showed, and the columns
+ * it doesn't write stay as they are. The bookkeeping columns a save is never about
+ * (`emailCapNoticeUntil`, `confirmationMailAt`) are not among them and are left alone.
+ */
+async function saveTab(
   db: Db,
   workspaceId: string,
-  form: AlertSettingsForm,
+  form: (saved: AlertSettings) => AlertSettingsForm,
+  tab: TabColumns,
   { selfHosted = false }: { selfHosted?: boolean } = {},
-) {
-  const parsed = parseAlertSettings(form, { selfHosted });
-  if ("errors" in parsed) return parsed;
-  await db.transaction(async (tx) => {
+): Promise<SaveSettingsResult> {
+  return db.transaction(async (tx) => {
     const before = await loadAlertSettings(tx, workspaceId);
-    await tx.update(workspace).set(parsed.values).where(eq(workspace.id, workspaceId));
+    const parsed = parseAlertSettings(form(before), { selfHosted });
+    if ("errors" in parsed) return parsed;
+    const { write, after } = tab(before, parsed.values);
+    await tx.update(workspace).set(write).where(eq(workspace.id, workspaceId));
     // In the transaction that saves it, so a sweep that runs meanwhile can't read the new settings beside
     // the old hold times and leave a row waiting for a time the settings no longer name.
-    if (changesHolds(before, parsed.values)) await releaseHeldDeliveries(tx, workspaceId);
+    if (changesHolds(before, after)) await releaseHeldDeliveries(tx, workspaceId);
+    return { saved: true as const };
   });
-  return { saved: true as const };
+}
+
+/**
+ * Saves the Delivery tab: the timezone, quiet hours and the Severity 5 bypass, and the pacing. The
+ * Retention tab's windows are read back from the row to be checked, and never written.
+ */
+export async function saveDeliverySettings(
+  db: Db,
+  workspaceId: string,
+  form: DeliverySettingsForm,
+  options: { selfHosted?: boolean } = {},
+): Promise<SaveSettingsResult> {
+  // Only this tab's fields, so anything else a post carries is dropped before the check and the write.
+  const posted: DeliverySettingsForm = {
+    timezone: form.timezone,
+    quietHours: form.quietHours,
+    quietHoursStart: form.quietHoursStart,
+    quietHoursEnd: form.quietHoursEnd,
+    severity5Bypasses: form.severity5Bypasses,
+    alertsPerHour: form.alertsPerHour,
+    burstWindowSeconds: form.burstWindowSeconds,
+  };
+  const { selfHosted = false } = options;
+  return saveTab(
+    db,
+    workspaceId,
+    (saved) => ({ ...settingsFormValues(saved, { selfHosted }), ...posted }),
+    deliveryTab,
+    options,
+  );
+}
+
+/**
+ * Saves the Retention tab: the two windows. Everything the Delivery tab owns is read back from the
+ * row to be checked, and never written.
+ */
+export async function saveRetentionSettings(
+  db: Db,
+  workspaceId: string,
+  form: RetentionSettingsForm,
+  options: { selfHosted?: boolean } = {},
+): Promise<SaveSettingsResult> {
+  const posted: RetentionSettingsForm = {
+    itemsRetentionDays: form.itemsRetentionDays,
+    itemsUnlimited: form.itemsUnlimited,
+    logRetentionDays: form.logRetentionDays,
+    logUnlimited: form.logUnlimited,
+  };
+  const { selfHosted = false } = options;
+  return saveTab(
+    db,
+    workspaceId,
+    (saved) => ({ ...settingsFormValues(saved, { selfHosted }), ...posted }),
+    retentionTab,
+    options,
+  );
 }
 
 /** A quiet hours time to the minute, as the form posts it and the user set it. Postgres reads it back with seconds. */
@@ -293,44 +466,64 @@ export function quietHoursSentence(
   return settings.severity5BypassesQuietHours ? `${held} Severity 5 alerts still go at once.` : held;
 }
 
-const formFields = [
-  "timezone",
-  "quietHoursStart",
-  "quietHoursEnd",
-  "alertsPerHour",
-  "burstWindowSeconds",
-  "itemsRetentionDays",
-  "logRetentionDays",
-] as const;
-
-/** The form from what it posted, or from the query a refused save sends it back with. */
-export function readAlertSettingsForm(get: (name: string) => unknown): AlertSettingsForm {
-  const text = (name: string) => {
+/** What a form or a query holds for a name, as text. A missing or repeated field reads as empty. */
+function postedText(get: (name: string) => unknown) {
+  return (name: string) => {
     const value = get(name);
     return typeof value === "string" ? value : "";
   };
+}
+
+/** The Delivery form from what it posted, or from the query a refused save sends it back with. */
+export function readDeliverySettingsForm(get: (name: string) => unknown): DeliverySettingsForm {
+  const text = postedText(get);
   return {
     timezone: text("timezone"),
+    quietHours: text("quietHours") === "on",
     quietHoursStart: text("quietHoursStart"),
     quietHoursEnd: text("quietHoursEnd"),
+    severity5Bypasses: text("severity5Bypasses") === "on",
     alertsPerHour: text("alertsPerHour"),
     burstWindowSeconds: text("burstWindowSeconds"),
+  };
+}
+
+/** The Retention form from what it posted, or from the query a refused save sends it back with. */
+export function readRetentionSettingsForm(get: (name: string) => unknown): RetentionSettingsForm {
+  const text = postedText(get);
+  return {
     itemsRetentionDays: text("itemsRetentionDays"),
-    logRetentionDays: text("logRetentionDays"),
-    quietHours: text("quietHours") === "on",
-    severity5Bypasses: text("severity5Bypasses") === "on",
     itemsUnlimited: text("itemsUnlimited") === "on",
+    logRetentionDays: text("logRetentionDays"),
     logUnlimited: text("logUnlimited") === "on",
   };
 }
 
-/** The query that brings a refused form back as it was posted. */
-export function alertSettingsQuery(form: AlertSettingsForm) {
+/**
+ * The query that brings a refused Delivery form back as it was posted, on its own tab. It carries
+ * that tab's values and no other's, so opening the link can't reset a setting the user didn't post.
+ */
+export function deliveryRefusalQuery(form: DeliverySettingsForm) {
   return new URLSearchParams({
+    tab: "delivery",
     refused: "1",
-    ...Object.fromEntries(formFields.map((name) => [name, form[name]])),
+    timezone: form.timezone,
+    quietHoursStart: form.quietHoursStart,
+    quietHoursEnd: form.quietHoursEnd,
+    alertsPerHour: form.alertsPerHour,
+    burstWindowSeconds: form.burstWindowSeconds,
     ...(form.quietHours ? { quietHours: "on" } : {}),
     ...(form.severity5Bypasses ? { severity5Bypasses: "on" } : {}),
+  }).toString();
+}
+
+/** The query that brings a refused Retention form back as it was posted, on its own tab. */
+export function retentionRefusalQuery(form: RetentionSettingsForm) {
+  return new URLSearchParams({
+    tab: "retention",
+    refused: "1",
+    itemsRetentionDays: form.itemsRetentionDays,
+    logRetentionDays: form.logRetentionDays,
     ...(form.itemsUnlimited ? { itemsUnlimited: "on" } : {}),
     ...(form.logUnlimited ? { logUnlimited: "on" } : {}),
   }).toString();

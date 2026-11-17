@@ -440,7 +440,7 @@ function Outcome({
       <Notice role="alert" tone="failed">
         {refusedName ?? "That Destination"} can&apos;t be removed, because it&apos;s the only Destination Source Health
         alerts go to{refused.length > 0 ? `, and the only Destination of ${refused.join(", ")}` : ""}. Choose another
-        for them, or untick this one, on <Link href="/settings" className={textLink}>
+        for them, or untick this one, on <Link href="/settings?tab=health" className={textLink}>
           Settings
         </Link>{" "}
         first.
