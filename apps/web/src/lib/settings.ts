@@ -122,7 +122,6 @@ export const settingsTabs = [
 ] as const;
 
 export type SettingsTab = (typeof settingsTabs)[number]["value"];
-export type SettingsTabDefinition = (typeof settingsTabs)[number];
 
 /**
  * The tab a URL asks for. Delivery is what `/settings` and a link with no tab show, and an unknown
@@ -134,7 +133,7 @@ export function resolveSettingsTab(value: unknown, { admin }: { admin: boolean }
 }
 
 /** The tabs this user may open: the Instance switch is the install admin's alone. */
-export function settingsTabsFor(admin: boolean): readonly SettingsTabDefinition[] {
+export function settingsTabsFor(admin: boolean): readonly (typeof settingsTabs)[number][] {
   return settingsTabs.filter((tab) => admin || !tab.adminOnly);
 }
 
@@ -142,13 +141,6 @@ export function settingsTabsFor(admin: boolean): readonly SettingsTabDefinition[
 export function settingsTabHref(tab: SettingsTab) {
   return `/settings?tab=${tab}`;
 }
-
-/**
- * The tabs that hold a settings form of their own, and so own the columns one save writes. The other
- * three hold forms of their own kind, which redirect on their own.
- */
-export const settingsFormTabs = ["delivery", "retention"] as const;
-export type SettingsFormTab = (typeof settingsFormTabs)[number];
 
 /** The Delivery tab's form: the timezone, quiet hours with its bypass, and the pacing. */
 export type DeliverySettingsForm = Pick<
@@ -296,7 +288,7 @@ export async function loadAlertSettings(db: Db | Tx, workspaceId: string): Promi
 }
 
 /** What a save answers: it went through, or the fields that are wrong, in the form's order. */
-export type SaveSettingsResult = { saved: true } | { errors: Partial<Record<AlertSettingsField, string>> };
+type SaveSettingsResult = { saved: true } | { errors: Partial<Record<AlertSettingsField, string>> };
 
 /**
  * One tab's columns: the ones its save writes, and the row as it stands afterwards, which is how the
