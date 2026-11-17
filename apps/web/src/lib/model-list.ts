@@ -4,16 +4,14 @@ import { and, type Db, eq, isNull, modelConfig } from "@watchdog/db";
 import { type ModelListInput, parseModelList } from "./model.ts";
 
 /** Why a list didn't load, as a code the field turns into a sentence. */
-export const modelListReasons = [
-  "invalid-input",
-  "unreadable-key",
-  "unauthorized",
-  "blocked",
-  "unreachable",
-  "no-endpoint",
-  "bad-response",
-] as const;
-export type ModelListReason = (typeof modelListReasons)[number];
+export type ModelListReason =
+  | "invalid-input"
+  | "unreadable-key"
+  | "unauthorized"
+  | "blocked"
+  | "unreachable"
+  | "no-endpoint"
+  | "bad-response";
 
 export type ModelListOutcome = { ok: true; models: { id: string }[] } | { ok: false; reason: ModelListReason };
 

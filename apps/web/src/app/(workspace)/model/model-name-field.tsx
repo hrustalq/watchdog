@@ -136,8 +136,7 @@ export function ModelNameFieldView({ value, listed, error, inputRef, onChange, o
         </p>
       )}
       <p id={`${id}-help`} className={helpText}>
-        As the provider&apos;s docs spell it. The list is read with the key above, and a provider that publishes none
-        leaves the name to you.
+        As the provider&apos;s docs spell it. The list is read with the key above.
       </p>
     </div>
   );
