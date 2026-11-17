@@ -106,7 +106,7 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
           and an open run's notice, and waits while a form is saving. Once `processed_at` is set there
           is nothing left to wait for, so the page stops asking. */}
       {found.processedAt === null ? <Refresher watchFor={waitingFor} /> : null}
-      <header className="flex flex-col gap-3">
+      <header className="flex flex-col gap-3 @container">
         <h1 className="text-headline break-words">{found.title ?? "Untitled Item"}</h1>
         {found.url === null ? null : (
           <a
@@ -117,7 +117,10 @@ async function ItemDetail({ params, searchParams }: PageProps<"/items/[id]">) {
             {found.url}
           </a>
         )}
-        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-sm">
+        {/* One column when the text is enlarged past what the term/detail pair can hold: 16rem is
+            measured in the current root size, so 200% text stacks the envelope while the normal
+            320px and 390px layouts keep their two columns. */}
+        <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-1 text-sm @max-[16rem]:grid-cols-1">
           {envelope.map(({ term, detail }) => (
             <div key={term} className="contents">
               <dt className="text-xs leading-5 font-medium tracking-[0.01em] text-muted-foreground">{term}</dt>

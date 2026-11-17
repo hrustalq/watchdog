@@ -29,4 +29,10 @@ describe("PageBar", () => {
     const html = renderToStaticMarkup(<PageBar trail={[{ href: "/rules", label: "Rules" }, { label: "A very long rule name" }]} />);
     expect(html).toContain("truncate");
   });
+
+  it("lets the trail shrink inside the page instead of widening it at large text", () => {
+    const html = renderToStaticMarkup(<PageBar trail={[{ href: "/rules", label: "Rules" }, { label: "New Rule" }]} />);
+    expect(html).toContain("min-w-0");
+    expect(html).toContain("overflow-hidden");
+  });
 });

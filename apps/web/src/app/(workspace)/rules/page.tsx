@@ -257,7 +257,7 @@ function RuleItem({
           </Warning>
         ) : null}
       </div>
-      <div className="flex shrink-0 items-start gap-2">
+      <div className="flex shrink-0 flex-wrap items-start gap-2">
         <EnableSwitch type={type} rule={rule} locked={needsModel || rule.noDestination === true} />
         <DeleteRule type={type} rule={rule} />
       </div>

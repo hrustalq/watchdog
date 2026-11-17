@@ -28,13 +28,13 @@ export function SidebarUserMenu({ email, onNavigate }: { email: string; onNaviga
     <DropdownMenu>
       <DropdownMenuTrigger
         data-slot="user-menu-trigger"
-        aria-label={`Account, ${email}`}
+        aria-label={`Account, ${userMark(email)}, ${nameFromEmail(email)}, ${email}`}
         title={email}
         className="flex min-h-12 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm outline-hidden transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-3 focus-visible:ring-sidebar-ring/60 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:p-2"
       >
-        <UserAvatar email={email} />
+        <UserAvatar email={email} />{" "}
         <span className="flex min-w-0 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
-          <span className="truncate text-sm font-medium">{nameFromEmail(email)}</span>
+          <span className="truncate text-sm font-medium">{nameFromEmail(email)}</span>{" "}
           <span className="truncate text-xs text-muted-foreground">{email}</span>
         </span>
         <ChevronsUpDown aria-hidden="true" className="ml-auto size-3.5 shrink-0 text-muted-foreground group-data-[collapsible=icon]:hidden" />
@@ -50,7 +50,7 @@ export function HeaderUserMenu({ email }: { email: string }) {
     <DropdownMenu>
       <DropdownMenuTrigger
         data-slot="user-menu-trigger"
-        aria-label={`Account, ${email}`}
+        aria-label={`Account, ${userMark(email)}, ${nameFromEmail(email)}, ${email}`}
         title={email}
         className="grid size-9 place-items-center rounded-full outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60"
       >
@@ -61,10 +61,13 @@ export function HeaderUserMenu({ email }: { email: string }) {
   );
 }
 
-/** The avatar both triggers show: the user's initials until they have an image. */
+/**
+ * The avatar both triggers show: the user's initials until they have an image. It is decorative,
+ * because the trigger's accessible name already carries the initials, the name and the email.
+ */
 function UserAvatar({ email }: { email: string }) {
   return (
-    <Avatar className="size-7">
+    <Avatar aria-hidden="true" className="size-7">
       <AvatarFallback className="text-xs">{userMark(email)}</AvatarFallback>
     </Avatar>
   );

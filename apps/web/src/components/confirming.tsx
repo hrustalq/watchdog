@@ -18,14 +18,14 @@ export function Confirming({
   pendingLabel: string;
 }) {
   return (
-    <details className="group">
-      <summary className="inline-flex h-8 cursor-pointer list-none items-center rounded-lg border border-transparent px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+    <details className="group min-w-0 max-w-full">
+      <summary className="inline-flex min-h-8 max-w-full cursor-pointer list-none items-center rounded-lg border border-transparent px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
         <span className="group-open:hidden">{opener}</span>
         <span className="hidden group-open:inline">Keep it</span>
         <span className="sr-only"> {name}</span>
       </summary>
-      <div className="mt-2 flex flex-col gap-3 rounded-lg bg-muted p-3">
-        <p className="text-sm">{warning}</p>
+      <div className="mt-2 flex min-w-0 max-w-full flex-col gap-3 rounded-lg bg-muted p-3">
+        <p className="text-sm wrap-anywhere">{warning}</p>
         <form action={action}>
           <SubmitButton variant="destructive" pendingLabel={pendingLabel}>
             {button}

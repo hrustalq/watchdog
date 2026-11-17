@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils";
 
 const checkboxBox =
   "size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
-const helpText = "text-xs text-muted-foreground";
+const helpText = "text-xs text-muted-foreground wrap-anywhere text-pretty";
 
 interface FieldMessageProps {
   id: string;

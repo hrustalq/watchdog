@@ -32,12 +32,14 @@ export function WorkspaceChrome({
   return (
     <TooltipProvider>
       <SidebarProvider defaultOpen={defaultOpen}>
-        <a
-          href="#workspace-main"
-          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:border focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow-md focus:outline-hidden focus:ring-3 focus:ring-ring/60"
-        >
-          Skip to content
-        </a>
+        <nav aria-label="Skip">
+          <a
+            href="#workspace-main"
+            className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:border focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow-md focus:outline-hidden focus:ring-3 focus:ring-ring/60"
+          >
+            Skip to content
+          </a>
+        </nav>
         <WorkspaceSidebar workspaceName={workspaceName} email={email} />
         {/* min-w-0: a flex item's min-width is auto, so without it the inset refuses to shrink below
             the widest row and pushes the page past the viewport at tablet widths. */}

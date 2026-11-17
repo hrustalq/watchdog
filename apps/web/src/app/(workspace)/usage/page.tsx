@@ -391,6 +391,8 @@ function UsageTable({
           )}
         </table>
       </div>
+      {/* The panel scrolls sideways on a phone; say so, because the cut column edge is the only hint. */}
+      <p className="text-xs text-muted-foreground sm:hidden">Swipe the table for the other columns.</p>
     </div>
   );
 }

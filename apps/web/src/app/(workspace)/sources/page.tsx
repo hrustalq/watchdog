@@ -162,7 +162,20 @@ async function SourceList({ params }: { params: Awaited<PageProps<"/sources">["s
         The bot is in the chat. {link.name} captures each message posted there from now on.
       </Notice>
     ) : null}
-    <Section id="watched" title={<>Watching <span className="tabular-nums">{sources.length}</span>{" "}{sources.length === 1 ? "Source" : "Sources"}</>} focusableTitle>
+    <Section
+      id="watched"
+      title={
+        sources.length === 0 ? (
+          "No Sources yet"
+        ) : (
+          <>
+            Watching <span className="tabular-nums">{sources.length}</span>{" "}
+            {sources.length === 1 ? "Source" : "Sources"}
+          </>
+        )
+      }
+      focusableTitle
+    >
         {/* Remove takes its row away, so the focus goes to the list's heading, near where the row was. */}
         {removed ? <FocusOnMount id="watched" /> : null}
         {sources.length === 0 ? (

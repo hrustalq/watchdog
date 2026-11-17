@@ -242,7 +242,7 @@ export default async function DestinationsPage({ searchParams }: PageProps<"/des
                       </SignalLine>
                     )}
                   </div>
-                  <div className="flex shrink-0 flex-col gap-2 sm:max-w-64 sm:items-end">
+                  <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end sm:gap-2">
                     {row.state === "confirmed" || row.state === "ready" ? (
                       <form action={testDestinationAction.bind(null, row.id)}>
                         <SubmitButton variant="outline" pendingLabel="Sending…" className="w-auto">
