@@ -1,7 +1,5 @@
 import { cookies } from "next/headers";
-
-/** The cookie that names the Workspace a request reads. It is a preference, never an authorization. */
-export const activeWorkspaceCookie = "active_workspace";
+import { activeWorkspaceCookie } from "./workspace.ts";
 
 /** A year, so a choice outlives the browser session the way a saved setting would. */
 const year = 60 * 60 * 24 * 365;
