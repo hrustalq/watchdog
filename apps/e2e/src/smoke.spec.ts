@@ -1092,6 +1092,11 @@ test("Workspace navigation holds on desktop and phone, with and without JavaScri
       document.documentElement.style.fontSize = "32px";
     });
     await narrow.getByRole("button", { name: "Open navigation" }).click();
+    await expect(sheet).toBeVisible();
+    // The sheet slides in, so its box is off the screen until the transition ends.
+    await expect
+      .poll(async () => (await sheet.boundingBox())?.x ?? -1, { timeout: 5_000 })
+      .toBeGreaterThanOrEqual(0);
     const box = await sheet.boundingBox();
     if (box === null) throw new Error("the open sheet has no box");
     expect(box.x, "the sheet starts off the left of the screen").toBeGreaterThanOrEqual(0);
