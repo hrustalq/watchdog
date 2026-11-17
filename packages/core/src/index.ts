@@ -1,4 +1,11 @@
 export { type AgentResult, callAgent, readApiKey, testModelConnection } from "./agent/call-agent.ts";
+export {
+  listModels,
+  maxListedModels,
+  type ModelListConfig,
+  type ModelListFailure,
+  type ModelListResult,
+} from "./agent/list-models.ts";
 export { loadProfile } from "./agent/profile.ts";
 export { type RatingAxis, type RatingReader, ratingAbout, ratingAnchor, ratingAxes, ratingMeaning, ratingScale } from "./agent/rating.ts";
 export { type AgentFetch, createAgentFetch } from "./agent/provider.ts";

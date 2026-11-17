@@ -4,6 +4,7 @@ import { type ModelProblem, modelProblemMessage, providerTypes, type StoredKey }
 import { cn } from "@/lib/utils";
 import { saveModelAction } from "./actions";
 import { ModelFormActions } from "./form-actions";
+import { ModelNameField } from "./model-name-field";
 
 export interface ModelFormValues {
   providerType: string;
@@ -137,21 +138,10 @@ export function ModelForm({
         ) : null}
       </div>
 
-      <TextField
-        id="model-name"
-        name="modelName"
-        label="Model name"
-        type="text"
-        required
-        maxLength={200}
-        autoComplete="off"
-        placeholder="gpt-5-mini"
+      <ModelNameField
         defaultValue={values.modelName}
+        storedKey={storedKey}
         error={errorFor("model-name")}
-        focusOnError={problem === "model-name"}
-        showHelpWithError
-        controlClassName={dataBox}
-        help="As the provider's docs spell it."
       />
 
       <CheckboxField

@@ -200,18 +200,45 @@ const modelSchema = z
     outputPrice: model.outputPrice,
   }));
 
-function parseModel(input: ModelInput) {
-  const parsed = modelSchema.safeParse(input);
-  if (parsed.success) return parsed.data;
-  // The first problem in the form's order, so the screen focuses the first field to fix.
+/** The first problem in the form's order, so the screen focuses the first field to fix. */
+function firstProblem(error: z.ZodError) {
   const problem = modelProblems.find((candidate) =>
-    parsed.error.issues.some((issue) => {
+    error.issues.some((issue) => {
       const [field] = issue.path;
       return typeof field === "string" && modelProblemFields.get(field) === candidate;
     }),
   );
   if (problem === undefined) throw new Error("A model field with no problem name");
-  return { problem };
+  return problem;
+}
+
+function parseModel(input: ModelInput) {
+  const parsed = modelSchema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  return { problem: firstProblem(parsed.error) };
+}
+
+/** What the Model screen's picker posts: a save's fields without the model name it exists to fill in. */
+export interface ModelListInput {
+  providerType: string;
+  baseUrl: string;
+  apiKey: string;
+}
+
+const modelListSchema = z.object({
+  providerType: providerField,
+  baseUrl: baseUrlField,
+  apiKey: apiKeyField,
+});
+
+/**
+ * The picker's fields through the save's own validators, so a typo is refused with the code the form
+ * already knows. It reads no model name: the list is what fills that in.
+ */
+export function parseModelList(input: ModelListInput) {
+  const parsed = modelListSchema.safeParse(input);
+  if (parsed.success) return parsed.data;
+  return { problem: firstProblem(parsed.error) };
 }
 
 /**
