@@ -1055,7 +1055,11 @@ test("Workspace navigation holds on desktop and phone, with and without JavaScri
   test.setTimeout(240_000);
   const viewport = { width: 360, height: 720 };
   await signInAgain(page);
-  const desktopNav = page.locator("header nav");
+  // The desktop navigation lives in the sidebar, not a header: the header nav is the phone sheet's,
+  // and its links only exist once that sheet is open.
+  const desktopNav = page
+    .getByRole("complementary", { name: "Workspace sidebar" })
+    .getByRole("navigation", { name: "Workspace" });
   for (const label of ["Feed", "Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings"]) {
     await expect(desktopNav.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
