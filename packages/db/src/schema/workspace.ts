@@ -1,11 +1,12 @@
 import { sql } from "drizzle-orm";
-import { boolean, check, integer, pgTable, text, time, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, check, index, integer, pgTable, text, time, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { user } from "./auth.ts";
 
 /**
- * The Workspace owns everything else. In the MVP it has exactly one user, its owner, and the
- * unique owner_user_id enforces that. Team membership can come later as its own table without
- * changing who owns the Workspace.
+ * The Workspace owns everything else, and one user can own several (docs: Security and privacy,
+ * "Workspaces"). `owner_user_id` names the one user who owns it, and `(owner_user_id, name)` is
+ * unique so the switcher can name one and a rename can't collide with a sibling. Team membership
+ * can come later as its own table without changing who owns the Workspace.
  *
  * Its alert settings are columns here, not a table of their own, so every Workspace has them and
  * the defaults are the database's (docs: Actions and delivery, "Grouping and rate limits").
@@ -17,7 +18,6 @@ export const workspace = pgTable(
     name: text("name").notNull(),
     ownerUserId: text("owner_user_id")
       .notNull()
-      .unique()
       .references(() => user.id, { onDelete: "cascade" }),
     /**
      * An IANA name. Quiet hours, Digest schedules and the hosted email cap's day use it. Postgres
@@ -68,5 +68,10 @@ export const workspace = pgTable(
       "workspace_log_retention_days_check",
       sql`${table.logRetentionDays} is null or ${table.logRetentionDays} >= 1`,
     ),
+    // The switcher lists a user's Workspaces oldest first, and the active one falls back to that.
+    index("workspace_owner_created_idx").on(table.ownerUserId, table.createdAt),
+    // Two Workspaces of one user can't share a name, so a create or a rename either takes it or is
+    // refused, and two first requests can't make the same one twice.
+    uniqueIndex("workspace_owner_name_key").on(table.ownerUserId, table.name),
   ],
 );
