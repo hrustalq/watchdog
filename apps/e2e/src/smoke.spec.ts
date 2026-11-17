@@ -924,7 +924,7 @@ test("the guided setup takes a Source from the sidebar to a finished watch witho
   });
 
   await test.step("step 1 saves a Source and moves to its Items", async () => {
-    await page.getByLabel("RSS feed URL", { exact: true }).fill(fixtureFeed("feed.xml?wizard=1"));
+    await page.getByLabel("RSS feed URL", { exact: true }).fill(fixtureFeed("wizard.xml"));
     await page.getByRole("button", { name: "Add Source" }).click();
     await expect(page.getByRole("heading", { name: "Its first Items" })).toBeVisible();
   });
@@ -941,9 +941,9 @@ test("the guided setup takes a Source from the sidebar to a finished watch witho
   await test.step("step 2 shows the Backfill after the worker's poll", async () => {
     await expect(async () => {
       await page.reload();
-      await expect(page.getByRole("link", { name: "HypoPG 1.4.5 is out!" })).toBeVisible({ timeout: 1_000 });
+      await expect(page.getByRole("link", { name: "Wizard entry two" })).toBeVisible({ timeout: 1_000 });
     }).toPass(untilPolled);
-    await expect(page.getByRole("link", { name: "Security release for psqlodbc" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Wizard entry one" })).toBeVisible();
     await page.getByRole("link", { name: "Continue", exact: true }).click();
   });
 
@@ -967,7 +967,7 @@ test("the guided setup takes a Source from the sidebar to a finished watch witho
 
   await test.step("the finish screen names what exists and what still needs a person", async () => {
     await expect(page.getByRole("heading", { name: "You're set up" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "PostgreSQL news is watching" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Wizard feed is watching" })).toBeVisible();
     await expect(page.getByText("Guided inbox can receive now.")).toBeVisible();
     await expect(page.getByText("An Action alerts you when Importance is at least 4.")).toBeVisible();
     // The Rules screen streams its lists behind Suspense, so read them in a JS-enabled context that

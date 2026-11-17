@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The guided setup's feed. Its titles are its own, so the Items it captures can't duplicate another
+     test's Feed rows. Caddy rewrites the dates relative to the request, inside the 7-day Backfill. -->
+<rss version="2.0">
+  <channel>
+    <title>Wizard feed</title>
+    <link>https://example.com/wizard</link>
+    <description>A feed for the guided setup</description>
+    <item>
+      <title>Wizard entry one</title>
+      <link>https://example.com/wizard/one</link>
+      <description>The first entry the guided setup's Source captures.</description>
+      <pubDate>{{now | dateModify "-3h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://example.com/wizard/one</guid>
+    </item>
+    <item>
+      <title>Wizard entry two</title>
+      <link>https://example.com/wizard/two</link>
+      <description>The second entry the guided setup's Source captures.</description>
+      <pubDate>{{now | dateModify "-5h" | date "Mon, 02 Jan 2006 15:04:05 -0700"}}</pubDate>
+      <guid>https://example.com/wizard/two</guid>
+    </item>
+  </channel>
+</rss>
