@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isCurrentWorkspaceLink } from "./workspace-chrome";
+import { isCurrentWorkspaceLink } from "./workspace-nav";
 
 describe("isCurrentWorkspaceLink", () => {
   it("marks Feed current on the Feed and Item screens", () => {

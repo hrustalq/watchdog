@@ -6,8 +6,10 @@ const gaps = { 4: "gap-4", 6: "gap-6", 8: "gap-8", none: undefined } as const;
 /**
  * The reading column a screen's content sits in: centred, `wide` at 48rem for a screen's own lists
  * and forms and `narrow` at 42rem where the column would stretch a form's lines. The 4px rhythm
- * arrives as the column's gap, so screens don't each pick their own spacing. Sign-in, the 404 and
- * the error page are not Pages: they centre one short column over the whole height instead.
+ * arrives as the column's gap, so screens don't each pick their own spacing. It is a `div`, not a
+ * `main`: the Workspace shell's inset owns the screen's one main landmark, and a second one inside
+ * it would split the page in two for a screen reader. Sign-in, the 404 and the error page are not
+ * Pages: they centre one short column over the whole height instead.
  */
 export function Page({
   width = "wide",
@@ -21,9 +23,9 @@ export function Page({
   children: React.ReactNode;
 }) {
   return (
-    <main className={cn("mx-auto flex w-full flex-col px-4 py-8", widths[width], gaps[gap], className)}>
+    <div className={cn("mx-auto flex w-full flex-col px-4 py-8", widths[width], gaps[gap], className)}>
       {children}
-    </main>
+    </div>
   );
 }
 
