@@ -920,8 +920,8 @@ test("the guided setup takes a Source from the sidebar to a finished watch witho
     await expect(page.getByText("An Action alerts you when Importance is at least 4.")).toBeVisible();
     // Both saves are ordinary rows the other screens own, not the wizard's own state.
     await page.goto(new URL("/rules", page.url()).href);
-    await expect(page.getByText("Importance 4 alerts")).toBeVisible();
-    await expect(page.getByText("Bug reports")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Importance 4 alerts", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Bug reports", exact: true })).toBeVisible();
   });
 
   await context.close();
