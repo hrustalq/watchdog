@@ -51,9 +51,11 @@ export default async function WorkspacesPage({ searchParams }: PageProps<"/works
   };
   const savedMessage = savedNotices[param("saved")];
   const refusedMessage = pageRefusals[param("refused")];
-  // A refusal names the row it belongs to, so that row's form opens again with what it was sent.
+  // A refusal names the row it belongs to, so that row's form opens again with what it was sent. One
+  // with no row is the create form's, which says it under its own field.
   const refusedId = param("id");
   const postedName = param("name");
+  const createError = refusedId === "" ? nameErrors[param("refused")] : undefined;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -97,6 +99,7 @@ export default async function WorkspacesPage({ searchParams }: PageProps<"/works
               required
               autoComplete="off"
               maxLength={workspaceNameLimit}
+              error={createError}
               className="sm:max-w-sm"
               help="1 to 100 characters, and unlike any other Workspace of yours."
             />
