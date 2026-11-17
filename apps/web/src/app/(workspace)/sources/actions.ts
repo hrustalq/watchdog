@@ -1,11 +1,11 @@
 "use server";
 
-import { linkCodeMinutes } from "@watchdog/core";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireWorkspace, server } from "@/lib/server";
 import { replaceInboxToken } from "@/lib/inbox";
 import { keepSentBack } from "@/lib/sent-back";
+import { keepSourceLink } from "@/lib/source-link";
+import { wizardHref } from "@/lib/wizard";
 import {
   addFormSource,
   addValues,
@@ -14,8 +14,6 @@ import {
   newSourceLink,
   removeSource,
   replaceGithubToken,
-  sourceLinkCookie,
-  sourceLinkCookieValue,
 } from "@/lib/sources";
 
 // Both actions end in a redirect. Without JavaScript that's a 303 to a page the browser renders;
@@ -35,36 +33,38 @@ const text = (formData: FormData, name: string) => {
 export async function addSource(formData: FormData) {
   const { workspace } = await requireWorkspace();
   const values = addValues((name) => text(formData, name));
+  // The guided setup's step 1 posts this form with a marker, so a save moves to its next step.
+  const wizard = text(formData, "next") === "wizard";
   // Read apart from the values, which go back to the browser: the token never leaves the server.
   const token = text(formData, "token");
   const { db, fetch, mode, encryptionKey, renderers, telegramAvailable } = server();
   // The form says Telegram isn't set up, and a post from before that isn't one to act on.
-  if (values.type === "telegram" && !telegramAvailable) redirect("/sources");
+  if (values.type === "telegram" && !telegramAvailable) redirect(wizard ? wizardHref(1) : "/sources");
   const result = await addFormSource(db, { fetch, mode, encryptionKey, renderers }, workspace.id, { ...values, token });
   // An inbox's page shows its URL, once. The id in the URL is all it carries.
-  if ("source" in result && values.type === "webhook") redirect(`/sources/${result.source.id}/inbox`);
-  if ("source" in result && result.code !== undefined) await showSourceLink(result.source.id, result.code);
+  if ("source" in result && values.type === "webhook") {
+    redirect(
+      wizard ? `/sources/${result.source.id}/inbox?wizard=1` : `/sources/${result.source.id}/inbox`,
+    );
+  }
+  if ("source" in result && result.code !== undefined) await keepSourceLink(result.source.id, result.code);
   // The type stays chosen, so a second repo or feed can follow without choosing it again.
-  if ("source" in result) redirect(`/sources?${new URLSearchParams({ added: "1", type: values.type })}`);
-  const kept = await keepSentBack("/sources", { ...values });
+  if ("source" in result) {
+    redirect(
+      wizard
+        ? wizardHref(2, result.source.id, { added: "1" })
+        : `/sources?${new URLSearchParams({ added: "1", type: values.type })}`,
+    );
+  }
+  const kept = await keepSentBack(wizard ? "/sources/new" : "/sources", { ...values });
   // The type picks the form to show, even when the values were too long to keep.
   const back = new URLSearchParams({ error: result.problem, type: values.type });
   if (!kept) back.set("too-long", "1");
   if (result.status !== undefined) back.set("status", result.status);
   // Only that a token was pasted, so the form can ask for it again.
   if (token.trim() !== "") back.set("pasted", "1");
-  redirect(`/sources?${back}`);
-}
-
-/** Keeps the code for the page to show, however often it's reloaded. See sourceLinkInCookie. */
-async function showSourceLink(sourceId: string, code: string) {
-  (await cookies()).set(sourceLinkCookie, sourceLinkCookieValue(sourceId, code), {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: server().baseURL.startsWith("https:"),
-    path: "/sources",
-    maxAge: linkCodeMinutes * 60,
-  });
+  if (wizard) back.set("step", "1");
+  redirect(`${wizard ? "/sources/new" : "/sources"}?${back.toString()}`);
 }
 
 /** A new link for a Telegram bot Source that waits for the bot or lost access. It replaces the last one. */
@@ -72,7 +72,7 @@ export async function newSourceLinkAction(sourceId: unknown) {
   const { workspace } = await requireWorkspace();
   const id = typeof sourceId === "string" ? sourceId : "";
   const code = await newSourceLink(server().db, workspace.id, id);
-  if (code !== undefined) await showSourceLink(id, code);
+  if (code !== undefined) await keepSourceLink(id, code);
   redirect("/sources");
 }
 

@@ -35,6 +35,7 @@ import {
   itemWithLog,
   parseCursor,
   parseTopCursor,
+  sourceItemsPage,
   topPage,
 } from "./feed.ts";
 
@@ -170,6 +171,35 @@ describe("Feed", () => {
       excerpt: "The build-1 release ships a faster parser.",
     });
     expect(older).toBeNull();
+  });
+
+  it("shows one Source's Items for the guided setup, newest first, and no other Source's", async () => {
+    const seeded = await seed();
+    await insertItems(seeded, [
+      { capturedAt: hoursAgo(3), title: "Older" },
+      { capturedAt: hoursAgo(1), title: "Newer" },
+      { capturedAt: hoursAgo(2), title: "Middle" },
+    ]);
+    const [other] = await db
+      .insert(source)
+      .values({ workspaceId: seeded.workspaceId, type: "rss", name: "Other", config: { url: `${feedUrl}?other=1` }, schedule: "*/15 * * * *" })
+      .returning();
+    await db.insert(item).values({
+      workspaceId: seeded.workspaceId,
+      sourceId: present(other).id,
+      externalId: "other-entry",
+      title: "Elsewhere",
+      body: "An entry.",
+      raw: {},
+      capturedAt: hoursAgo(4),
+    });
+
+    const rows = await sourceItemsPage(db, seeded.workspaceId, seeded.source.id);
+
+    expect(rows.map((row) => row.title)).toEqual(["Newer", "Middle", "Older"]);
+    expect(rows[0]).toMatchObject({ isBackfill: false, publishedAt: null });
+    // Another Workspace's id reads as a Source with no Items, as every Feed query does.
+    expect(await sourceItemsPage(db, crypto.randomUUID(), seeded.source.id)).toEqual([]);
   });
 
   it("orders newest captured first, then newest published with undated last, then by id", async () => {

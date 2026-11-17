@@ -68,7 +68,7 @@ export function WorkspaceSidebar({ workspaces, email }: { workspaces: readonly W
             and a form per Workspace, so it works without JavaScript; collapsing keeps the mark. */}
         <WorkspaceSwitcher workspaces={workspaces} onNavigate={closeMobile} />
         <Link
-          href="/sources#add-source"
+          href="/sources/new"
           aria-label="Add source"
           onClick={closeMobile}
           className={buttonVariants({

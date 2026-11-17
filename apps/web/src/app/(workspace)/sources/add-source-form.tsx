@@ -101,16 +101,19 @@ export function AddSourceForm({
   error,
   added = false,
   tokenDropped = false,
+  next,
   githubSignIn,
   mode,
   renderers,
   telegramAvailable,
 }: {
   values?: AddValues;
-  error?: { field: FieldName; message: string };
+  error?: { field: FieldName; message: string } | undefined;
   added?: boolean;
   /** A token was pasted with a submit that came back with a problem; it is never sent back. */
   tokenDropped?: boolean;
+  /** "wizard" makes the save move to the guided setup's next step instead of the Sources list. */
+  next?: "wizard";
   /** Whether the Workspace's owner signed in with GitHub; unknown in the static shell. */
   githubSignIn?: boolean;
   /** Only self-hosted offers to skip robots.txt (ADR 0015); unknown in the static shell. */
@@ -124,6 +127,7 @@ export function AddSourceForm({
   const offered = (render: AddValues["render"]) => render === "static" || renderers?.[render] !== false;
   return (
     <form action={addSource} className="flex flex-col gap-4">
+      {next === undefined ? null : <input type="hidden" name="next" value={next} />}
       {added ? (
         <Notice role="status">
           {addedNotice(values.type)}

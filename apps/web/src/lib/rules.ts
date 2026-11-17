@@ -54,6 +54,18 @@ export interface RuleTarget {
 export const isRuleType = (value: unknown): value is RuleType =>
   value === "classifier" || value === "extractor" || value === "action";
 
+/** The names the Workspace's Classifiers and Extractor Rules already use, so a starter can avoid them. */
+export async function ruleNames(db: Db, workspaceId: string) {
+  const [classifiers, extractors] = await Promise.all([
+    db.select({ name: classifier.name }).from(classifier).where(eq(classifier.workspaceId, workspaceId)),
+    db.select({ name: extractorRule.name }).from(extractorRule).where(eq(extractorRule.workspaceId, workspaceId)),
+  ]);
+  return {
+    classifier: classifiers.map(({ name }) => name),
+    extractor: extractors.map(({ name }) => name),
+  };
+}
+
 /** The Workspace's rules by type, oldest first, which is the order they run in. */
 export async function listRules(db: Db, workspaceId: string) {
   // A rule's definition is read here and parsed once, so its row can say what it does. A definition
@@ -103,6 +115,26 @@ async function listActions(db: Db, workspaceId: string) {
       schedule: isMap(definition) && typeof definition.schedule === "string" ? definition.schedule : null,
       destinations: actionDestinations.map(({ destination: target }) => ({ name: target.name, confirmed: isConfirmed(target) })),
     };
+  });
+}
+
+/** Whether an enabled alert on Importance 4 or more already goes to that Destination. */
+export async function importanceAlertExists(db: Db, workspaceId: string, destinationId: string) {
+  const rows = await db
+    .select({ definition: action.definition })
+    .from(action)
+    .innerJoin(actionDestination, eq(actionDestination.actionId, action.id))
+    .where(
+      and(
+        eq(action.workspaceId, workspaceId),
+        eq(action.enabled, true),
+        eq(action.kind, "alert"),
+        eq(actionDestination.destinationId, destinationId),
+      ),
+    );
+  return rows.some(({ definition }) => {
+    const parsed = actionSchema.safeParse(definition);
+    return parsed.success && JSON.stringify(parsed.data.when) === JSON.stringify({ field: "importance", op: "gte", value: 4 });
   });
 }
 

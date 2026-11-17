@@ -168,6 +168,29 @@ export async function topPage(db: Db, workspaceId: string, before?: TopCursor) {
 
 export type FeedItem = Awaited<ReturnType<typeof feedPage>>["items"][number];
 
+/** How many Items the guided setup shows before it sends the user to the Feed. */
+const wizardItemsShown = 10;
+
+/**
+ * The newest Items one Source captured, for the guided setup's Items step. It is the Latest order
+ * within that Source, and only the fields the step shows, so the first Backfill rows arrive in one
+ * small query. A Source of another Workspace has none, as every Feed read treats it.
+ */
+export async function sourceItemsPage(db: Db, workspaceId: string, sourceId: string) {
+  return db
+    .select({
+      id: item.id,
+      title: item.title,
+      publishedAt: item.publishedAt,
+      capturedAt: item.capturedAt,
+      isBackfill: item.isBackfill,
+    })
+    .from(item)
+    .where(and(eq(item.workspaceId, workspaceId), eq(item.sourceId, sourceId)))
+    .orderBy(desc(item.capturedAt), desc(item.id))
+    .limit(wizardItemsShown);
+}
+
 interface LogRow {
   id: number;
   message: string;
