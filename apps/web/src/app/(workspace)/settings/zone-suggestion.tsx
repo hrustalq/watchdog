@@ -31,7 +31,7 @@ export function ZoneSuggestion({ inputId, saved }: { inputId: string; saved: str
   const offered = zone !== undefined && !sameZone(zone, saved);
   return (
     <div role="status" className="text-xs text-muted-foreground empty:hidden">
-      {offered && used ? <p className="font-medium text-foreground">Save settings to keep it.</p> : null}
+      {offered && used ? <p className="font-medium text-foreground">Save delivery to keep it.</p> : null}
       {offered && !used ? (
         <p>
           This browser is set to <span className="font-mono">{zone}</span>.{" "}
