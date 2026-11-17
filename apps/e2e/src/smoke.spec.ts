@@ -1023,44 +1023,23 @@ test("a missing Item or rule answers 404, and one that is there answers 200", as
   await expect(page.getByRole("heading", { name: "Nothing here" })).toBeVisible();
 });
 
-/** More is the one disclosure in the bottom navigation, hidden from `lg` with the rest of the bar. */
-const workspaceMenu = (page: Page) => page.locator("nav details");
+/** How far the page scrolls sideways, which no phone layout may do. */
+const sideways = (page: Page) =>
+  page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 
-/** Opens More with a tap on its summary, and waits until it is open. */
-async function openWorkspaceMenu(page: Page) {
-  const menu = workspaceMenu(page);
-  if ((await menu.getAttribute("open")) === null) await menu.locator("summary").click({ timeout: 15_000 });
-  await expect(menu).toHaveAttribute("open");
-}
-
-/** How far the page scrolls sideways, and how tall its header and bottom bar are. */
-const feedLayout = (page: Page) =>
-  page.evaluate(() => ({
-    sideways: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    header: document.querySelector("header")?.getBoundingClientRect().height,
-    bottomBar: document.querySelector("body > div > nav")?.getBoundingClientRect().height,
-  }));
-
-/** Where a tap on the link's own words lands: low and left in its row, clear of the open panel. */
-async function tapPoint(link: Locator) {
-  const box = await link.boundingBox();
-  if (box === null) throw new Error("the Feed row's link has no box to tap");
-  return { x: box.x + 4, y: box.y + box.height / 2 };
-}
-
-// This drives the shared navigation on desktop and at 360 px on the real build, with Items in the Feed
-// for the outside-tap check. It navigates by tapping to preserve Next.js's hidden page state, runs before
-// the rate-limit test, and signs the no-JavaScript context out last because that ends the session.
+// This drives the shared navigation on desktop and at 360 px on the real build. The sidebar is the
+// one navigation: a persistent aside on desktop, a sheet behind the header's trigger on a phone, and
+// a plain list of links without JavaScript. It runs before the rate-limit test, and signs the
+// no-JavaScript context out last because that ends the session.
 test("Workspace navigation holds on desktop and phone, with and without JavaScript", async ({ page, browser }) => {
   test.setTimeout(240_000);
   const viewport = { width: 360, height: 720 };
   await signInAgain(page);
-  // The desktop navigation lives in the sidebar, not a header: the header nav is the phone sheet's,
-  // and its links only exist once that sheet is open.
+  const sections = ["Feed", "Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings"];
   const desktopNav = page
     .getByRole("complementary", { name: "Workspace sidebar" })
     .getByRole("navigation", { name: "Workspace" });
-  for (const label of ["Feed", "Sources", "Rules", "Destinations", "Profile", "Model", "Usage", "Settings"]) {
+  for (const label of sections) {
     await expect(desktopNav.getByRole("link", { name: label, exact: true })).toBeVisible();
   }
   await desktopNav.getByRole("link", { name: "Sources", exact: true }).click();
@@ -1070,166 +1049,86 @@ test("Workspace navigation holds on desktop and phone, with and without JavaScri
   const storageState = await page.context().storageState();
   const phone = await browser.newContext({ viewport, storageState });
   const narrow = await phone.newPage();
-  // Latest holds every Item; Top leaves the first test's out, because nothing ever rated them.
   const feed = new URL("/?view=latest", page.url()).href;
-  const mobileNav = narrow.locator("nav[aria-label='Workspace']");
-  const menu = workspaceMenu(narrow);
-  const panel = menu.locator("div");
+  const sheet = narrow.getByRole("dialog");
+  const sheetNav = sheet.getByRole("navigation", { name: "Workspace" });
 
-  await test.step("the bottom bar keeps its targets and nothing scrolls sideways, closed or open", async () => {
+  await test.step("the phone header is one 48 px row, and its sheet holds every section", async () => {
     await narrow.goto(feed);
     for (const title of ["Security release for psqlodbc", "HypoPG 1.4.5 is out!"]) {
       await expect(feedRow(narrow, title), `"${title}" is not in the Feed`).toBeVisible();
     }
-    for (const label of ["Feed", "Sources", "Rules", "Destinations"]) {
-      const link = mobileNav.getByRole("link", { name: label, exact: true });
-      await expect(link).toBeVisible();
-      expect((await link.boundingBox())?.height, `${label} is shorter than a touch target`).toBe(64);
-      expect(
-        await link.locator("span").evaluate((span) => span.scrollWidth <= span.clientWidth),
-        `${label} is truncated`,
-      ).toBe(true);
+    const header = narrow.locator("header");
+    await expect(header).toBeVisible();
+    expect(
+      await header.evaluate((node) => Math.round(node.getBoundingClientRect().height)),
+      "the phone header is not one 48 px row",
+    ).toBe(48);
+    expect(await sideways(narrow), "the page scrolls sideways").toBe(0);
+
+    await narrow.getByRole("button", { name: "Open navigation" }).click();
+    await expect(sheet, "the navigation sheet did not open").toBeVisible();
+    for (const label of sections) {
+      await expect(sheetNav.getByRole("link", { name: label, exact: true })).toBeVisible();
     }
-    await expect(mobileNav.getByRole("link", { name: "Feed", exact: true })).toHaveAttribute("aria-current", "page");
-    for (const open of ["closed", "open"]) {
-      if (open === "open") await openWorkspaceMenu(narrow);
-      const layout = await feedLayout(narrow);
-      expect(layout.sideways, `the page scrolls sideways with More ${open}`).toBe(0);
-      expect(layout.header, `the header is not one 48 px row with More ${open}`).toBe(48);
-      expect(layout.bottomBar, `the bottom bar is not 64 px plus its hairline with More ${open}`).toBe(65);
-    }
+    await expect(sheetNav.getByRole("link", { name: "Feed", exact: true })).toHaveAttribute("aria-current", "page");
+    expect(await sideways(narrow), "the page scrolls sideways with the sheet open").toBe(0);
+  });
+
+  await test.step("Escape closes the sheet, and a section link navigates and closes it", async () => {
+    await narrow.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+    await narrow.getByRole("button", { name: "Open navigation" }).click();
+    await expect(sheet).toBeVisible();
+    await sheetNav.getByRole("link", { name: "Rules", exact: true }).click({ timeout: 15_000 });
+    await expect(narrow.getByRole("heading", { name: "Rules", exact: true })).toBeVisible();
+    await expect(narrow.getByRole("dialog"), "the sheet was still open after a section link").toHaveCount(0);
+    await narrow.goBack();
+    await expect(narrow).toHaveURL(feed);
+  });
+
+  await test.step("with 200% root text the sheet stays inside the viewport", async () => {
+    await narrow.evaluate(() => {
+      document.documentElement.style.fontSize = "32px";
+    });
+    await narrow.getByRole("button", { name: "Open navigation" }).click();
+    const box = await sheet.boundingBox();
+    if (box === null) throw new Error("the open sheet has no box");
+    expect(box.x, "the sheet starts off the left of the screen").toBeGreaterThanOrEqual(0);
+    expect(box.y, "the sheet starts above the screen").toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, "the sheet runs off the right of the screen").toBeLessThanOrEqual(viewport.width);
+    expect(box.y + box.height, "the sheet runs off the bottom of the screen").toBeLessThanOrEqual(viewport.height);
+    await narrow.keyboard.press("Escape");
+    await narrow.evaluate(() => {
+      document.documentElement.style.fontSize = "";
+    });
   });
 
   await test.info().attach("desktop-sources", {
     body: await page.screenshot(),
     contentType: "image/png",
   });
-  await test.info().attach("phone-feed-more-open", {
+  await test.info().attach("phone-navigation-open", {
     body: await narrow.screenshot(),
     contentType: "image/png",
   });
 
-  await test.step("script closes the menu on Escape and when focus leaves it", async () => {
-    // Escape needs the page's script, and a page too fresh to have it still opens the menu natively,
-    // so this also waits for the hydration the rest of the checks need.
-    await expect(async () => {
-      await openWorkspaceMenu(narrow);
-      await narrow.keyboard.press("Escape");
-      await expect(menu).not.toHaveAttribute("open", { timeout: 1_000 });
-    }).toPass({ timeout: 30_000 });
-    await expect(menu.locator("summary"), "Escape left the focus off the menu").toBeFocused();
-
-    await openWorkspaceMenu(narrow);
-    await narrow.getByRole("link", { name: "Latest", exact: true }).focus();
-    await expect(menu, "the menu stayed open with the focus outside it").not.toHaveAttribute("open");
-  });
-
-  await test.step("a tap outside the open menu closes it and opens nothing", async () => {
-    const row = narrow.getByRole("listitem").first();
-    const point = await tapPoint(row.getByRole("link").first());
-    await openWorkspaceMenu(narrow);
-    // The cover is the summary's ::before, so the tap on the row lands on the summary instead.
-    const covering = await narrow.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.tagName, point);
-    expect(covering, "the tap on the row lands under the menu, not on its cover").toBe("SUMMARY");
-    await narrow.mouse.click(point.x, point.y);
-    // A tap that reached the row would leave for the Item and hide the Feed behind it, so a
-    // navigation gets the moment it needs before this believes the tap did nothing.
-    await narrow.waitForTimeout(1_000);
-    expect(narrow.url(), "the tap outside opened the Item under the menu").toBe(feed);
-    await expect(menu, "the tap outside didn't close the menu").not.toHaveAttribute("open");
-  });
-
-  await test.step("a bottom bar link opens its section and marks it current", async () => {
-    await mobileNav.getByRole("link", { name: "Rules", exact: true }).click({ timeout: 15_000 });
-    await expect(narrow.getByRole("heading", { name: "Rules", exact: true })).toBeVisible();
-    await expect(mobileNav.getByRole("link", { name: "Rules", exact: true })).toHaveAttribute("aria-current", "page");
-    await narrow.goBack();
-    await expect(narrow).toHaveURL(feed);
-  });
-
-  await test.step("an open menu left through one of its links is closed on return", async () => {
-    await openWorkspaceMenu(narrow);
-    await panel.getByRole("link", { name: "Profile", exact: true }).click({ timeout: 15_000 });
-    await expect(narrow).toHaveURL(/\/profile$/);
-    await expect(workspaceMenu(narrow).locator("summary")).toHaveAttribute("aria-current", "page");
-    await narrow.goBack();
-    await expect(narrow).toHaveURL(feed);
-    await expect(menu, "the menu was open again on the way back").not.toHaveAttribute("open");
-  });
-
-  await test.step("an open menu left through Back and Forward is closed on return", async () => {
-    await openWorkspaceMenu(narrow);
-    await narrow.goForward();
-    await expect(narrow).toHaveURL(/\/profile$/);
-    await narrow.goBack();
-    await expect(narrow).toHaveURL(feed);
-    await expect(menu, "the menu was open again on the way back").not.toHaveAttribute("open");
-  });
-
-  await test.step("a Feed refresh leaves an open menu open", async () => {
-    await openWorkspaceMenu(narrow);
-    // The refresh the Feed does when the tab becomes visible again, rather than the 30-second one. Next
-    // asks for it at the page's own URL with a `_rsc` cache-buster appended.
-    const [answer] = await Promise.all([
-      narrow.waitForResponse((response) => response.url().startsWith(`${feed}&_rsc=`), { timeout: 15_000 }),
-      narrow.evaluate(() => {
-        document.dispatchEvent(new Event("visibilitychange"));
-      }),
-    ]);
-    expect(answer.status(), "the refresh didn't reach the server").toBe(200);
-    await expect(menu, "the refresh closed the menu").toHaveAttribute("open");
-  });
-
-  await test.step("with 200% root text the panel stays inside the viewport", async () => {
-    // The browser's text-size setting at its largest step, which is a 32 px root.
-    await narrow.evaluate(() => {
-      document.documentElement.style.fontSize = "32px";
-    });
-    await openWorkspaceMenu(narrow);
-    const box = await panel.boundingBox();
-    if (box === null) throw new Error("the open panel has no box");
-    expect(box.x, "the panel starts off the left of the screen").toBeGreaterThanOrEqual(0);
-    expect(box.y, "the panel starts above the screen").toBeGreaterThanOrEqual(0);
-    expect(box.x + box.width, "the panel runs off the right of the screen").toBeLessThanOrEqual(viewport.width);
-    expect(box.y + box.height, "the panel runs off the bottom of the screen").toBeLessThanOrEqual(viewport.height);
-  });
-
   const noScriptContext = await browser.newContext({ javaScriptEnabled: false, viewport, storageState });
   const noScript = await noScriptContext.newPage();
-  const noScriptMenu = workspaceMenu(noScript);
-  const noScriptPanel = noScriptMenu.locator("div");
 
-  await test.step("without JavaScript, the menu opens and its every control is reachable", async () => {
+  await test.step("without JavaScript, every section and Sign out is reachable", async () => {
     await noScript.goto(feed);
-    await noScriptMenu.locator("summary").click({ timeout: 15_000 });
-    await expect(noScriptMenu, "a tap on the summary didn't open the menu without script").toHaveAttribute("open");
-    for (const label of ["Feed", "Sources", "Rules", "Destinations"]) {
-      await expect(noScript.getByRole("navigation", { name: "Workspace" }).getByRole("link", { name: label, exact: true }))
-        .toBeVisible();
+    const nav = noScript.getByRole("navigation", { name: "Workspace" });
+    for (const label of sections) {
+      await expect(nav.getByRole("link", { name: label, exact: true })).toBeVisible();
     }
-    await noScriptMenu.locator("summary").focus();
-    for (const label of ["Profile", "Model", "Usage", "Settings", "Sign out"]) {
-      await noScript.keyboard.press("Tab");
-      await expect(noScript.locator(":focus"), `${label} is not reachable through More`).toHaveText(label);
-    }
-    for (const label of ["Profile", "Model", "Usage", "Settings"]) {
-      await expect(noScriptPanel.getByRole("link", { name: label, exact: true }), `${label} is not in More`).toBeVisible();
-    }
-    await expect(noScriptPanel.getByRole("button", { name: "Sign out" })).toBeVisible();
+    await expect(nav.getByRole("button", { name: "Sign out" })).toBeVisible();
+    // The sheet's trigger is script, so it is hidden rather than left dead.
+    await expect(noScript.getByRole("button", { name: "Open navigation" })).toBeHidden();
   });
 
-  await test.step("without JavaScript, a tap outside the open menu closes it and opens nothing", async () => {
-    const point = await tapPoint(noScript.getByRole("listitem").first().getByRole("link").first());
-    await openWorkspaceMenu(noScript);
-    await noScript.mouse.click(point.x, point.y);
-    await noScript.waitForTimeout(1_000);
-    expect(noScript.url(), "the tap outside opened the Item under the menu").toBe(feed);
-    await expect(noScriptMenu, "the tap outside didn't close the menu").not.toHaveAttribute("open");
-  });
-
-  await test.step("without JavaScript, Sign out in the menu ends the session", async () => {
-    await openWorkspaceMenu(noScript);
-    await noScriptPanel.getByRole("button", { name: "Sign out" }).click({ timeout: 15_000 });
+  await test.step("without JavaScript, Sign out ends the session", async () => {
+    await noScript.getByRole("navigation", { name: "Workspace" }).getByRole("button", { name: "Sign out" }).click();
     await expect(noScript).toHaveURL(/\/sign-in/);
     await noScriptContext.close();
   });
