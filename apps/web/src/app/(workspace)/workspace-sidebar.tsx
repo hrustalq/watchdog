@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogOut, Plus, Radar, X } from "lucide-react";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Sidebar,
@@ -21,8 +20,8 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { signOut } from "./actions";
-import { nameFromEmail, userMark } from "./workspace-identity";
 import { isCurrentWorkspaceLink, primaryLinks, secondaryLinks, type WorkspaceNavLink } from "./workspace-nav";
+import { SidebarUserMenu } from "./workspace-user-menu";
 
 /** A Workspace's mark before it has an image: its first letter, so the identity card never shows an empty box. */
 function workspaceMark(name: string) {
@@ -97,34 +96,24 @@ export function WorkspaceSidebar({ workspaceName, email }: { workspaceName: stri
         <NavGroup label="Watch" links={primaryLinks} pathname={pathname} onNavigate={closeMobile} />
         <NavGroup label="Account" links={secondaryLinks} pathname={pathname} onNavigate={closeMobile} />
       </SidebarContent>
-      <SidebarFooter className="border-t border-sidebar-border">
+      {/* The footer's account menu is for the desktop rail. In the phone sheet the same menu is in
+          the top bar; nesting a menu inside the sheet's focus trap would close the sheet as it
+          opens. */}
+      <SidebarFooter className="hidden border-t border-sidebar-border md:flex">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton
-              size="lg"
-              tooltip={email}
-              aria-label={`Profile, ${email}`}
-              render={<Link href="/profile" onClick={closeMobile} />}
-              className="h-auto min-h-12 py-1.5 group-data-[collapsible=icon]:justify-center"
-            >
-              <Avatar className="size-7">
-                <AvatarFallback className="text-xs">{userMark(email)}</AvatarFallback>
-              </Avatar>
-              <span className="flex min-w-0 flex-col gap-0.5 group-data-[collapsible=icon]:hidden">
-                <span className="truncate text-sm font-medium">{nameFromEmail(email)}</span>
-                <span className="truncate text-xs text-muted-foreground">{email}</span>
-              </span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <form action={signOut}>
-              <SidebarMenuButton type="submit" tooltip="Sign out" aria-label="Sign out">
-                <LogOut aria-hidden="true" />
-                <span className="group-data-[collapsible=icon]:hidden">Sign out</span>
-              </SidebarMenuButton>
-            </form>
+            <SidebarUserMenu email={email} onNavigate={closeMobile} />
           </SidebarMenuItem>
         </SidebarMenu>
+        {/* The account menu needs script; without it the footer keeps the one action that must work. */}
+        <noscript>
+          <form action={signOut}>
+            <Button type="submit" variant="ghost" className="w-full justify-start">
+              <LogOut aria-hidden="true" />
+              Sign out
+            </Button>
+          </form>
+        </noscript>
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>

@@ -28,7 +28,7 @@ const crumbLink =
 export function PageBar({ trail, className }: { trail: Crumb[]; className?: string }) {
   const current = trail.length - 1;
   return (
-    <Breadcrumb aria-label="Breadcrumb" className={cn("flex h-12 items-center gap-2 border-b px-4 text-sm", className)}>
+    <Breadcrumb aria-label="Breadcrumb" className={cn("flex h-12 items-center gap-2 border-b px-4 text-sm sm:px-6", className)}>
       <BreadcrumbList className="flex-nowrap gap-2">
         {trail.map((crumb, index) => (
           <Fragment key={`${String(index)}-${typeof crumb.label === "string" ? crumb.label : "crumb"}`}>

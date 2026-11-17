@@ -3,9 +3,10 @@ import { describe, expect, it } from "vitest";
 import { Page, PageHeader } from "./page.tsx";
 
 describe("Page", () => {
-  it("defaults to the 48rem column and the page's 8-step rhythm", () => {
+  it("lets a wide screen fill the shell's inset instead of a centred strip", () => {
     const html = renderToStaticMarkup(<Page>Content</Page>);
-    expect(html).toContain("max-w-3xl");
+    expect(html).toContain("max-w-none");
+    expect(html).not.toContain("max-w-3xl");
     expect(html).toContain("gap-8");
     expect(html).toContain("mx-auto");
   });

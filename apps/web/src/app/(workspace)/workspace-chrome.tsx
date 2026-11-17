@@ -3,13 +3,12 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { signOut } from "./actions";
-import { userMark } from "./workspace-identity";
 import { isCurrentWorkspaceLink, primaryLinks, secondaryLinks } from "./workspace-nav";
+import { HeaderUserMenu } from "./workspace-user-menu";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 
 /**
@@ -58,15 +57,7 @@ function MobileHeader({ workspaceName, email }: { workspaceName: string; email: 
     <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-2 md:hidden">
       <SidebarTrigger className="size-9" aria-label="Open navigation" />
       <p className="min-w-0 flex-1 truncate text-sm font-medium">{workspaceName}</p>
-      <Link
-        href="/profile"
-        aria-label={`Profile, ${email}`}
-        className="grid size-9 place-items-center rounded-full outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60"
-      >
-        <Avatar className="size-7">
-          <AvatarFallback className="text-xs">{userMark(email)}</AvatarFallback>
-        </Avatar>
-      </Link>
+      <HeaderUserMenu email={email} />
     </header>
   );
 }
@@ -80,8 +71,8 @@ function MobileHeader({ workspaceName, email }: { workspaceName: string; email: 
 function NoScriptNav({ pathname }: { pathname: string }) {
   return (
     <noscript>
-      {/* The trigger opens a sheet, which is script; without it the button would be a dead control. */}
-      <style>{`[data-slot="sidebar-trigger"] { display: none; }`}</style>
+      {/* These controls open menus or a sheet, which is script; without it they would be dead. */}
+      <style>{`[data-slot="sidebar-trigger"], [data-slot="user-menu-trigger"] { display: none; }`}</style>
       <nav aria-label="Workspace" className="border-b bg-background px-2 py-2 md:hidden">
         <ul className="flex flex-wrap gap-1">
           {[...primaryLinks, ...secondaryLinks].map(({ href, label, icon: Icon }) => {
