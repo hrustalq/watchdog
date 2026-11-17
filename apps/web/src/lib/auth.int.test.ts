@@ -107,9 +107,14 @@ describe("magic link sign-in", () => {
     expect(new Set(raced.map((created) => created.id)).size).toBe(1);
   });
 
-  it("allows only one Workspace per user", async () => {
+  it("lets one account own several Workspaces, each with a name of its own", async () => {
     const { user: dave } = await openApp(await signIn("dave@example.com"));
 
+    // The sign-in made the first one; a second is the point of this issue.
+    await db.insert(workspace).values({ name: "second", ownerUserId: dave.id });
+    expect(await db.select().from(workspace).where(eq(workspace.ownerUserId, dave.id))).toHaveLength(2);
+
+    // What is unique is the name, per owner, so two Workspaces can't answer to one.
     await expect(db.insert(workspace).values({ name: "second", ownerUserId: dave.id })).rejects.toThrow();
   });
 

@@ -6,7 +6,7 @@ const work = { id: "11111111-1111-4111-8111-111111111111", name: "Work", active:
 const markets = { id: "22222222-2222-4222-8222-222222222222", name: "Markets", active: false } as const;
 
 const render = (workspaces: readonly WorkspaceChoice[]) =>
-  renderToStaticMarkup(<WorkspaceSwitcher workspaces={workspaces} onNavigate={() => {}} />);
+  renderToStaticMarkup(<WorkspaceSwitcher workspaces={workspaces} onNavigate={() => undefined} />);
 
 const active = (name: string, id: string): WorkspaceChoice => ({ id, name, active: true });
 

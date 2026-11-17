@@ -400,6 +400,29 @@ describe("deleting a Workspace", () => {
     expect(await db.select().from(user).where(eq(user.id, owner.id))).toHaveLength(1);
   });
 
+  it("lets one of two deletes of the account's last two Workspaces through, and refuses the other", async () => {
+    const owner = await anAccount();
+    const work = await seed(owner.id, "Work");
+    const markets = await seed(owner.id, "Markets");
+
+    // Both transactions lock the owner's row, so the second waits and then sees the last Workspace.
+    const outcomes = await Promise.all([
+      deleteWorkspace(
+        db,
+        { workspace: work.workspace, typedName: "Work" },
+        { encryptionKey: Buffer.alloc(32), boss: sender },
+      ),
+      deleteWorkspace(
+        db,
+        { workspace: markets.workspace, typedName: "Markets" },
+        { encryptionKey: Buffer.alloc(32), boss: sender },
+      ),
+    ]);
+
+    expect(outcomes.sort()).toEqual(["deleted", "last-one"]);
+    expect(await db.select().from(workspace).where(eq(workspace.ownerUserId, owner.id))).toHaveLength(1);
+  });
+
   it("counts a row only inside its own Workspace, so a second account keeps all of its own", async () => {
     const mine = await anAccount();
     await seed(mine.id, "Markets");
@@ -471,8 +494,9 @@ describe("deleting the account", () => {
         {
           encryptionKey: Buffer.alloc(32),
           boss: sender,
-          beforeDelete: async ({ workspace: one }) => {
+          beforeDelete: ({ workspace: one }) => {
             stepped.push(one.name);
+            return Promise.resolve();
           },
         },
       ),
