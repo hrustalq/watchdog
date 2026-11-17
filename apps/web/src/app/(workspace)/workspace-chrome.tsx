@@ -3,157 +3,111 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  ChartNoAxesColumn,
-  Cpu,
-  Inbox,
-  ListFilter,
-  Rss,
-  Send,
-  Settings2,
-  UserRound,
-  type LucideIcon,
-} from "lucide-react";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button, buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { signOut } from "./actions";
-import { WorkspaceMenu } from "./workspace-menu";
+import { userMark } from "./workspace-identity";
+import { isCurrentWorkspaceLink, primaryLinks, secondaryLinks } from "./workspace-nav";
+import { WorkspaceSidebar } from "./workspace-sidebar";
 
-const primaryLinks = [
-  { href: "/", label: "Feed", icon: Inbox },
-  { href: "/sources", label: "Sources", icon: Rss },
-  { href: "/rules", label: "Rules", icon: ListFilter },
-  { href: "/destinations", label: "Destinations", icon: Send },
-] as const;
-
-const secondaryLinks = [
-  { href: "/profile", label: "Profile", icon: UserRound },
-  { href: "/model", label: "Model", icon: Cpu },
-  { href: "/usage", label: "Usage", icon: ChartNoAxesColumn },
-  { href: "/settings", label: "Settings", icon: Settings2 },
-] as const;
-
-const links = [...primaryLinks, ...secondaryLinks];
-
-export function isCurrentWorkspaceLink(pathname: string, href: string) {
-  if (href === "/") return pathname === "/" || pathname.startsWith("/items/");
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
-
+/**
+ * The Workspace shell: one persistent sidebar and the screen it sits beside. The sidebar owns the
+ * navigation and the account; the inset owns the page's one `main` landmark, so a screen's `Page`
+ * is a column inside it rather than a second main. The top bar exists only below `md`, where the
+ * sidebar is a sheet and needs a trigger.
+ */
 export function WorkspaceChrome({
   workspaceName,
   email,
+  defaultOpen,
   children,
 }: {
   workspaceName: string;
   email: string;
+  defaultOpen: boolean;
   children: ReactNode;
 }) {
   const pathname = usePathname();
-  const moreActive = secondaryLinks.some(({ href }) => isCurrentWorkspaceLink(pathname, href));
-
   return (
-    <div className="flex min-h-dvh flex-1 flex-col pb-[calc(4rem+1px+env(safe-area-inset-bottom))] lg:pb-0">
-      <header className="relative flex h-12 shrink-0 items-center justify-between gap-4 border-b px-4">
-        <p className="flex min-w-0 flex-1 items-baseline gap-2 lg:max-w-56 xl:max-w-none">
-          <span className="hidden text-xs font-medium tracking-[0.01em] text-muted-foreground xl:inline">
-            Workspace
-          </span>
-          <Link
-            href="/"
-            className="truncate rounded-sm text-title outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60"
-          >
-            {workspaceName}
-          </Link>
-        </p>
-        <span className="hidden max-w-48 truncate text-sm text-muted-foreground xl:inline">{email}</span>
-        <nav aria-label="Workspace" className="hidden shrink-0 items-center lg:flex">
-          {links.map((link) => (
-            <DesktopLink key={link.href} pathname={pathname} {...link} />
-          ))}
-        </nav>
-        <form action={signOut} className="hidden shrink-0 lg:block">
-          <Button type="submit" variant="outline">
-            Sign out
-          </Button>
-        </form>
-      </header>
-      {children}
-      <nav
-        aria-label="Workspace"
-        className="fixed inset-x-0 bottom-0 z-40 border-t bg-background pb-[env(safe-area-inset-bottom)] lg:hidden"
+    <TooltipProvider>
+      <SidebarProvider defaultOpen={defaultOpen}>
+        <a
+          href="#workspace-main"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:border focus:bg-background focus:px-3 focus:py-2 focus:text-sm focus:shadow-md focus:outline-hidden focus:ring-3 focus:ring-ring/60"
+        >
+          Skip to content
+        </a>
+        <WorkspaceSidebar workspaceName={workspaceName} email={email} />
+        {/* min-w-0: a flex item's min-width is auto, so without it the inset refuses to shrink below
+            the widest row and pushes the page past the viewport at tablet widths. */}
+        <SidebarInset id="workspace-main" tabIndex={-1} className="min-w-0">
+          <MobileHeader workspaceName={workspaceName} email={email} />
+          <NoScriptNav pathname={pathname} />
+          {children}
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
+  );
+}
+
+/** The phone's 48px bar: the only place the sheet's trigger can live, since the sidebar is closed. */
+function MobileHeader({ workspaceName, email }: { workspaceName: string; email: string }) {
+  return (
+    <header className="sticky top-0 z-20 flex h-12 shrink-0 items-center gap-2 border-b bg-background px-2 md:hidden">
+      <SidebarTrigger className="size-9" aria-label="Open navigation" />
+      <p className="min-w-0 flex-1 truncate text-sm font-medium">{workspaceName}</p>
+      <Link
+        href="/profile"
+        aria-label={`Profile, ${email}`}
+        className="grid size-9 place-items-center rounded-full outline-hidden focus-visible:ring-3 focus-visible:ring-ring/60"
       >
-        <ul className="grid h-16 grid-cols-[1fr_1fr_1fr_1.4fr_1fr]">
-          {primaryLinks.map((link) => (
-            <li key={link.href} className="min-w-0">
-              <MobileLink pathname={pathname} {...link} />
-            </li>
-          ))}
-          <li className="min-w-0">
-            <WorkspaceMenu key={pathname} active={moreActive}>
-              {secondaryLinks.map(({ href, label, icon: Icon }) => (
+        <Avatar className="size-7">
+          <AvatarFallback className="text-xs">{userMark(email)}</AvatarFallback>
+        </Avatar>
+      </Link>
+    </header>
+  );
+}
+
+/**
+ * Navigation when JavaScript is off. The desktop sidebar is server-rendered and still works, but
+ * below `md` the sidebar is a sheet whose trigger needs script, so without this row a phone could
+ * open the app and never leave the screen. A `<noscript>` keeps the two navigation models from
+ * appearing together.
+ */
+function NoScriptNav({ pathname }: { pathname: string }) {
+  return (
+    <noscript>
+      {/* The trigger opens a sheet, which is script; without it the button would be a dead control. */}
+      <style>{`[data-slot="sidebar-trigger"] { display: none; }`}</style>
+      <nav aria-label="Workspace" className="border-b bg-background px-2 py-2 md:hidden">
+        <ul className="flex flex-wrap gap-1">
+          {[...primaryLinks, ...secondaryLinks].map(({ href, label, icon: Icon }) => {
+            const current = isCurrentWorkspaceLink(pathname, href);
+            return (
+              <li key={href}>
                 <Link
-                  key={href}
                   href={href}
-                  aria-current={isCurrentWorkspaceLink(pathname, href) ? "page" : undefined}
-                  className={buttonVariants({
-                    variant: isCurrentWorkspaceLink(pathname, href) ? "secondary" : "ghost",
-                    className: "w-full justify-start",
-                  })}
+                  aria-current={current ? "page" : undefined}
+                  className={buttonVariants({ variant: current ? "secondary" : "ghost", size: "sm" })}
                 >
                   <Icon aria-hidden="true" />
                   {label}
                 </Link>
-              ))}
-              <form action={signOut} className="mt-1 border-t pt-1">
-                <Button type="submit" variant="ghost" className="w-full justify-start">
-                  Sign out
-                </Button>
-              </form>
-            </WorkspaceMenu>
+              </li>
+            );
+          })}
+          <li>
+            <form action={signOut}>
+              <Button type="submit" variant="ghost" size="sm">
+                Sign out
+              </Button>
+            </form>
           </li>
         </ul>
       </nav>
-    </div>
-  );
-}
-
-function DesktopLink({ pathname, href, label }: { pathname: string; href: string; label: string; icon: LucideIcon }) {
-  const current = isCurrentWorkspaceLink(pathname, href);
-  return (
-    <Link
-      href={href}
-      aria-current={current ? "page" : undefined}
-      className={buttonVariants({ variant: current ? "secondary" : "ghost" })}
-    >
-      {label}
-    </Link>
-  );
-}
-
-function MobileLink({
-  pathname,
-  href,
-  label,
-  icon: Icon,
-}: {
-  pathname: string;
-  href: string;
-  label: string;
-  icon: LucideIcon;
-}) {
-  const current = isCurrentWorkspaceLink(pathname, href);
-  return (
-    <Link
-      href={href}
-      aria-current={current ? "page" : undefined}
-      className={cn(
-        "flex h-16 min-w-0 flex-col items-center justify-center gap-1 px-1 text-xs font-medium outline-hidden focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/60",
-        current ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-      )}
-    >
-      <Icon aria-hidden="true" className="size-5" />
-      <span className="max-w-full truncate">{label}</span>
-    </Link>
+    </noscript>
   );
 }

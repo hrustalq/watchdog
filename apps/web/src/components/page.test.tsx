@@ -10,6 +10,10 @@ describe("Page", () => {
     expect(html).toContain("mx-auto");
   });
 
+  it("stays a column, because the Workspace inset already owns the page's main landmark", () => {
+    expect(renderToStaticMarkup(<Page>Content</Page>)).not.toContain("<main");
+  });
+
   it("narrows to 42rem for a form and keeps a caller's flex fill", () => {
     const html = renderToStaticMarkup(
       <Page width="narrow" gap={6} className="flex-1">
