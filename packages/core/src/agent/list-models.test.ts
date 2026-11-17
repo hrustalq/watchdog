@@ -166,6 +166,28 @@ describe("listing a provider's models", () => {
       expect(result).toEqual({ ok: false, reason: "bad-response" });
     });
 
+    it("names a rate limit and a provider error, rather than blaming the list's shape", async () => {
+      const limited = fakeFetch(() => json({}, 429));
+      const broken = fakeFetch(() => json({}, 503));
+
+      await expect(
+        listModels({ providerType: "openai-compatible", baseUrl: "https://llm.test/v1" }, "k", limited.fetch),
+      ).resolves.toEqual({ ok: false, reason: "rate-limited" });
+      await expect(
+        listModels({ providerType: "openai-compatible", baseUrl: "https://llm.test/v1" }, "k", broken.fetch),
+      ).resolves.toEqual({ ok: false, reason: "provider-error" });
+    });
+
+    it("drops a name the Model form would refuse, such as one holding a NUL", async () => {
+      const { fetch } = fakeFetch(() =>
+        json({ data: [{ id: "ok-model" }, { id: `bad${String.fromCharCode(0)}name` }] }),
+      );
+
+      const result = await listModels({ providerType: "openai-compatible", baseUrl: "https://llm.test/v1" }, "k", fetch);
+
+      expect(result.ok && ids(result.models)).toEqual(["ok-model"]);
+    });
+
     it("says blocked when the egress guard refused the address", async () => {
       const { fetch } = fakeFetch(() => {
         throw new EgressBlockedError("llm.test", "it resolves to the blocked address 10.0.0.1");

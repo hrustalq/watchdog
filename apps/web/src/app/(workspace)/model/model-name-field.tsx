@@ -165,6 +165,25 @@ export function ModelNameField({
     if (error !== undefined) inputRef.current?.focus();
   }, [error]);
 
+  // The ids belong to one address, so changing the provider or base URL drops them: otherwise the
+  // last provider's models stay selectable for a model the save would then describe differently.
+  useEffect(() => {
+    const form = inputRef.current?.form;
+    if (form === null || form === undefined) return;
+    const reset = (event: Event) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.id === "provider" || target.id === "base-url")) {
+        setListed({ kind: "idle" });
+      }
+    };
+    form.addEventListener("change", reset);
+    form.addEventListener("input", reset);
+    return () => {
+      form.removeEventListener("change", reset);
+      form.removeEventListener("input", reset);
+    };
+  }, []);
+
   function posted(name: string) {
     const form = inputRef.current?.form;
     const data = form === null || form === undefined ? undefined : new FormData(form);
@@ -174,16 +193,21 @@ export function ModelNameField({
 
   async function load() {
     setListed({ kind: "loading" });
-    const outcome = await listModelsAction({
-      providerType: posted("providerType"),
-      baseUrl: posted("baseUrl"),
-      apiKey: posted("apiKey"),
-    });
-    setListed(
-      outcome.ok
-        ? { kind: "ready", models: outcome.models.map(({ id }) => id) }
-        : { kind: "failed", reason: outcome.reason },
-    );
+    try {
+      const outcome = await listModelsAction({
+        providerType: posted("providerType"),
+        baseUrl: posted("baseUrl"),
+        apiKey: posted("apiKey"),
+      });
+      setListed(
+        outcome.ok
+          ? { kind: "ready", models: outcome.models.map(({ id }) => id) }
+          : { kind: "failed", reason: outcome.reason },
+      );
+    } catch {
+      // A refused session or a failed read mustn't leave the field saying "Loading…" for good.
+      setListed({ kind: "failed", reason: "request-failed" });
+    }
   }
 
   function opened(open: boolean) {

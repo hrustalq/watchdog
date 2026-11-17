@@ -7,7 +7,8 @@ import { modelListFailureMessage } from "./model-list-words.ts";
 /**
  * The field as the screen shows it. The picker's popup is portalled and only open on interaction, so
  * these assertions are about the parts a person always sees: the box, its button, its status line and
- * a refusal. The loaded ids themselves are covered by the core's list tests and the browser check.
+ * a refusal. The ids a provider returns are covered by the core's list tests, and the open, pick and
+ * fill path was walked against the dev server; no spec here drives that popup.
  */
 function field(listed: ListedModels, error?: string) {
   return renderToStaticMarkup(

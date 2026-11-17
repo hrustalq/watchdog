@@ -21,11 +21,11 @@ const encryptionKey = Buffer.alloc(32, 7);
 const storedKey = "sk-stored-key";
 const allow = [{ type: "subnet", address: "127.0.0.1", prefix: 32, family: "ipv4" }] as const;
 
-/** A provider that lists two models and keeps the Authorization header each request carried. */
+/** A provider that lists two models and keeps the credential headers each request carried. */
 async function modelServer() {
-  const seen: (string | undefined)[] = [];
+  const seen: [string | undefined, string | string[] | undefined][] = [];
   const server = createServer((request, response) => {
-    seen.push(request.headers.authorization);
+    seen.push([request.headers.authorization, request.headers["x-api-key"]]);
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify({ data: [{ id: "gpt-5" }, { id: "gpt-5-mini" }] }));
   });
@@ -103,7 +103,7 @@ describe("the Model screen's model list", () => {
       });
 
       expect(outcome).toEqual({ ok: true, models: [{ id: "gpt-5" }, { id: "gpt-5-mini" }] });
-      expect(server.seen).toEqual([`Bearer ${storedKey}`]);
+      expect(server.seen).toEqual([[`Bearer ${storedKey}`, undefined]]);
       // Listing isn't an Agent call: no meter row, and the saved model is untouched.
       const calls = await db.select().from(agentCall).where(eq(agentCall.workspaceId, workspaceId));
       expect(calls).toEqual([]);
@@ -128,7 +128,7 @@ describe("the Model screen's model list", () => {
         apiKey: "",
       });
       expect(untyped.ok).toBe(true);
-      expect(other.seen).toEqual([undefined]);
+      expect(other.seen).toEqual([[undefined, undefined]]);
 
       const typed = await listModelChoices(db, deps(), workspaceId, {
         providerType: "openai-compatible",
@@ -136,7 +136,7 @@ describe("the Model screen's model list", () => {
         apiKey: "sk-typed",
       });
       expect(typed.ok).toBe(true);
-      expect(other.seen).toEqual([undefined, "Bearer sk-typed"]);
+      expect(other.seen).toEqual([[undefined, undefined], ["Bearer sk-typed", undefined]]);
       expect(saved.seen).toEqual([]);
     } finally {
       await saved.stop();
@@ -156,7 +156,7 @@ describe("the Model screen's model list", () => {
         apiKey: "sk-typed",
       });
 
-      expect(server.seen).toEqual(["Bearer sk-typed"]);
+      expect(server.seen).toEqual([["Bearer sk-typed", undefined]]);
     } finally {
       await server.stop();
     }
@@ -196,7 +196,26 @@ describe("the Model screen's model list", () => {
       );
 
       expect(outcome.ok).toBe(true);
-      expect(server.seen).toEqual(["Bearer sk-typed"]);
+      expect(server.seen).toEqual([["Bearer sk-typed", undefined]]);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it("withholds the saved key when only the provider type changes, because another family takes another header", async () => {
+    const workspaceId = await newWorkspace();
+    const server = await modelServer();
+    try {
+      await saveModelAt(workspaceId, server.baseUrl, storedKey);
+
+      const outcome = await listModelChoices(db, deps(), workspaceId, {
+        providerType: "anthropic",
+        baseUrl: server.baseUrl,
+        apiKey: "",
+      });
+
+      expect(outcome.ok).toBe(true);
+      expect(server.seen).toEqual([[undefined, undefined]]);
     } finally {
       await server.stop();
     }

@@ -11,7 +11,14 @@ export const maxListedModels = 1000;
 const maxModelIdLength = 200;
 
 /** Why a list didn't load, as a code the screen turns into a sentence. */
-export type ModelListFailure = "unauthorized" | "blocked" | "unreachable" | "no-endpoint" | "bad-response";
+export type ModelListFailure =
+  | "unauthorized"
+  | "rate-limited"
+  | "provider-error"
+  | "blocked"
+  | "unreachable"
+  | "no-endpoint"
+  | "bad-response";
 
 export type ModelListResult = { ok: true; models: { id: string }[] } | { ok: false; reason: ModelListFailure };
 
@@ -47,6 +54,9 @@ const failed = (reason: ModelListFailure): ModelListResult => ({ ok: false, reas
 function failureForStatus(status: number): ModelListFailure {
   if (status === 401 || status === 403) return "unauthorized";
   if (status === 404 || status === 405 || status === 501) return "no-endpoint";
+  // A host asking us to slow down, or one that broke, isn't a malformed list: say what it is.
+  if (status === 429) return "rate-limited";
+  if (status >= 500) return "provider-error";
   return "bad-response";
 }
 
@@ -61,7 +71,11 @@ async function getJson(fetch: AgentFetch, url: URL, headers: Record<string, stri
   } catch (error) {
     return { ok: false, reason: error instanceof EgressBlockedError ? "blocked" : "unreachable" };
   }
-  if (!response.ok) return { ok: false, reason: failureForStatus(response.status) };
+  if (!response.ok) {
+    // The guard holds a skipped body's socket until the timeout, so release it.
+    await response.body?.cancel();
+    return { ok: false, reason: failureForStatus(response.status) };
+  }
   try {
     const body: unknown = await response.json();
     return { ok: true, body };
@@ -70,10 +84,15 @@ async function getJson(fetch: AgentFetch, url: URL, headers: Record<string, stri
   }
 }
 
-/** A name the Model form could save: trimmed, non-empty, and no longer than the field's limit. */
+/**
+ * A name the Model form could save: trimmed, non-empty, and no longer than the field's limit. A NUL
+ * or half a surrogate pair is refused, as the form refuses it, so the picker never offers a name the
+ * save would then reject.
+ */
 function usableId(name: string) {
   const id = name.trim();
-  return id === "" || id.length > maxModelIdLength ? undefined : id;
+  if (id === "" || id.length > maxModelIdLength || id.includes("\0") || !id.isWellFormed()) return undefined;
+  return id;
 }
 
 /** Fills the list to its bound, then reads, deduplicates and sorts it once. */
@@ -105,7 +124,12 @@ async function openAiCompatibleModels(
   if (!fetched.ok) return failed(fetched.reason);
   const parsed = dataPage.safeParse(fetched.body);
   if (!parsed.success) return failed("bad-response");
-  return finish(parsed.data.data.map(({ id }) => id));
+  const ids: string[] = [];
+  collect(
+    ids,
+    parsed.data.data.map(({ id }) => id),
+  );
+  return finish(ids);
 }
 
 /** Anthropic pages with `after_id` and `has_more`, so the bound is met page by page. */
