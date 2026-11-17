@@ -1051,6 +1051,17 @@ test("a second Workspace starts empty, switches from the sidebar, and deletes al
     await expect(page.getByRole("listitem").filter({ hasText: "Markets" }).getByText("Active", { exact: true })).toBeVisible();
   });
 
+  await test.step("renaming it updates the sidebar's switcher", async () => {
+    const row = page
+      .getByRole("listitem")
+      .filter({ has: page.getByRole("heading", { name: "Markets", level: 3, exact: true }) });
+    await row.locator("summary", { hasText: "Rename" }).click();
+    await row.getByLabel("New name").fill("Markets desk");
+    await row.getByRole("button", { name: "Rename Workspace" }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Workspace renamed." })).toBeVisible();
+    await expect(sidebar.getByLabel("Workspace Markets desk. Switch Workspace")).toBeVisible();
+  });
+
   await test.step("the new Workspace's Feed is empty, with none of the first Workspace's Items", async () => {
     await page.goto(feed);
     await expect(page.getByRole("heading", { name: "Nothing is being watched yet" })).toBeVisible();
@@ -1061,7 +1072,7 @@ test("a second Workspace starts empty, switches from the sidebar, and deletes al
 
   // The switcher is the disclosure at the top of the sidebar: its summary opens the list, and each
   // other Workspace is a button that posts the switch.
-  const switcher = sidebar.getByLabel("Workspace Markets. Switch Workspace");
+  const switcher = sidebar.getByLabel("Workspace Markets desk. Switch Workspace");
 
   await test.step("the switcher brings the first Workspace back, and a reload keeps it", async () => {
     await switcher.click();
@@ -1078,12 +1089,12 @@ test("a second Workspace starts empty, switches from the sidebar, and deletes al
     await page.goto(new URL("/workspaces", page.url()).href);
     const row = page
       .getByRole("listitem")
-      .filter({ has: page.getByRole("heading", { name: "Markets", level: 3, exact: true }) });
+      .filter({ has: page.getByRole("heading", { name: "Markets desk", level: 3, exact: true }) });
     await row.locator("summary", { hasText: "Delete" }).click();
-    await row.getByLabel("Type Markets to confirm").fill("Markets");
+    await row.getByLabel("Type Markets desk to confirm").fill("Markets desk");
     await row.getByRole("button", { name: "Delete Workspace" }).click();
     await expect(page.getByRole("status").filter({ hasText: "Workspace deleted." })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Markets", level: 3, exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Markets desk", level: 3, exact: true })).toHaveCount(0);
 
     // The account is still signed in, and the first Workspace still holds its Feed.
     await page.goto(feed);
