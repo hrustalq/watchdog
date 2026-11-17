@@ -918,10 +918,10 @@ test("the guided setup takes a Source from the sidebar to a finished watch witho
     await expect(page.getByRole("heading", { name: "PostgreSQL news is watching" })).toBeVisible();
     await expect(page.getByText("Guided inbox can receive now.")).toBeVisible();
     await expect(page.getByText("An Action alerts you when Importance is at least 4.")).toBeVisible();
-    // Both saves are ordinary rows the other screens own, not the wizard's own state.
-    await page.goto(new URL("/rules", page.url()).href);
-    await expect(page.getByRole("link", { name: "Importance 4 alerts", exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Bug reports", exact: true })).toBeVisible();
+    // The Rules screen streams its lists behind Suspense, so read them in the JS-enabled page.
+    await signedIn.goto(new URL("/rules", signedIn.url()).href);
+    await expect(signedIn.getByRole("link", { name: "Importance 4 alerts", exact: true })).toBeVisible();
+    await expect(signedIn.getByRole("link", { name: "Bug reports", exact: true })).toBeVisible();
   });
 
   await context.close();
