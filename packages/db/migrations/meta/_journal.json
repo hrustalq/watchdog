@@ -232,6 +232,13 @@
       "when": 1794935392772,
       "tag": "0032_typical_mandarin",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1794942116166,
+      "tag": "0033_medical_zuras",
+      "breakpoints": true
     }
   ]
 }

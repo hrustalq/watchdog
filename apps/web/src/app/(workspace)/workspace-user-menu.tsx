@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronsUpDown, LogOut, UserRound } from "lucide-react";
+import { ChevronsUpDown, CircleUserRound, LogOut, UserRound } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -103,6 +103,14 @@ function UserMenuContent({
         >
           <UserRound aria-hidden="true" />
           Profile
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          render={
+            onNavigate === undefined ? <Link href="/account" /> : <Link href="/account" onClick={onNavigate} />
+          }
+        >
+          <CircleUserRound aria-hidden="true" />
+          Account
         </DropdownMenuItem>
       </DropdownMenuGroup>
       <DropdownMenuSeparator />

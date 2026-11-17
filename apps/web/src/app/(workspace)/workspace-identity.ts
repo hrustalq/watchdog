@@ -9,3 +9,9 @@ export function nameFromEmail(email: string) {
   const at = email.indexOf("@");
   return at > 0 ? email.slice(0, at) : email;
 }
+
+/** A Workspace's mark before it has an image: its first letter, so the card never shows an empty box. */
+export function workspaceMark(name: string) {
+  const letter = name.trim().slice(0, 1).toUpperCase();
+  return letter === "" ? "W" : letter;
+}

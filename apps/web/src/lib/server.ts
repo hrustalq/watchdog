@@ -13,6 +13,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { cache } from "react";
 import { createAuth, enabledProviders } from "./auth.ts";
+import { activeWorkspaceId } from "./active-workspace.ts";
 import { isInstanceAdmin } from "./instance.ts";
 import { pathHeader, returnTo, signInPath } from "./return-to.ts";
 import { workspaceFor } from "./workspace.ts";
@@ -135,7 +136,7 @@ export const requireWorkspace = cache(async () => {
   const session = await auth.api.getSession({ headers: requestHeaders });
   if (session === null) redirect(signInPath(returnTo(requestHeaders.get(pathHeader))));
   const [workspace, admin] = await Promise.all([
-    workspaceFor(db, session.user),
+    workspaceFor(db, session.user, await activeWorkspaceId()),
     mode === "self-hosted" && isInstanceAdmin(db, session.user),
   ]);
   return { user: session.user, workspace, admin };

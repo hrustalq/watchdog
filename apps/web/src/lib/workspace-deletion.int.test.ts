@@ -1,6 +1,7 @@
-// Deleting a Workspace from Settings: the account row goes, every child table cascades, and a
-// self-hosted install whose admin went is unclaimed again (docs: Security and privacy, "Deleting and
-// exporting a Workspace").
+// Deleting one Workspace, and deleting the account that owns them all (docs: Security and privacy,
+// "Deleting and exporting a Workspace"): the rows go through the cascade chain, the pre-delete step
+// sees each Workspace's Telegram session while it is still there, and a self-hosted install whose
+// admin went is unclaimed again.
 import {
   action,
   actionDestination,
@@ -40,7 +41,13 @@ import { telegramRevokeQueue } from "@watchdog/core";
 import { PgBoss } from "pg-boss";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { setupTokenValid, setupUrl } from "./instance.ts";
-import { afterDeletion, type BeforeDelete, deleteWorkspace, logoutTelegramSession } from "./workspace-deletion.ts";
+import {
+  afterDeletion,
+  type BeforeDelete,
+  deleteAccount,
+  deleteWorkspace,
+  logoutTelegramSession,
+} from "./workspace-deletion.ts";
 
 function present<T>(value: T | undefined): T {
   if (value === undefined) throw new Error("Expected a value");
@@ -81,23 +88,23 @@ describe("deleting a Workspace", () => {
     await db.execute(sql`delete from pgboss.job where name = ${telegramRevokeQueue}`);
   });
 
-  /** A Workspace with a row in every table that belongs to one, and the ids the counts read by. */
-  async function seed() {
-    const ownerId = crypto.randomUUID();
-    await db.insert(user).values({ id: ownerId, name: "Owner", email: `${ownerId}@example.com` });
+  /** An account, which owns every Workspace the test makes for it. */
+  async function anAccount() {
+    const id = crypto.randomUUID();
+    await db.insert(user).values({ id, name: "Owner", email: `${id}@example.com` });
     await db.insert(session).values({
       id: crypto.randomUUID(),
       token: crypto.randomUUID(),
       expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-      userId: ownerId,
+      userId: id,
     });
-    await db.insert(account).values({
-      id: crypto.randomUUID(),
-      accountId: ownerId,
-      providerId: "credential",
-      userId: ownerId,
-    });
-    const [ws] = await db.insert(workspace).values({ name: "Morning coffee", ownerUserId: ownerId }).returning();
+    await db.insert(account).values({ id: crypto.randomUUID(), accountId: id, providerId: "credential", userId: id });
+    return { id, email: `${id}@example.com` };
+  }
+
+  /** A Workspace with a row in every table that belongs to one, and the ids the counts read by. */
+  async function seed(ownerId: string, name = "Morning coffee") {
+    const [ws] = await db.insert(workspace).values({ name, ownerUserId: ownerId }).returning();
     const workspaceId = present(ws).id;
 
     const [rule] = await db
@@ -168,7 +175,12 @@ describe("deleting a Workspace", () => {
     const when = { field: "title", op: "is", value: "One" };
     const [alert] = await db
       .insert(action)
-      .values({ workspaceId, name: "ones", kind: "alert", definition: { action: "ones", when, kind: "alert", destinations: [destinationId] } })
+      .values({
+        workspaceId,
+        name: "ones",
+        kind: "alert",
+        definition: { action: "ones", when, kind: "alert", destinations: [destinationId] },
+      })
       .returning();
     const [digest] = await db
       .insert(action)
@@ -186,17 +198,17 @@ describe("deleting a Workspace", () => {
     await db.insert(healthAlertDestination).values({ workspaceId, destinationId });
     await db.insert(sentMessage).values({ workspaceId, destinationId, type: "telegram", sentAt: new Date() });
     await db.insert(sourceAlert).values({ workspaceId, sourceId, kind: "failing", error: "The feed answered 500" });
-    await db.insert(telegramLogin).values({ workspaceId, phone: "+10000000000" });
+    await db.insert(telegramLogin).values({ workspaceId, phone: "+100****0000" });
     await db.insert(telegramSession).values({ workspaceId, account: "Me (@me)", secretCiphertext: "ciphertext" });
 
-    return { workspace: { id: workspaceId, name: "Morning coffee", ownerUserId: ownerId }, itemId };
+    return { workspace: { id: workspaceId, name, ownerUserId: ownerId }, itemId };
   }
 
   /**
    * How many rows belong to that Workspace in each table. The child tables are counted through their
    * own foreign keys, not through `workspace_id`, because that is what the cascade does.
    */
-  async function counts(ids: { workspace: { id: string; ownerUserId: string }; itemId: string }) {
+  async function counts(ids: { workspace: { id: string }; itemId: string }) {
     const { rows } = await db.$client.query<{ table: string; rows: number }>(
       `select 'workspace' as table, count(*)::int as rows from workspace where id = $1
         union all select 'source', count(*)::int from source where workspace_id = $1
@@ -222,10 +234,8 @@ describe("deleting a Workspace", () => {
         union all select 'sent_message', count(*)::int from sent_message where workspace_id = $1
         union all select 'source_alert', count(*)::int from source_alert where workspace_id = $1
         union all select 'telegram_login', count(*)::int from telegram_login where workspace_id = $1
-        union all select 'telegram_session', count(*)::int from telegram_session where workspace_id = $1
-        union all select 'session', count(*)::int from session where user_id = $3
-        union all select 'account', count(*)::int from account where user_id = $3`,
-      [ids.workspace.id, ids.itemId, ids.workspace.ownerUserId],
+        union all select 'telegram_session', count(*)::int from telegram_session where workspace_id = $1`,
+      [ids.workspace.id, ids.itemId],
     );
     return Object.fromEntries(rows.map((row) => [row.table, row.rows]));
   }
@@ -257,13 +267,14 @@ describe("deleting a Workspace", () => {
     source_alert: 1,
     telegram_login: 1,
     telegram_session: 1,
-    session: 1,
-    account: 1,
   };
   const nothing = Object.fromEntries(Object.keys(seeded).map((table) => [table, 0]));
 
-  it("deletes the account and every child row, after the pre-delete step has seen them", async () => {
-    const ids = await seed();
+  it("deletes the Workspace and every child row, and leaves the account signed in", async () => {
+    const owner = await anAccount();
+    // The account has a second Workspace, or deleting this one would be its last and refused.
+    const kept = await seed(owner.id, "Markets");
+    const ids = await seed(owner.id);
     const before = await counts(ids);
     expect(before).toEqual(seeded);
 
@@ -285,11 +296,15 @@ describe("deleting a Workspace", () => {
     expect(outcome).toBe("deleted");
     expect(seen).toEqual([before]);
     expect(await counts(ids)).toEqual(nothing);
-    expect(await db.select().from(user).where(eq(user.id, ids.workspace.ownerUserId))).toEqual([]);
+    // The account itself stays, with its other Workspace and its session.
+    expect(await db.select().from(user).where(eq(user.id, owner.id))).toHaveLength(1);
+    expect(await counts(kept)).toEqual(seeded);
   });
 
   it("queues the Workspace's Telegram session logout with its secret, before the row cascades away", async () => {
-    const ids = await seed();
+    const owner = await anAccount();
+    await seed(owner.id, "Markets");
+    const ids = await seed(owner.id);
 
     expect(
       await deleteWorkspace(
@@ -306,7 +321,9 @@ describe("deleting a Workspace", () => {
   });
 
   it("queues no logout for a Workspace with no session, or one nobody can read", async () => {
-    const none = await seed();
+    const owner = await anAccount();
+    await seed(owner.id, "Markets");
+    const none = await seed(owner.id);
     await db.delete(telegramSession).where(eq(telegramSession.workspaceId, none.workspace.id));
     await deleteWorkspace(
       db,
@@ -317,7 +334,7 @@ describe("deleting a Workspace", () => {
 
     // A session stored under another WATCHDOG_ENCRYPTION_KEY: no retry could log it out, so the
     // delete queues nothing rather than a job that can only fail.
-    const unreadable = await seed();
+    const unreadable = await seed(owner.id);
     await db
       .update(telegramSession)
       .set({ unreadableAt: new Date() })
@@ -333,7 +350,9 @@ describe("deleting a Workspace", () => {
   });
 
   it("deletes nothing when the typed name isn't the Workspace's", async () => {
-    const ids = await seed();
+    const owner = await anAccount();
+    await seed(owner.id, "Markets");
+    const ids = await seed(owner.id);
     const before = await counts(ids);
     let stepped = false;
 
@@ -354,20 +373,162 @@ describe("deleting a Workspace", () => {
     expect(stepped).toBe(false);
     // Counted table by table, so a refusal that deleted a part of it would show.
     expect(await counts(ids)).toEqual(before);
-    expect(await db.select().from(user).where(eq(user.id, ids.workspace.ownerUserId))).toHaveLength(1);
+  });
+
+  it("refuses the account's last Workspace, which needs account deletion instead", async () => {
+    const owner = await anAccount();
+    const only = await seed(owner.id);
+    const before = await counts(only);
+    let stepped = false;
+
+    const outcome = await deleteWorkspace(
+      db,
+      { workspace: only.workspace, typedName: "Morning coffee" },
+      {
+        encryptionKey: Buffer.alloc(32),
+        boss: sender,
+        beforeDelete: () => {
+          stepped = true;
+          return Promise.resolve();
+        },
+      },
+    );
+
+    expect(outcome).toBe("last-one");
+    expect(stepped).toBe(false);
+    expect(await counts(only)).toEqual(before);
+    expect(await db.select().from(user).where(eq(user.id, owner.id))).toHaveLength(1);
+  });
+
+  it("lets one of two deletes of the account's last two Workspaces through, and refuses the other", async () => {
+    const owner = await anAccount();
+    const work = await seed(owner.id, "Work");
+    const markets = await seed(owner.id, "Markets");
+
+    // Both transactions lock the owner's row, so the second waits and then sees the last Workspace.
+    const outcomes = await Promise.all([
+      deleteWorkspace(
+        db,
+        { workspace: work.workspace, typedName: "Work" },
+        { encryptionKey: Buffer.alloc(32), boss: sender },
+      ),
+      deleteWorkspace(
+        db,
+        { workspace: markets.workspace, typedName: "Markets" },
+        { encryptionKey: Buffer.alloc(32), boss: sender },
+      ),
+    ]);
+
+    expect(outcomes.sort()).toEqual(["deleted", "last-one"]);
+    expect(await db.select().from(workspace).where(eq(workspace.ownerUserId, owner.id))).toHaveLength(1);
+  });
+
+  it("counts a row only inside its own Workspace, so a second account keeps all of its own", async () => {
+    const mine = await anAccount();
+    await seed(mine.id, "Markets");
+    const gone = await seed(mine.id);
+    const theirs = await seed((await anAccount()).id);
+
+    await deleteWorkspace(
+      db,
+      { workspace: gone.workspace, typedName: "Morning coffee" },
+      { encryptionKey: Buffer.alloc(32), boss: sender },
+    );
+
+    expect(await counts(gone)).toEqual(nothing);
+    expect(await counts(theirs)).toEqual(seeded);
+    // The other Workspace's Log row is still there, which says the cascade is scoped by the rows' own keys.
+    expect(await db.select({ id: itemLog.id }).from(itemLog).where(eq(itemLog.itemId, theirs.itemId))).toHaveLength(1);
+  });
+});
+
+describe("deleting the account", () => {
+  let db: Db;
+  let boss: PgBoss;
+
+  beforeAll(async () => {
+    const postgres = await startPostgres();
+    await migrate(postgres.url);
+    db = createDb(postgres.url);
+    boss = new PgBoss(postgres.url);
+    await boss.start();
+    await boss.createQueue(telegramRevokeQueue);
+    return async () => {
+      await boss.stop({ timeout: 1_000 });
+      await closeDb(db);
+      await postgres.stop();
+    };
+  }, 120_000);
+
+  const sender = () => Promise.resolve(boss);
+
+  const accountWith = async (names: string[]) => {
+    const id = crypto.randomUUID();
+    const email = `${id}@example.com`;
+    await db.insert(user).values({ id, name: "Owner", email });
+    await db.insert(session).values({
+      id: crypto.randomUUID(),
+      token: crypto.randomUUID(),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      userId: id,
+    });
+    for (const name of names) {
+      const [row] = await db.insert(workspace).values({ name, ownerUserId: id }).returning();
+      await db.insert(telegramSession).values({
+        workspaceId: present(row).id,
+        account: "Me (@me)",
+        secretCiphertext: `ciphertext-${name}`,
+      });
+    }
+    return { id, email };
+  };
+
+  it("removes the user, every Workspace it owns, and runs the pre-delete step once for each", async () => {
+    const owner = await accountWith(["Work", "Markets"]);
+    const stepped: string[] = [];
+
+    expect(
+      await deleteAccount(
+        db,
+        { user: owner, typedEmail: owner.email },
+        {
+          encryptionKey: Buffer.alloc(32),
+          boss: sender,
+          beforeDelete: ({ workspace: one }) => {
+            stepped.push(one.name);
+            return Promise.resolve();
+          },
+        },
+      ),
+    ).toBe("deleted");
+
+    expect(stepped.sort()).toEqual(["Markets", "Work"]);
+    expect(await db.select().from(workspace).where(eq(workspace.ownerUserId, owner.id))).toEqual([]);
+    expect(await db.select().from(user).where(eq(user.id, owner.id))).toEqual([]);
+    expect(await db.select().from(session).where(eq(session.userId, owner.id))).toEqual([]);
+  });
+
+  it("deletes nothing when the typed email isn't the account's", async () => {
+    const owner = await accountWith(["Work"]);
+
+    expect(
+      await deleteAccount(
+        db,
+        { user: owner, typedEmail: "someone@example.com" },
+        { encryptionKey: Buffer.alloc(32), boss: sender },
+      ),
+    ).toBe("wrong-email");
+    expect(await db.select().from(user).where(eq(user.id, owner.id))).toHaveLength(1);
+    expect(await db.select().from(workspace).where(eq(workspace.ownerUserId, owner.id))).toHaveLength(1);
   });
 
   it("leaves the install unclaimed when the account was its admin, with /setup taking a claim again", async () => {
-    const ids = await seed();
-    await db.insert(instanceSettings).values({ adminUserId: ids.workspace.ownerUserId }).onConflictDoNothing();
-    await db.update(instanceSettings).set({ adminUserId: ids.workspace.ownerUserId, setupTokenHash: null });
+    const owner = await accountWith(["Work"]);
+    await db.insert(instanceSettings).values({ adminUserId: owner.id }).onConflictDoNothing();
+    await db.update(instanceSettings).set({ adminUserId: owner.id, setupTokenHash: null });
 
     expect(
-      await deleteWorkspace(
-        db,
-        { workspace: ids.workspace, typedName: "Morning coffee" },
-        { encryptionKey: Buffer.alloc(32), boss: sender },
-      ),
+      await deleteAccount(db, { user: owner, typedEmail: owner.email }, { encryptionKey: Buffer.alloc(32), boss: sender }),
     ).toBe("deleted");
 
     const settings = await db.query.instanceSettings.findFirst();
@@ -381,37 +542,15 @@ describe("deleting a Workspace", () => {
   });
 
   it("sends the account to sign-in when the install still has its admin", async () => {
-    const ids = await seed();
+    const owner = await accountWith(["Work"]);
     const otherId = crypto.randomUUID();
     await db.insert(user).values({ id: otherId, name: "Other", email: `${otherId}@example.com` });
     await db.insert(instanceSettings).values({ adminUserId: otherId }).onConflictDoNothing();
     await db.update(instanceSettings).set({ adminUserId: otherId });
 
-    await deleteWorkspace(
-      db,
-      { workspace: ids.workspace, typedName: "Morning coffee" },
-      { encryptionKey: Buffer.alloc(32), boss: sender },
-    );
+    await deleteAccount(db, { user: owner, typedEmail: owner.email }, { encryptionKey: Buffer.alloc(32), boss: sender });
 
     expect(await afterDeletion(db, "self-hosted")).toBe("/sign-in");
     expect(await afterDeletion(db, "hosted")).toBe("/sign-in");
-  });
-
-  it("counts a row only inside its own Workspace, so a second one keeps all of its own", async () => {
-    const gone = await seed();
-    const kept = await seed();
-
-    await deleteWorkspace(
-      db,
-      { workspace: gone.workspace, typedName: "Morning coffee" },
-      { encryptionKey: Buffer.alloc(32), boss: sender },
-    );
-
-    expect(await counts(gone)).toEqual(nothing);
-    expect(await counts(kept)).toEqual(seeded);
-    // The other Workspace's Log row is still there, which says the cascade is scoped by the rows' own keys.
-    expect(
-      await db.select({ id: itemLog.id }).from(itemLog).where(eq(itemLog.itemId, kept.itemId)),
-    ).toHaveLength(1);
   });
 });

@@ -10,6 +10,7 @@ import { signOut } from "./actions";
 import { isCurrentWorkspaceLink, primaryLinks, secondaryLinks } from "./workspace-nav";
 import { HeaderUserMenu } from "./workspace-user-menu";
 import { WorkspaceSidebar } from "./workspace-sidebar";
+import type { WorkspaceChoice } from "./workspace-switcher";
 
 /**
  * The Workspace shell: one persistent sidebar and the screen it sits beside. The sidebar owns the
@@ -19,11 +20,13 @@ import { WorkspaceSidebar } from "./workspace-sidebar";
  */
 export function WorkspaceChrome({
   workspaceName,
+  workspaces,
   email,
   defaultOpen,
   children,
 }: {
   workspaceName: string;
+  workspaces: readonly WorkspaceChoice[];
   email: string;
   defaultOpen: boolean;
   children: ReactNode;
@@ -40,7 +43,7 @@ export function WorkspaceChrome({
             Skip to content
           </a>
         </nav>
-        <WorkspaceSidebar workspaceName={workspaceName} email={email} />
+        <WorkspaceSidebar workspaces={workspaces} email={email} />
         {/* min-w-0: a flex item's min-width is auto, so without it the inset refuses to shrink below
             the widest row and pushes the page past the viewport at tablet widths. */}
         <SidebarInset id="workspace-main" tabIndex={-1} className="min-w-0">
@@ -92,6 +95,16 @@ function NoScriptNav({ pathname }: { pathname: string }) {
               </li>
             );
           })}
+          <li>
+            <Link href="/workspaces" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+              Workspaces
+            </Link>
+          </li>
+          <li>
+            <Link href="/account" className={buttonVariants({ variant: "ghost", size: "sm" })}>
+              Account
+            </Link>
+          </li>
           <li>
             <form action={signOut}>
               <Button type="submit" variant="ghost" size="sm">

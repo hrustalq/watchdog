@@ -22,20 +22,15 @@ import {
 import { signOut } from "./actions";
 import { isCurrentWorkspaceLink, primaryLinks, secondaryLinks, type WorkspaceNavLink } from "./workspace-nav";
 import { SidebarUserMenu } from "./workspace-user-menu";
-
-/** A Workspace's mark before it has an image: its first letter, so the identity card never shows an empty box. */
-function workspaceMark(name: string) {
-  const letter = name.trim().slice(0, 1).toUpperCase();
-  return letter === "" ? "W" : letter;
-}
+import { WorkspaceSwitcher, type WorkspaceChoice } from "./workspace-switcher";
 
 /**
- * The Workspace's persistent navigation: brand, the one Workspace it belongs to, the sections that
- * watch and deliver, and the account links. The sidebar is the only navigation, so it stays on
- * desktop and becomes the sheet on a phone. Collapsing keeps the glyphs and hides the words; the
- * trigger under the brand, and the rail at the edge, bring them back.
+ * The Workspace's persistent navigation: brand, the switcher for the Workspaces the user owns, the
+ * sections that watch and deliver, and the account links. The sidebar is the only navigation, so it
+ * stays on desktop and becomes the sheet on a phone. Collapsing keeps the glyphs and hides the words;
+ * the trigger under the brand, and the rail at the edge, bring them back.
  */
-export function WorkspaceSidebar({ workspaceName, email }: { workspaceName: string; email: string }) {
+export function WorkspaceSidebar({ workspaces, email }: { workspaces: readonly WorkspaceChoice[]; email: string }) {
   const pathname = usePathname();
   const { setOpenMobile } = useSidebar();
   // A Link inside the mobile sheet must close it, or the next screen arrives under the sheet.
@@ -69,17 +64,9 @@ export function WorkspaceSidebar({ workspaceName, email }: { workspaceName: stri
             <X />
           </Button>
         </div>
-        {/* One Workspace per user, so this is an identity block, not a switcher: a switcher with one
-            choice would be a control that cannot change anything. */}
-        <div className="flex items-center gap-2 rounded-lg border border-sidebar-border p-2 group-data-[collapsible=icon]:hidden">
-          <span className="grid size-6 shrink-0 place-items-center rounded-md bg-sidebar-accent text-xs font-medium text-sidebar-accent-foreground">
-            {workspaceMark(workspaceName)}
-          </span>
-          <div className="min-w-0">
-            <p className="truncate text-xs text-muted-foreground">Workspace</p>
-            <p className="truncate text-sm font-medium">{workspaceName}</p>
-          </div>
-        </div>
+        {/* The switcher: the Workspaces this account owns behind one card. It's a native disclosure
+            and a form per Workspace, so it works without JavaScript; collapsing keeps the mark. */}
+        <WorkspaceSwitcher workspaces={workspaces} onNavigate={closeMobile} />
         <Link
           href="/sources#add-source"
           aria-label="Add source"
