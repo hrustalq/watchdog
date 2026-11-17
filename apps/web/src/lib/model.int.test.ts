@@ -51,6 +51,7 @@ const input = (overrides: Partial<ModelInput> = {}): ModelInput => ({
   structured: false,
   inputPrice: "",
   outputPrice: "",
+  pricesFromProvider: false,
   ...overrides,
 });
 
@@ -674,6 +675,64 @@ describe("the Model screen", () => {
     });
   });
 
+  describe("where the prices came from", () => {
+    it("records the provider as the source when the list filled both prices", async () => {
+      const workspaceId = await newWorkspace();
+
+      await save(workspaceId, { inputPrice: "0.15", outputPrice: "0.6", pricesFromProvider: true });
+
+      const row = await active(workspaceId);
+      expect(row.pricingSource).toBe("provider");
+      expect(row.pricingCheckedAt).not.toBeNull();
+    });
+
+    it("marks a price the user edits as theirs, and clears the check time", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { inputPrice: "0.15", outputPrice: "0.6", pricesFromProvider: true });
+
+      await save(workspaceId, { inputPrice: "0.2", outputPrice: "0.6" });
+
+      const row = await active(workspaceId);
+      expect(row.pricingSource).toBe("manual");
+      expect(row.pricingCheckedAt).toBeNull();
+    });
+
+    it("keeps the provider's source and time when a save leaves both prices alone", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { inputPrice: "0.15", outputPrice: "0.6", pricesFromProvider: true });
+      const checked = (await active(workspaceId)).pricingCheckedAt;
+
+      // The same model with another setting: the numbers the provider gave it are still its own.
+      await save(workspaceId, { structured: true, inputPrice: "0.15", outputPrice: "0.6" });
+
+      const row = await active(workspaceId);
+      expect(row.pricingSource).toBe("provider");
+      expect(row.pricingCheckedAt?.getTime()).toBe(checked?.getTime());
+    });
+
+    it("marks the prices manual when the name changes, because another model never published them", async () => {
+      const workspaceId = await newWorkspace();
+      await save(workspaceId, { inputPrice: "0.15", outputPrice: "0.6", pricesFromProvider: true });
+
+      await save(workspaceId, { modelName: "another-model", inputPrice: "0.15", outputPrice: "0.6" });
+
+      const row = await active(workspaceId);
+      expect(row.modelName).toBe("another-model");
+      expect(row.pricingSource).toBe("manual");
+      expect(row.pricingCheckedAt).toBeNull();
+    });
+
+    it("leaves the source null while either price is missing", async () => {
+      const workspaceId = await newWorkspace();
+
+      await save(workspaceId, { inputPrice: "3", outputPrice: "" });
+
+      const row = await active(workspaceId);
+      expect(row.pricingSource).toBeNull();
+      expect(row.pricingCheckedAt).toBeNull();
+    });
+  });
+
   describe("testing the connection", () => {
     it("says so when the model answers", async () => {
       const workspaceId = await newWorkspace();
@@ -1028,6 +1087,7 @@ describe("the Model screen", () => {
         structured: true,
         inputPrice: "2",
         outputPrice: "",
+        pricesFromProvider: false,
         keyTyped: true,
       });
     });

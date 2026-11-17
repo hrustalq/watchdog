@@ -1,4 +1,6 @@
 import type { Metadata } from "next";
+import { format } from "date-fns";
+import { tz } from "@date-fns/tz";
 import { ChevronDown } from "lucide-react";
 import { Suspense } from "react";
 import { Timestamp } from "@/components/timestamp";
@@ -26,6 +28,7 @@ import { SubmitButton } from "@/components/submit-button";
 import { removeModelAction, testConnectionAction } from "./actions";
 import { formOpens } from "./form-open";
 import { ModelForm, type ModelFormValues } from "./model-form";
+import { ModelPriceCheck } from "./model-price-check";
 
 export const metadata: Metadata = { title: "Model · Watchdog" };
 
@@ -53,6 +56,7 @@ const blankForm: ModelFormValues = {
   structured: false,
   inputPrice: "",
   outputPrice: "",
+  pricesFromProvider: false,
 };
 
 // The Remove control's summary styling, at the size of a card header: the whole row is the control.
@@ -97,6 +101,7 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
           structured: model.supportsStructuredOutput,
           inputPrice: model.inputPricePerMillion?.toString() ?? "",
           outputPrice: model.outputPricePerMillion?.toString() ?? "",
+          pricesFromProvider: false,
         };
   // Only a refusal or a test the user made leaves its values in the cookie, so a link that only
   // names one shows the saved model (#134).
@@ -156,7 +161,9 @@ async function ModelScreen({ searchParams }: Pick<PageProps<"/model">, "searchPa
               {" · "}
               {keyStatus[model.storedKey]}
             </p>
+            <p className="text-sm text-muted-foreground">{pricingProvenance(model)}</p>
           </div>
+          <ModelPriceCheck savedInput={model.inputPricePerMillion} savedOutput={model.outputPricePerMillion} />
           {/* The URL can outlive the test: "Connected" mustn't sit above a newer failure. */}
           <TestResult
             test={test === "ok" && (failure?.recovered === false || model.storedKey === "unreadable") ? undefined : test}
@@ -234,6 +241,31 @@ function formIntro(model: Awaited<ReturnType<typeof getModel>>) {
   }
   const replaces = "A new provider type, base URL or model name replaces this model. Usage history keeps the old one.";
   return model.storedKey === "unreadable" ? `Enter the API key below, and leave the rest to keep this model. ${replaces}` : replaces;
+}
+
+/**
+ * Where the saved model's prices came from, as the card says it: the provider's own metadata with the
+ * day it was read, or the user. A model with one price missing can't be estimated, and says so.
+ */
+function pricingProvenance(model: NonNullable<Awaited<ReturnType<typeof getModel>>>) {
+  if (model.inputPricePerMillion === null || model.outputPricePerMillion === null) {
+    return "No prices, so Usage can't estimate this model's cost.";
+  }
+  if (model.pricingSource === "provider" && model.pricingCheckedAt !== null) {
+    return `From ${modelProviderLabel(model.baseUrl, model.providerType)}, checked ${format(model.pricingCheckedAt, "d MMM yyyy", { in: tz("UTC") })}.`;
+  }
+  return "Entered by you.";
+}
+
+/** OpenRouter is named as itself, because that is the provider whose prices were read. */
+function modelProviderLabel(baseUrl: string, providerType: string) {
+  try {
+    const { hostname } = new URL(baseUrl);
+    if (hostname === "openrouter.ai" || hostname.endsWith(".openrouter.ai")) return "OpenRouter";
+  } catch {
+    // A stored URL that no longer parses still gets its family's name.
+  }
+  return providerTypes.find(({ value }) => value === providerType)?.label ?? providerType;
 }
 
 const keyStatus: Record<StoredKey, string> = {

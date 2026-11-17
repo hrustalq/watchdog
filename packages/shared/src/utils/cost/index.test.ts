@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addCosts, formatCost, toCost } from "./index.ts";
+import { addCosts, formatCost, perMillion, toCost } from "./index.ts";
 
 describe("adding costs", () => {
   it("adds without a float's rounding", () => {
@@ -25,6 +25,19 @@ describe("a cost's canonical spelling", () => {
 
   it("writes a small value without an exponent", () => {
     expect(toCost("1e-7")).toBe("0.0000001");
+  });
+});
+
+describe("a per-token price as a per-million one", () => {
+  it("moves the decimal point without a float's drift", () => {
+    expect(perMillion("0.00000015")).toBe("0.15");
+    expect(perMillion("0.000002")).toBe("2");
+    expect(perMillion("0.00001")).toBe("10");
+  });
+
+  it("keeps a zero a zero, and a tiny price exact", () => {
+    expect(perMillion("0")).toBe("0");
+    expect(perMillion("0.0000000001")).toBe("0.0001");
   });
 });
 

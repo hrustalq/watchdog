@@ -43,6 +43,8 @@ export interface ModelInput {
   structured: boolean;
   inputPrice: string;
   outputPrice: string;
+  /** The picker filled both prices from the provider's list, and neither was edited since. */
+  pricesFromProvider: boolean;
 }
 
 /** Why a model wasn't saved, as a code the form can carry in its URL. Each names the field it's about. */
@@ -92,6 +94,7 @@ export function modelFormValues(input: ModelInput): Record<string, string> {
     outputPrice: input.outputPrice.slice(0, maxPriceSentBack),
     ...(input.structured ? { structured: "1" } : {}),
     ...(input.clearKey ? { clearKey: "1" } : {}),
+    ...(input.pricesFromProvider ? { pricesFromProvider: "1" } : {}),
     ...(input.apiKey.trim() === "" ? {} : { keyTyped: "1" }),
   };
 }
@@ -107,6 +110,7 @@ export function modelFormFromSentBack(kept: Record<string, string>) {
     structured: field("structured") !== "",
     inputPrice: field("inputPrice"),
     outputPrice: field("outputPrice"),
+    pricesFromProvider: field("pricesFromProvider") !== "",
     keyTyped: field("keyTyped") !== "",
   };
 }
@@ -184,6 +188,7 @@ const modelSchema = z
     structured: z.boolean(),
     inputPrice: priceField(modelProblemMessage["input-price"]),
     outputPrice: priceField(modelProblemMessage["output-price"]),
+    pricesFromProvider: z.boolean(),
   })
   .superRefine((model, ctx) => {
     // One or the other: a key typed beside the box is a user who wants both, and saving would drop one.
@@ -195,6 +200,7 @@ const modelSchema = z
     provider: model.providerType,
     baseUrl: model.baseUrl,
     modelName: model.modelName,
+    pricesFromProvider: model.pricesFromProvider,
     apiKey: model.apiKey,
     inputPrice: model.inputPrice,
     outputPrice: model.outputPrice,
@@ -252,6 +258,31 @@ function keyChange(newCiphertext: string | null, clearKey: boolean) {
 }
 
 /**
+ * Where a save leaves the prices' provenance. A picker that filled them says the provider wrote
+ * them. A changed number is the user's, and so is any price that arrives without that flag. A save
+ * that leaves both numbers as they were keeps what the row already said, so editing something else
+ * can't turn a provider's price into a typed one.
+ */
+function priceProvenance(
+  current: typeof modelConfig.$inferSelect | undefined,
+  prices: { inputPrice: number | null; outputPrice: number | null },
+  fromProvider: boolean,
+  sameModel: boolean,
+) {
+  const { inputPrice, outputPrice } = prices;
+  if (inputPrice === null || outputPrice === null) return { pricingSource: null, pricingCheckedAt: null };
+  if (fromProvider) return { pricingSource: "provider" as const, pricingCheckedAt: sql`now()` };
+  const holds = (row: typeof modelConfig.$inferSelect) =>
+    row.inputPricePerMillion === inputPrice && row.outputPricePerMillion === outputPrice;
+  // A rename makes a new row: the numbers carried over were never read for the new name, so they
+  // are the user's now, not the provider's.
+  if (sameModel && current !== undefined && holds(current) && current.pricingSource !== null) {
+    return { pricingSource: current.pricingSource, pricingCheckedAt: current.pricingCheckedAt };
+  }
+  return { pricingSource: "manual" as const, pricingCheckedAt: null };
+}
+
+/**
  * Changes to a Workspace's model take turns. Otherwise two saves could both replace the same row,
  * and a save could put a key back on a row a removal just archived.
  */
@@ -275,7 +306,7 @@ export async function saveModel(
 ): Promise<{ problem: ModelProblem } | { keyLeftBehind: boolean }> {
   const parsed = parseModel(input);
   if ("problem" in parsed) return { problem: parsed.problem };
-  const { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice } = parsed;
+  const { provider, baseUrl, modelName, apiKey, inputPrice, outputPrice, pricesFromProvider } = parsed;
   const newCiphertext = apiKey === "" ? null : encryptSecret(apiKey, encryptionKey);
   const settings = {
     supportsStructuredOutput: input.structured,
@@ -289,6 +320,10 @@ export async function saveModel(
       .select()
       .from(modelConfig)
       .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));
+    const isCurrent = (row: typeof modelConfig.$inferSelect) =>
+      row.providerType === provider && row.baseUrl === baseUrl && row.modelName === modelName;
+    const sameModel = current !== undefined && isCurrent(current);
+    const provenance = priceProvenance(current, { inputPrice, outputPrice }, pricesFromProvider, sameModel);
 
     if (
       current?.providerType === provider &&
@@ -298,7 +333,7 @@ export async function saveModel(
       // Only a typed key or the box touches the key: a blank field on its own keeps it.
       await tx
         .update(modelConfig)
-        .set({ ...settings, ...keyChange(newCiphertext, input.clearKey) })
+        .set({ ...settings, ...provenance, ...keyChange(newCiphertext, input.clearKey) })
         .where(eq(modelConfig.id, current.id));
       await fillCallPrices(tx, current.id, settings);
       return { keyLeftBehind: false };
@@ -316,6 +351,7 @@ export async function saveModel(
       modelName,
       apiKeyCiphertext: newCiphertext ?? carried,
       ...settings,
+      ...provenance,
     });
     const hadKey = (current?.apiKeyCiphertext ?? null) !== null;
     return { keyLeftBehind: !input.clearKey && hadKey && newCiphertext === null && carried === null };
@@ -414,7 +450,8 @@ export async function setArchivedPrices(
     const prices = { inputPricePerMillion: inputPrice, outputPricePerMillion: outputPrice };
     const priced = await tx
       .update(modelConfig)
-      .set(prices)
+      // Typed on the Usage screen, so the row says a person entered them.
+      .set({ ...prices, pricingSource: "manual", pricingCheckedAt: null })
       .where(
         and(
           eq(modelConfig.workspaceId, workspaceId),
@@ -430,6 +467,33 @@ export async function setArchivedPrices(
     for (const row of priced) await fillCallPrices(tx, row.id, prices);
     return { saved: true } as const;
   });
+}
+
+/**
+ * Saves the prices a check found for the active model. Only `model_config` changes: calls made before
+ * keep the prices they recorded, so the Usage screen's earlier estimates don't move.
+ */
+export async function applyDetectedPrices(
+  db: Db,
+  workspaceId: string,
+  input: PriceInput,
+): Promise<{ problem: PriceProblem } | { saved: true }> {
+  const inputPrice = cleanPrice(input.inputPrice);
+  if (inputPrice === undefined || inputPrice === null) return { problem: "input-price" } as const;
+  const outputPrice = cleanPrice(input.outputPrice);
+  if (outputPrice === undefined || outputPrice === null) return { problem: "output-price" } as const;
+  const updated = await db
+    .update(modelConfig)
+    .set({
+      inputPricePerMillion: inputPrice,
+      outputPricePerMillion: outputPrice,
+      pricingSource: "provider",
+      pricingCheckedAt: sql`now()`,
+    })
+    .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)))
+    .returning({ id: modelConfig.id });
+  if (updated.length === 0) return { problem: "model" } as const;
+  return { saved: true } as const;
 }
 
 export type StoredKey = "none" | "set" | "unreadable";
@@ -469,6 +533,8 @@ export async function getModel(db: Db, encryptionKey: Buffer, workspaceId: strin
       supportsStructuredOutput: modelConfig.supportsStructuredOutput,
       inputPricePerMillion: modelConfig.inputPricePerMillion,
       outputPricePerMillion: modelConfig.outputPricePerMillion,
+      pricingSource: modelConfig.pricingSource,
+      pricingCheckedAt: modelConfig.pricingCheckedAt,
     })
     .from(modelConfig)
     .where(and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)));

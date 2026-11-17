@@ -58,6 +58,7 @@ describe("the Usage screen", () => {
       apiKey: "",
       clearKey: false,
       structured: false,
+      pricesFromProvider: false,
       ...prices,
     });
     if ("problem" in result) throw new Error(`Expected a save, got ${result.problem}`);
@@ -174,6 +175,7 @@ describe("the Usage screen", () => {
         inputPrice: "",
         outputPrice: "",
         clearKey: false,
+        pricesFromProvider: false,
       };
       await saveModel(db, encryptionKey, workspaceId, { ...form, modelName: "first" });
       const first = present(await db.query.modelConfig.findFirst({ where: (m, { eq }) => eq(m.workspaceId, workspaceId) }));

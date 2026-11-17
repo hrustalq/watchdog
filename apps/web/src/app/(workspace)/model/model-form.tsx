@@ -1,10 +1,10 @@
 import { dataBox } from "@/components/field-classes";
 import { CheckboxField, SelectField, TextField } from "@/components/form-field";
 import { type ModelProblem, modelProblemMessage, providerTypes, type StoredKey } from "@/lib/model";
-import { cn } from "@/lib/utils";
 import { saveModelAction } from "./actions";
 import { ModelFormActions } from "./form-actions";
 import { ModelNameField } from "./model-name-field";
+import { ModelPriceFields, ModelPricingProvider } from "./model-pricing";
 
 export interface ModelFormValues {
   providerType: string;
@@ -15,6 +15,8 @@ export interface ModelFormValues {
   structured: boolean;
   inputPrice: string;
   outputPrice: string;
+  /** The picker filled both prices, so the save records the provider as their source. */
+  pricesFromProvider: boolean;
 }
 
 const keyHint: Record<StoredKey, string> = {
@@ -48,6 +50,12 @@ export function ModelForm({
   keyTyped: boolean;
 }) {
   const errorFor = (name: ModelProblem) => (problem === name ? modelProblemMessage[name] : undefined);
+  // The price fields focus the field a refusal is about, as the text fields do.
+  const priceFocus = () => {
+    if (problem === "input-price") return "input-price";
+    if (problem === "output-price") return "output-price";
+    return undefined;
+  };
   const examples = providerTypes.map(({ label, baseUrl }) => (
     <span key={label} className="block wrap-anywhere">
       {label}: <span className="font-mono">{baseUrl}</span>
@@ -55,7 +63,10 @@ export function ModelForm({
   ));
 
   return (
-    <form action={saveModelAction} className="flex flex-col gap-4">
+    <ModelPricingProvider
+      initial={{ inputPrice: values.inputPrice, outputPrice: values.outputPrice, fromProvider: values.pricesFromProvider }}
+    >
+      <form action={saveModelAction} className="flex flex-col gap-4">
       <SelectField
         id="provider"
         name="providerType"
@@ -152,34 +163,14 @@ export function ModelForm({
         help="The host accepts a JSON Schema. Without this, Watchdog asks for plain JSON and checks what comes back. Leave it off if you're not sure."
       />
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        {(
-          [
-            { id: "input-price", name: "inputPrice", label: "Input price", value: values.inputPrice },
-            { id: "output-price", name: "outputPrice", label: "Output price", value: values.outputPrice },
-          ] as const
-        ).map(({ id, name, label, value }) => (
-          <TextField
-            key={id}
-            id={id}
-            name={name}
-            label={label}
-            optional
-            type="number"
-            min="0"
-            step="any"
-            inputMode="decimal"
-            defaultValue={value}
-            error={errorFor(id)}
-            focusOnError={problem === id}
-            showHelpWithError
-            controlClassName={cn(dataBox, "tabular-nums")}
-            help="Per million tokens, to estimate this model's cost."
-          />
-        ))}
-      </div>
+      <ModelPriceFields
+        inputError={errorFor("input-price")}
+        outputError={errorFor("output-price")}
+        focusOnError={priceFocus()}
+      />
 
-      <ModelFormActions />
-    </form>
+        <ModelFormActions />
+      </form>
+    </ModelPricingProvider>
   );
 }

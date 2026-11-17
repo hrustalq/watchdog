@@ -66,7 +66,13 @@ describe("the Model screen's name field", () => {
   });
 
   it("says how many models the provider listed", () => {
-    const html = field({ kind: "ready", models: ["gpt-5", "gpt-5-mini"] });
+    const html = field({
+      kind: "ready",
+      models: [
+        { id: "gpt-5", inputPricePerMillion: null, outputPricePerMillion: null },
+        { id: "gpt-5-mini", inputPricePerMillion: null, outputPricePerMillion: null },
+      ],
+    });
 
     expect(html).toContain("2 models. Pick one, or type a name.");
   });

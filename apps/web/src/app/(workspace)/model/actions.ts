@@ -2,8 +2,10 @@
 
 import { redirect } from "next/navigation";
 import {
+  applyDetectedPrices,
   type ModelInput,
   modelFormValues,
+  type PriceProblem,
   removeModel,
   saveModel,
   testConnection,
@@ -12,7 +14,8 @@ import {
 import { keepSentBack } from "@/lib/sent-back";
 import { requireWorkspace, server } from "@/lib/server";
 import { isRecord } from "@watchdog/shared/utils/is-record";
-import { listModelChoices, type ModelListOutcome } from "@/lib/model-list";
+import { revalidatePath } from "next/cache";
+import { checkModelPrices, listModelChoices, type ModelListOutcome, type PriceCheck } from "@/lib/model-list";
 
 // Every action ends in a redirect, as on Sources. The page reads the outcome from the URL, and what
 // the form held after a refusal or a test from a cookie, because a link can't set one (#134).
@@ -32,6 +35,7 @@ const modelInput = (formData: FormData): ModelInput => ({
   structured: formData.get("structured") !== null,
   inputPrice: text(formData, "inputPrice"),
   outputPrice: text(formData, "outputPrice"),
+  pricesFromProvider: formData.get("pricesFromProvider") !== null,
 });
 
 /** Saves the model of the user's Workspace. A refusal goes back to the form, without the key. */
@@ -98,4 +102,22 @@ export async function listModelsAction(input: unknown): Promise<ModelListOutcome
     apiKey: postedField(input, "apiKey"),
   };
   return listModelChoices(db, { fetch: agentFetch, encryptionKey }, workspace.id, posted);
+}
+
+/** Re-reads the saved model's prices from the provider. It saves nothing until the user confirms. */
+export async function checkPricesAction(): Promise<PriceCheck> {
+  const { workspace } = await requireWorkspace();
+  const { db, agentFetch, encryptionKey } = server();
+  return checkModelPrices(db, { fetch: agentFetch, encryptionKey }, workspace.id);
+}
+
+/** Saves the prices a check found, once the user has seen both sets side by side. */
+export async function applyPricesAction(input: unknown): Promise<{ problem: PriceProblem } | { saved: true }> {
+  const { workspace } = await requireWorkspace();
+  const result = await applyDetectedPrices(server().db, workspace.id, {
+    inputPrice: postedField(input, "inputPrice"),
+    outputPrice: postedField(input, "outputPrice"),
+  });
+  if ("saved" in result) revalidatePath("/model");
+  return result;
 }

@@ -130,6 +130,7 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
                   <>
                     <span className="text-data wrap-anywhere">{model.modelName}</span>
                     <span className="block font-mono text-xs wrap-anywhere text-muted-foreground">{model.baseUrl}</span>
+                    <PriceSource source={model.pricingSource} />
                     {model.archived ? (
                       <span className="mt-1 inline-block rounded-sm bg-muted px-1.5 py-0.5 text-xs font-medium tracking-[0.01em]">
                         Archived
@@ -179,6 +180,15 @@ export default async function UsagePage({ searchParams }: PageProps<"/usage">) {
       </Page>
     </div>
   );
+}
+
+/** Where a line's prices came from, when every row on it agrees; a mixed line says nothing. */
+function PriceSource({ source }: { source: "provider" | "manual" | null }) {
+  if (source === "provider") {
+    return <span className="block text-xs text-muted-foreground">Current prices from the provider</span>;
+  }
+  if (source === "manual") return <span className="block text-xs text-muted-foreground">Current prices entered by you</span>;
+  return null;
 }
 
 function EmptyMonth({

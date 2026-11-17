@@ -12,16 +12,19 @@ import {
   ComboboxList,
 } from "@/components/ui/combobox";
 import { Label } from "@/components/ui/label";
+import type { ListedModel } from "@watchdog/core";
 import type { StoredKey } from "@/lib/model";
 import { cn } from "@/lib/utils";
 import { listModelsAction } from "./actions";
 import { modelListFailureMessage } from "./model-list-words";
+import { pickPrefill } from "./model-price-pick";
+import { useModelPricing } from "./model-pricing";
 
 /** Where the picker's list stands. Idle keeps manual entry first, and nothing is asked for. */
 export type ListedModels =
   | { kind: "idle" }
   | { kind: "loading" }
-  | { kind: "ready"; models: string[] }
+  | { kind: "ready"; models: ListedModel[] }
   | { kind: "failed"; reason: keyof typeof modelListFailureMessage };
 
 const helpText = "text-xs text-muted-foreground wrap-anywhere text-pretty";
@@ -95,7 +98,7 @@ export function ModelNameFieldView({
   // The list narrows as the name is typed, as an autocomplete does. Base UI leaves the filtering to
   // its caller here, so the ids shown and the empty line are decided in one place.
   const wants = query.trim().toLowerCase();
-  const shown = models.filter((model) => model.toLowerCase().includes(wants));
+  const shown = models.filter((model) => model.id.toLowerCase().includes(wants));
 
   return (
     <div className="flex flex-col gap-2">
@@ -136,8 +139,8 @@ export function ModelNameFieldView({
             <ComboboxContent>
               <ComboboxList>
                 {shown.map((model) => (
-                  <ComboboxItem key={model} value={model} className="font-mono text-[0.8125rem]">
-                    {model}
+                  <ComboboxItem key={model.id} value={model.id} className="font-mono text-[0.8125rem]">
+                    {model.id}
                   </ComboboxItem>
                 ))}
               </ComboboxList>
@@ -184,6 +187,7 @@ export function ModelNameField({
   storedKey: StoredKey;
   error: string | undefined;
 }) {
+  const { inputPrice, outputPrice, setDetected, rename, leaveDestination } = useModelPricing();
   const [value, setValue] = useState(defaultValue);
   const [query, setQuery] = useState("");
   const [listed, setListed] = useState<ListedModels>({ kind: "idle" });
@@ -206,6 +210,8 @@ export function ModelNameField({
       const target = event.target;
       if (target instanceof HTMLElement && (target.id === "provider" || target.id === "base-url")) {
         setListed({ kind: "idle" });
+        // The prices were that address's; another provider must not save them as its own.
+        leaveDestination();
       }
     };
     form.addEventListener("change", reset);
@@ -214,7 +220,7 @@ export function ModelNameField({
       form.removeEventListener("change", reset);
       form.removeEventListener("input", reset);
     };
-  }, []);
+  }, [leaveDestination]);
 
   function posted(name: string) {
     const form = inputRef.current?.form;
@@ -231,11 +237,7 @@ export function ModelNameField({
         baseUrl: posted("baseUrl"),
         apiKey: posted("apiKey"),
       });
-      setListed(
-        outcome.ok
-          ? { kind: "ready", models: outcome.models.map(({ id }) => id) }
-          : { kind: "failed", reason: outcome.reason },
-      );
+      setListed(outcome.ok ? { kind: "ready", models: outcome.models } : { kind: "failed", reason: outcome.reason });
       // The trigger asked for this list, so it opens now that there is one.
       if (outcome.ok && wantsOpen.current) setOpen(outcome.models.length > 0);
     } catch {
@@ -277,6 +279,12 @@ export function ModelNameField({
       onChange={(next) => {
         setValue(next);
         setQuery(next);
+        // A name that moves away from the model whose prices were filled drops them.
+        rename(next);
+        // A name that is exactly a listed id takes that model's prices, when the fields hold none.
+        const model = listed.kind === "ready" ? listed.models.find(({ id }) => id === next) : undefined;
+        const picked = pickPrefill(model, { inputPrice, outputPrice });
+        if (picked !== undefined && model !== undefined) setDetected({ ...picked, modelId: model.id });
       }}
       onOpenChange={opened}
       onLoad={() => void load()}
