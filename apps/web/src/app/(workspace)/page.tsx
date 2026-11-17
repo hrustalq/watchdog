@@ -81,7 +81,7 @@ export default async function WorkspacePage({ searchParams }: PageProps<"/">) {
                   {edit ? "Done" : "Correct Ratings"}
                 </Link>
               )}
-              <ViewControl latest={latest} edit={edit} />
+              {items.length === 0 ? null : <ViewControl latest={latest} edit={edit} />}
             </div>
           }
         />

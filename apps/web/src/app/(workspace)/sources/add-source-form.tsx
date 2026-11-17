@@ -238,7 +238,7 @@ export function AddSourceForm({
         id="region"
         label="Region"
         optional
-        className={shownFor.website}
+        className={cn("hidden", shownFor.website)}
         error={errorFor("region")}
         help="A CSS selector for the part of the page to watch, such as #pricing .plan. When it matches several elements, Watchdog watches them all. Leave it empty to watch the whole page."
         autoCapitalize="off"

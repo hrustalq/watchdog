@@ -9,6 +9,12 @@ describe("CenteredPage", () => {
     expect(html).toContain("items-center");
     expect(html).toContain("flex-1");
   });
+
+  it("renders a div when the Workspace shell already owns the main landmark", () => {
+    const html = renderToStaticMarkup(<CenteredPage as="div">Nothing here</CenteredPage>);
+    expect(html).toContain("<div");
+    expect(html).not.toContain("<main");
+  });
 });
 
 describe("CenteredColumn", () => {

@@ -108,8 +108,12 @@ function Scale({
   // Only an axis the user actually moved has one: the Agent gave no level to an Item it left unrated.
   const agentLevel = original === undefined || original === null || original === current ? undefined : original;
   return (
-    <div className="flex w-full flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
-      <div role="group" aria-label={`Correct ${name}`} className="flex min-w-0 shrink-0 flex-wrap items-center gap-1">
+    // The row shares a line only while the container is wide enough for the label and five buttons
+    // at the current text size. The threshold is in rem, so 200% text stacks it on a phone exactly
+    // as a 320px phone does at 100% (DESIGN.md, "Correction controls"). The parent `#rating` is the
+    // container, so a wide screen still gets the row.
+    <div className="flex w-full flex-col gap-1 @min-[13.75rem]:flex-row @min-[13.75rem]:items-baseline @min-[13.75rem]:gap-3">
+      <div role="group" aria-label={`Correct ${name}`} className="flex min-w-0 flex-wrap items-center gap-1">
         {/* The label and the five buttons don't fit a phone's column at large text, so the label takes
             its own line and the buttons wrap rather than pushing the row past the page's gutter. */}
         <span aria-hidden="true" className={`w-18 min-w-0 break-words ${label} text-muted-foreground`}>
@@ -138,12 +142,12 @@ function Scale({
       </div>
       {/* Lines up under the buttons on a phone, and loses the indent when they wrapped under the label
           instead. One text node for a screen reader, as on the chips. */}
-      <p className={`pl-19 ${label} text-muted-foreground first-letter:uppercase @max-[13.25rem]:pl-0 sm:pl-0`}>
+      <p className={`pl-19 ${label} min-w-0 text-muted-foreground first-letter:uppercase @max-[13.75rem]:pl-0`}>
         <span className="sr-only">
           {`${name}: ${meaning}`}
           {agentLevel === undefined ? "" : `. The Agent rated this ${String(agentLevel)} of 5`}
         </span>
-        <span aria-hidden="true">
+        <span aria-hidden="true" className="wrap-anywhere">
           {meaning}
           {agentLevel === undefined ? "" : ` · the Agent rated this ${String(agentLevel)} of 5`}
         </span>
@@ -196,13 +200,13 @@ function ScaleGuide() {
               <p className={`${label} text-muted-foreground`}>{`${name}, ${ratingAbout(ratingScale[axis], "you")}`}</p>
               <ul className="flex flex-col gap-1 text-sm">
                 {scale.map((entry) => (
-                  <li key={entry.level} className="flex gap-2">
+                  <li key={entry.level} className="flex min-w-0 gap-2">
                     {/* One text node for a screen reader, as on the chips. */}
                     <span className="sr-only">{`${String(entry.level)} of 5: ${ratingAnchor(entry, "you")}`}</span>
                     <span aria-hidden="true" className="font-mono">
                       {entry.level}
                     </span>
-                    <span aria-hidden="true" className="first-letter:uppercase">
+                    <span aria-hidden="true" className="min-w-0 wrap-anywhere first-letter:uppercase">
                       {ratingAnchor(entry, "you")}
                     </span>
                   </li>

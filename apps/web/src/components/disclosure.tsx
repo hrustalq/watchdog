@@ -1,7 +1,7 @@
 import { cn } from "@/lib/utils";
 
 const summary =
-  "inline-flex h-8 cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden";
+  "inline-flex min-h-8 max-w-full cursor-pointer list-none items-center rounded-lg px-3 text-sm font-medium outline-hidden select-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/60 group-open:bg-muted dark:hover:bg-muted/50 [&::-webkit-details-marker]:hidden";
 
 /**
  * A native disclosure whose summary is a 32px control, so a confirmation or a small form opens and
@@ -26,12 +26,12 @@ export function Disclosure({
   children: React.ReactNode;
 }) {
   return (
-    <details open={open} className={cn("group", className)}>
-      <summary className={summary}>
+    <details open={open} className={cn("group min-w-0 max-w-full", className)}>
+      <summary className={cn(summary, "max-w-full")}>
         <span className="group-open:hidden">{label}</span>
         <span className="hidden group-open:inline">{openLabel}</span>
       </summary>
-      <div className={cn("mt-2 flex flex-col gap-3 rounded-lg p-3", bodyClassName)}>{children}</div>
+      <div className={cn("mt-2 flex min-w-0 max-w-full flex-col gap-3 rounded-lg p-3", bodyClassName)}>{children}</div>
     </details>
   );
 }

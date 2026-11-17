@@ -206,7 +206,7 @@ function Sidebar({
             <SheetTitle>Sidebar</SheetTitle>
             <SheetDescription>Displays the mobile sidebar.</SheetDescription>
           </SheetHeader>
-          <div className="flex h-full w-full flex-col">{children}</div>
+          <aside aria-label="Workspace sidebar" className="flex h-full w-full flex-col">{children}</aside>
         </SheetContent>
       </Sheet>
     )
@@ -246,13 +246,14 @@ function Sidebar({
         )}
         {...props}
       >
-        <div
+        <aside
+          aria-label="Workspace sidebar"
           data-sidebar="sidebar"
           data-slot="sidebar-inner"
           className="flex size-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border"
         >
           {children}
-        </div>
+        </aside>
       </div>
     </div>
   )
@@ -376,9 +377,10 @@ function SidebarSeparator({
   )
 }
 
-function SidebarContent({ className, ...props }: React.ComponentProps<"div">) {
+function SidebarContent({ className, ...props }: React.ComponentProps<"nav">) {
   return (
-    <div
+    <nav
+      aria-label="Workspace"
       data-slot="sidebar-content"
       data-sidebar="content"
       className={cn(

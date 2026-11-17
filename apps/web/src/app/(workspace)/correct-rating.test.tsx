@@ -59,6 +59,15 @@ describe("RatingControls", () => {
     expect(controls({ severity: 3, importance: 2 })).not.toContain("the user");
     expect(unrated).not.toContain("the user");
   });
+
+  it("stacks the scale on container width, so 200% text does not push it past the phone", () => {
+    const html = controls();
+
+    expect(html).toContain("@min-[13.75rem]:flex-row");
+    expect(html).toContain("@max-[13.75rem]:pl-0");
+    // A viewport breakpoint would stay a row at 390px even when the text doubles.
+    expect(html).not.toContain("sm:flex-row");
+  });
 });
 
 describe("RatingStepper", () => {

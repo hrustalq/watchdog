@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import Link from "next/link";
-import { buttonVariants } from "@/components/ui/button";
 import { CenteredPage } from "@/components/centered-page";
+import { NotFoundMessage } from "@/components/not-found-message";
 import { itemMissHeader } from "@/lib/missing";
 
 /**
@@ -15,22 +14,15 @@ export const instant = false;
 export const metadata: Metadata = { title: "Not found · Watchdog" };
 
 /**
- * The one page every 404 renders, so a missing Item and another Workspace's Item look the same and
- * neither says whether one exists. Only an Item's miss says why it's gone, which Proxy passes on the
- * rewrite it answers the miss with.
+ * The 404 outside the Workspace shell: a URL that matches no route at all. It owns the only `main`
+ * on the page, so it uses `CenteredPage`'s default. A miss inside the shell renders the group's
+ * own not-found instead, which must not nest a second main.
  */
 export default async function NotFound() {
   const item = (await headers()).get(itemMissHeader) !== null;
   return (
     <CenteredPage className="text-center">
-      <h1 className="text-headline">Nothing here</h1>
-      <p className="mt-2 max-w-md text-sm text-muted-foreground">
-        This page doesn&apos;t exist.
-        {item ? " An Item is removed with its Source, so a link to one can stop working." : ""}
-      </p>
-      <Link href="/" className={buttonVariants({ variant: "outline", className: "mt-6" })}>
-        Back to the Feed
-      </Link>
+      <NotFoundMessage item={item} />
     </CenteredPage>
   );
 }
