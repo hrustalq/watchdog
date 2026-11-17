@@ -133,6 +133,70 @@ describe("listing a provider's models", () => {
     });
   });
 
+  describe("OpenRouter's prices", () => {
+    it("converts each per-token price to per-million, keeping zero and dropping a malformed one", async () => {
+      const { fetch } = fakeFetch(() =>
+        json({
+          data: [
+            { id: "cheap", pricing: { prompt: "0.00000015", completion: "0.0000006" } },
+            { id: "free", pricing: { prompt: "0", completion: "0" } },
+            { id: "unpriced" },
+            { id: "bad", pricing: { prompt: "not a price", completion: "0.000001" } },
+          ],
+        }),
+      );
+
+      const result = await listModels(
+        { providerType: "openai-compatible", baseUrl: "https://openrouter.ai/api/v1" },
+        "k",
+        fetch,
+      );
+
+      expect(result.ok && result.models).toEqual([
+        { id: "bad", inputPricePerMillion: null, outputPricePerMillion: 1 },
+        { id: "cheap", inputPricePerMillion: 0.15, outputPricePerMillion: 0.6 },
+        { id: "free", inputPricePerMillion: 0, outputPricePerMillion: 0 },
+        { id: "unpriced", inputPricePerMillion: null, outputPricePerMillion: null },
+      ]);
+    });
+
+    it("never takes a price from another host that happens to send pricing", async () => {
+      const { fetch } = fakeFetch(() =>
+        json({ data: [{ id: "gpt-5", pricing: { prompt: "0.0001", completion: "0.0002" } }] }),
+      );
+
+      const result = await listModels({ providerType: "openai-compatible", baseUrl: "https://llm.test/v1" }, "k", fetch);
+
+      expect(result.ok && result.models).toEqual([
+        { id: "gpt-5", inputPricePerMillion: null, outputPricePerMillion: null },
+      ]);
+    });
+
+    it("leaves a chat provider's prices null even when its response carries them", async () => {
+      const { fetch } = fakeFetch(() =>
+        json({
+          models: [
+            {
+              name: "models/gemini-2.5-flash",
+              supportedGenerationMethods: ["generateContent"],
+              pricing: { prompt: "0.1", completion: "0.2" },
+            },
+          ],
+        }),
+      );
+
+      const result = await listModels(
+        { providerType: "google", baseUrl: "https://generativelanguage.googleapis.com/v1beta" },
+        "k",
+        fetch,
+      );
+
+      expect(result.ok && result.models).toEqual([
+        { id: "gemini-2.5-flash", inputPricePerMillion: null, outputPricePerMillion: null },
+      ]);
+    });
+  });
+
   describe("failures", () => {
     it("calls a refused key unauthorized, not a broken response", async () => {
       const { fetch } = fakeFetch(() => json({ error: "no" }, 401));

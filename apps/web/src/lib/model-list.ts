@@ -1,5 +1,5 @@
 // The picker's list, decided on the server: which key may be sent where, and what a failure says.
-import { type AgentFetch, listModels, readApiKey } from "@watchdog/core";
+import { type AgentFetch, type ListedModel, listModels, readApiKey } from "@watchdog/core";
 import { and, type Db, eq, isNull, modelConfig } from "@watchdog/db";
 import { type ModelListInput, parseModelList } from "./model.ts";
 
@@ -16,7 +16,7 @@ export type ModelListReason =
   | "no-endpoint"
   | "bad-response";
 
-export type ModelListOutcome = { ok: true; models: { id: string }[] } | { ok: false; reason: ModelListReason };
+export type ModelListOutcome = { ok: true; models: ListedModel[] } | { ok: false; reason: ModelListReason };
 
 export interface ModelListDeps {
   /** From `createAgentFetch`. */
@@ -62,4 +62,48 @@ export async function listModelChoices(
     parsed.apiKey === "" ? stored : parsed.apiKey,
     deps.fetch,
   );
+}
+
+/** What a price check of the saved model found. Nothing here writes; the screen asks before saving. */
+export type PriceCheck =
+  | { kind: "no-model" }
+  | { kind: "unavailable"; reason: ModelListReason }
+  | { kind: "not-listed"; modelName: string }
+  | { kind: "no-prices"; modelName: string }
+  | {
+      kind: "detected";
+      modelName: string;
+      inputPricePerMillion: number;
+      outputPricePerMillion: number;
+    };
+
+/**
+ * Re-reads the provider's metadata for the saved model, so its prices can be compared with what the
+ * row holds. It uses the saved key exactly as a save would, and writes nothing.
+ */
+export async function checkModelPrices(db: Db, deps: ModelListDeps, workspaceId: string): Promise<PriceCheck> {
+  const saved = await db.query.modelConfig.findFirst({
+    where: and(eq(modelConfig.workspaceId, workspaceId), isNull(modelConfig.archivedAt)),
+    columns: { providerType: true, baseUrl: true, modelName: true },
+  });
+  if (saved === undefined) return { kind: "no-model" };
+
+  const outcome = await listModelChoices(db, deps, workspaceId, {
+    providerType: saved.providerType,
+    baseUrl: saved.baseUrl,
+    apiKey: "",
+  });
+  if (!outcome.ok) return { kind: "unavailable", reason: outcome.reason };
+
+  const listed = outcome.models.find(({ id }) => id === saved.modelName);
+  if (listed === undefined) return { kind: "not-listed", modelName: saved.modelName };
+  if (listed.inputPricePerMillion === null || listed.outputPricePerMillion === null) {
+    return { kind: "no-prices", modelName: saved.modelName };
+  }
+  return {
+    kind: "detected",
+    modelName: saved.modelName,
+    inputPricePerMillion: listed.inputPricePerMillion,
+    outputPricePerMillion: listed.outputPricePerMillion,
+  };
 }

@@ -11,6 +11,14 @@ export function toCost(value: Decimal.Value): Cost {
   return new Decimal(value).toFixed();
 }
 
+/**
+ * A provider's per-token price as the per-million one the Model form stores. Decimal, not a float,
+ * because 0.00000015 a token has to become 0.15 a million and not 0.14999999999999999.
+ */
+export function perMillion(perToken: Decimal.Value): Cost {
+  return new Decimal(perToken).times(1_000_000).toFixed();
+}
+
 /** The two costs added. Null only when neither recorded one, so a line with no estimate stays null. */
 export function addCosts(a: Cost | null, b: Cost | null): Cost | null {
   if (a === null && b === null) return null;

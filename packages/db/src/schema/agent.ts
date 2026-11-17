@@ -37,6 +37,10 @@ export const modelConfig = pgTable(
     /** Prices the user entered, for the Usage screen's estimated cost. */
     inputPricePerMillion: numeric("input_price_per_million", { mode: "number" }),
     outputPricePerMillion: numeric("output_price_per_million", { mode: "number" }),
+    /** Where the prices came from: the provider's own list, or the user. Null while they aren't set. */
+    pricingSource: text("pricing_source", { enum: ["provider", "manual"] }),
+    /** When the provider's prices were last read, for a `provider` source. */
+    pricingCheckedAt: timestamp("pricing_checked_at", { withTimezone: true }),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -49,6 +53,8 @@ export const modelConfig = pgTable(
       "model_config_provider_type_check",
       sql`${table.providerType} in ('openai-compatible', 'anthropic', 'google')`,
     ),
+    // A null source passes: prices that aren't set have none yet.
+    check("model_config_pricing_source_check", sql`${table.pricingSource} in ('provider', 'manual')`),
     // Lets agent_call reference (workspace_id, id).
     unique("model_config_workspace_id_id_key").on(table.workspaceId, table.id),
     // A Workspace has one active model.

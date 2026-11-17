@@ -125,6 +125,7 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
         providerType: modelConfig.providerType,
         modelName: modelConfig.modelName,
         baseUrl: modelConfig.baseUrl,
+        pricingSource: modelConfig.pricingSource,
         archived: sql<boolean>`${modelConfig.archivedAt} is not null`,
         purpose: agentCall.purpose,
         calls: sql<number>`count(*)`.mapWith(Number),
@@ -178,8 +179,24 @@ export async function usageForMonth(db: Db, workspaceId: string, month: string) 
   // active, which rollUp can't tell from the first row it keeps.
   const lineKey = (row: Row) => [row.providerType, row.baseUrl, row.modelName].join("\0");
   const active = new Set(rows.filter((row) => !row.archived).map(lineKey));
+  // A line's prices came from the provider only when every row on it says so; a line that mixes a
+  // detected price with a typed one says nothing, because either sentence would be half wrong.
+  const sources = new Map<string, Set<string | null>>();
+  for (const row of rows) {
+    const key = lineKey(row);
+    const held = sources.get(key) ?? new Set<string | null>();
+    held.add(row.pricingSource);
+    sources.set(key, held);
+  }
+  const sourceOf = (key: string): "provider" | "manual" | null => {
+    const held = sources.get(key) ?? new Set<string | null>();
+    if (held.size !== 1) return null;
+    const [only] = held;
+    return only === "provider" || only === "manual" ? only : null;
+  };
   const models: (UsageTally & Omit<Row, "purpose">)[] = rollUp(rows, lineKey).map((row) => ({
     ...row,
+    pricingSource: sourceOf(lineKey(row)),
     archived: !active.has(lineKey(row)),
   }));
   const purposes: (UsageTally & Pick<Row, "purpose">)[] = rollUp(rows, (row) => row.purpose);

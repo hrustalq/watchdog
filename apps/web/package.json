@@ -54,6 +54,7 @@
     "oxlint-tsgolint": "^7.0.2006",
     "tailwindcss": "^4",
     "typescript": "^7",
+    "undici": "^8.12.3",
     "vitest": "^5.0.5"
   }
 }

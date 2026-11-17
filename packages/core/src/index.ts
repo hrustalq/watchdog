@@ -1,5 +1,6 @@
 export { type AgentResult, callAgent, readApiKey, testModelConnection } from "./agent/call-agent.ts";
 export {
+  type ListedModel,
   listModels,
   maxListedModels,
   type ModelListConfig,

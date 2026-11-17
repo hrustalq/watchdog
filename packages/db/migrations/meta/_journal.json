@@ -225,6 +225,13 @@
       "when": 1794688979533,
       "tag": "0031_fancy_wong",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794935392772,
+      "tag": "0032_typical_mandarin",
+      "breakpoints": true
     }
   ]
 }
